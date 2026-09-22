@@ -1,20 +1,21 @@
-# Phase 3 verification — disclosure machinery (Plan 3a)
+# Phase 3 verification — disclosure machinery and exposure accounting
 
-**Status:** Plan 3a complete. Plans 3b (exposure accounting) and 3c (audit
-chain, anchor, coordinator) have **not** started.
+**Status:** Plans 3a and 3b complete. Plan 3c (audit chain, anchor,
+coordinator) has **not** started.
 
 **NOT production.** No Telegram login, real account data, session file,
 committed disclosure receipt, exposure-ledger row, audit event, chain anchor,
 installed service account, loaded LaunchAgent or tunnel ingress is claimed.
-Plan 3a builds the deterministic machinery only: **nothing is wired into a
-tool**, so no disclosure has ever been committed by this build.
+Plans 3a and 3b build machinery only: **nothing is wired into a tool**, so no
+disclosure has ever been committed by this build and no ledger row has ever
+been written outside a test.
 
 ## Reproducibility
 
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check    # 23 files OK
-uv run pytest -q                                      # 536 passed, 7 skipped
+uv run pytest -q                                      # 561 passed, 7 skipped
 uv run python scripts/e2e_smoke.py                    # 41 passed, 0 failed
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
@@ -33,6 +34,14 @@ uv run mypy src/telegram_mcp                          # 49 source files
 | `disclosure/keys.py` | the public verification-key registry with activation and retirement |
 | `tools/status.py` | the zero-seed key retired |
 
+## What Plan 3b delivered
+
+| Module | Proves |
+|---|---|
+| `disclosure/budget.py` | keyed subject digests so no ref reaches the ledger; rolling windows; the two dimensions; projected tiers; the six-component reservation binding; `actual ≤ reserved`; ledger rows written inside a caller-owned transaction |
+| `tests/integration/test_budget_concurrency.py` | two interleaved coroutines cannot both take the last capacity |
+| `tests/security/test_budget_bypass.py` | retrying does not accumulate past the ceiling; cycling projects is caught by the client-global ceiling; a second client has its own budget |
+
 ## Gate ledger
 
 Every row is **PARTIAL**. Phase 3a moves parts of Gate O and nothing else.
@@ -40,7 +49,7 @@ Every row is **PARTIAL**. Phase 3a moves parts of Gate O and nothing else.
 | Gate | State | What passes | What is missing |
 |---|---|---|---|
 | **O** | PARTIAL | a receipt signature verifies against the declared public key and fails on tampering; an independent verifier checks a live payload in a process where `sqlite3.connect` and `socket.socket` both raise; historical keys stay exportable after retirement; provenance is correct for single- and multi-origin records | no receipt is ever *committed*: no `disclosure_receipts` row, no audit chain, no checkpoints, no anchor. "Exactly one receipt per sensitive success" cannot be claimed because no sensitive success exists. The content-leak sweep across all four stores is Plan 3c |
-| **P** | PARTIAL | measurement exists in exactly one module, and the per-project/global split reconciles (`sum(project_bytes) + container_bytes == bytes_disclosed`); egress can only reduce; the most restrictive profile wins for shared objects | no budgets are enforced, no reservations exist, no ledger row is written. Plan 3b |
+| **P** | PARTIAL | measurement exists in exactly one module and the per-project/global split reconciles; egress can only reduce and the most restrictive profile wins; soft and hard thresholds behave exactly as §23C.1 specifies against the projected figure; concurrent reservations cannot both take the last capacity; retries and project cycling are both caught; `actual ≤ reserved` fails closed | no tool consults the ledger, so nothing is enforced end to end; the emergency lock is not yet wired to reservations; measurement identity across prompt, reservation, ledger and receipt cannot be asserted until a coordinator exists. Plan 3c |
 | **Q** | PARTIAL | nothing | the bounded formal model is Plan 3c Task 9; `formal/README.md` and `SECURITY-MANIFEST.json` do not exist |
 | **A–N, R** | unchanged | see `phase-2a.md` and `phase-2b.md` | unchanged |
 
@@ -60,11 +69,18 @@ Every row is **PARTIAL**. Phase 3a moves parts of Gate O and nothing else.
    That is the honest answer, and `keys provision` was changed to create all
    seven so the two verbs cannot disagree.
 
-3. **A stray `# noqa: TRY004` was removed** from `measure.py`: ruff correctly
+3. **The budget ledger is bound to one connection and therefore one thread.**
+   `sqlite3` connections are thread-bound, so the planned thread-based
+   concurrency test failed inside `get_setting` before reaching any budget
+   logic. The daemon is single-process asyncio, so the suite races coroutines
+   instead — the real concurrency model — and `BudgetLedger` documents that a
+   future thread pool needs a ledger per thread.
+
+4. **A stray `# noqa: TRY004` was removed** from `measure.py`: ruff correctly
    reported it unused, because `MeasurementError` is not the `TypeError` case
    the directive exists for.
 
-4. **The bidi egress test builds its control character with `chr(0x202E)`**
+5. **The bidi egress test builds its control character with `chr(0x202E)`**
    rather than a source literal. Ruff's `PLE2502` trojan-source rule rejects a
    bidi control in source and is right to; the test needs the character to
    reach the transformer, not to sit in the file.
