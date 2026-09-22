@@ -10,7 +10,7 @@
 
 **Spec:** [Phase-2 design](../specs/2026-09-22-telegram-mcp-phase-2-design.md) §4; wire vectors from Plan 2a ([phase-2a authority plan](2026-09-22-telegram-mcp-phase-2a-authority.md) Task 3).
 
-**Status:** Draft for review. Depends on Plan 2a Task 3's frozen `jcs_vectors.json` for byte-equality tests; everything else is independent and may run alongside Plan 2a.
+**Status:** Task 1 executed (Swift JCS encoder and challenge verification, merged to `main` and byte-equal against Plan 2a's frozen `jcs_vectors.json`). Tasks 2-5 are open, and Plan 2a's Phase-2J join gate stays unrun until Tasks 3-4 land.
 
 ## Global Constraints
 

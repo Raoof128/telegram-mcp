@@ -10,7 +10,7 @@
 
 **Spec:** [Phase-2 design](../specs/2026-09-22-telegram-mcp-phase-2-design.md) argues from [V0.1.10 engineering specification](../../../telegram-mcp-v0.1.10-final-engineering-spec.md) (SHA-256 `36b67f488415f2ab1c44b8d906de7f192fbe0dc562a2aeac76938b24c4a61b0a). Read with the [release roadmap](2026-09-22-telegram-mcp-release-roadmap.md), Phase 2 row.
 
-**Status:** Draft for review. No implementation has started. Commands and code below are instructions for the implementation stage, not evidence of completed tests.
+**Status:** Executed. Tasks 1-5 on the `phase-2a-authority` track, Tasks 6-9 inline on `main`; evidence and deviations in [phase-2a verification](../../verification/phase-2a.md). Task 9 Step 4 (the Phase-2J join gate) is harnessed but unrun, pending Plan 2b Tasks 2-4.
 
 ## Global Constraints
 
