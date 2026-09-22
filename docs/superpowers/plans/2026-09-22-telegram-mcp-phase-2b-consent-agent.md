@@ -104,7 +104,7 @@ def test_tampered_display_refuses_to_render():
 ```
 
 - [ ] **Step 2: Run; expect subcommand-missing failure.** Implement `selftest-display-tamper`: valid signed challenge + one-codepoint-modified display payload → digest mismatch → exit nonzero printing `DISPLAY-MISMATCH`, never touching LocalAuthentication (assert by environment flag `CONSENT_NO_UI=1` which makes any prompt attempt a fatal error in selftests).
-- [ ] **Step 3: Implement the approval flow.** `LAContext.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)` per signature (no reuse across prompts); Enclave key `SecureEnclave.P256.Signing.PrivateKey(accessControl: .privateKeyUsage)`; sign JCS bytes, output approval JSON. `CONSENT_NO_UI=1` short-circuits to a signed-with-test-key path ONLY in `selftest-` subcommands, never in the real flow (guard by `#if DEBUG`? No — separate explicit subcommand name, and the real `approve` path contains no test-key branch; test asserts the string "test-key" absent from the approve path via `grep`).
+- [ ] **Step 3: Implement the approval flow.** Build the key access object once: `SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, [.privateKeyUsage, .biometryCurrentSet], nil)` (unwrap or fatal — a nil object means misconfiguration, never proceed without Touch ID binding). Generate with `SecureEnclave.P256.Signing.PrivateKey(accessControl:)`; evaluate `LAContext.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)` per signature (no reuse across prompts); sign JCS bytes, output approval JSON. `CONSENT_NO_UI=1` short-circuits to a signed-with-test-key path ONLY in `selftest-` subcommands; the real `approve` path contains no test-key branch (pinned by the Step 2 `grep` assertion).
 - [ ] **Step 4: Platform-gated live test** (Touch ID prompt appears; operator approves/denies once; approval verifies against the Enclave public key with Python `cryptography` in the test). Marked `platform_gated`, interactive.
 - [ ] **Step 5: Run headless tests + full pytest file; commit `feat: add display gate and Touch ID approval`.**
 
@@ -133,7 +133,7 @@ def test_replay_rejected():
 
 (`run_scenario` spawns the real agent binary against an in-proto stub broker over a tmp socket, using `CONSENT_NO_UI=1` selftest approval path for headless runs; `tamper` and `kill` scenarios assert refusal and agent exit respectively.)
 
-- [ ] **Step 2: Run; expect missing-stub failure.** Implement `stub_broker.py`: frozen challenge fixtures, Ed25519 daemon-signer (fixture key), P-256 approval verifier, exact-once map, scenario drivers (`good`, `tamper-display`, `replay`, `kill-mid-prompt` asserting agent process exits within 5s of socket close).
+- [ ] **Step 2: Run; expect missing-stub failure.** Implement `stub_broker.py`: frozen challenge fixtures, Ed25519 daemon-signer using the fixture challenge key from Plan 2a's seed table (`b"\x01" * 32`; assert equality at import so the two plans cannot drift silently), P-256 approval verifier, exact-once map, scenario drivers (`good`, `tamper-display`, `replay`, `kill-mid-prompt` asserting agent process exits within 5s of socket close).
 - [ ] **Step 3: Implement the rendezvous client.** Connect Unix socket, handshake (pinned-key challenge-response at connect, mirroring Plan 2a Task 8 server side), prompt loop, auto-exit on disconnect + 2s grace. `kill-mid-prompt` scenario green proves no orphan UI.
 - [ ] **Step 4: Run all agent tests headless; commit `feat: add rendezvous client and broker scenarios`.**
 
@@ -158,7 +158,7 @@ def test_adhoc_build_fails_pairing_identity():
 
 - [ ] **Step 2: Run; expect subcommand-missing failure.** Implement `pairing generate` (Enclave key, print `p256:sha256:` fingerprint), `pairing export` (public bytes b64url), `pairing import-daemon-pin <b64>` (writes keychain pairing record under the app access group; prints stored fingerprint for on-screen compare), `pairing-status` (signing identity + pairing record presence, public material only).
 - [ ] **Step 3: LaunchAgent plist data.** `agent/ConsentAgent-Info.plist`: `Label` com-specific, `RunAtLoad false`, `ProgramArguments` pointing at the installed signed binary, `StandardOut/StandardError` to user log paths, `ProcessType Interactive`. Install/uninstall is Plan 2a's launcher calling `bootstrap`/`bootout`; this task only validates the plist (`plutil -lint`) and documents the commands.
-- [ ] **Step 4: Sign with Developer ID** (`codesign -s "Developer ID Application: ..." --options runtime ...`), verify `codesign -dv`, re-run pairing-identity test green; commit `feat: add pairing, LaunchAgent data, signing`.
+- [ ] **Step 4: Sign with Developer ID.** Discover the identity with `security find-identity -v -p codesigning` and use the `Developer ID Application` line verbatim (`codesign -s "<name>" --options runtime ...`); verify `codesign -dv`, re-run pairing-identity test green; commit `feat: add pairing, LaunchAgent data, signing`.
 
 ## Task 5: Evidence and handoff
 
