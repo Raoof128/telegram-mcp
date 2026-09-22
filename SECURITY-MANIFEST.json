@@ -1,0 +1,43 @@
+{
+  "schema": "tg-mcp-security-manifest/v1",
+  "release_profile": "safe_demo",
+  "phase": "3",
+  "canonicalisation": {
+    "scheme": "TG-JCS-v1",
+    "basis": "RFC 8785 restricted profile",
+    "implementation": "telegram_mcp.consent.challenge.jcs_dumps",
+    "note": "ASCII keys only; floats, lone surrogates and non-ASCII keys are fatal"
+  },
+  "formal_model": {
+    "checker": "formal/model.py",
+    "kind": "exhaustive breadth-first state-space search",
+    "third_party_checker": null,
+    "reason": "TLA+/TLC and Hypothesis unavailable on the build host; the design left the choice to implementation time",
+    "language": "Python 3.12",
+    "bounds": { "MAX_SEQ": 3 },
+    "state_variables": 20,
+    "assertions": 18,
+    "reachable_states": 624,
+    "command": "uv run pytest tests/formal -q"
+  },
+  "audit_chain": {
+    "event_mac_domain": "telegram-mcp-audit-v1",
+    "genesis_domain": "telegram-mcp-audit-genesis-v1",
+    "checkpoint_domain": "telegram-mcp-checkpoint-v1",
+    "anchor_domain": "telegram-mcp-anchor-v1",
+    "external_anchor_provider": "file_0600",
+    "external_anchor_note": "spec §12.2 reviewed fallback, chosen over the macOS System Keychain baseline because the runtime is a non-login service account"
+  },
+  "claim_boundary": {
+    "receipt_proves": "the gateway committed and accounted a disclosure under the named authority, consent, provenance, egress and coverage state",
+    "receipt_does_not_prove": [
+      "that a remote client received the response",
+      "a long-term cryptographic commitment to exact private message bytes"
+    ],
+    "exposure_budget_bound": "limits burst rate within the rolling window, not lifetime exposure",
+    "audit_chain_bound": "detects database-only tampering; not resistance to an attacker holding both the daemon account and the anchor",
+    "third_parties": "participants in the disclosed conversations do not consent, cannot see a prompt and cannot object; out of scope for V0.1.10"
+  },
+  "production_claim": false,
+  "gates_passed": []
+}
