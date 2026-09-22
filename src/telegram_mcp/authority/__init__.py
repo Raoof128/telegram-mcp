@@ -1,5 +1,27 @@
-"""Authority package: central policy engine with the typed authority model."""
+"""Authority package: policy engine, opaque refs, cursor binding, epochs."""
 
+from telegram_mcp.authority.cursors import (
+    CURSOR_TTL_S,
+    CursorError,
+    CursorPresenter,
+    CursorRecord,
+    CursorStore,
+    InMemoryCursorStore,
+    ProjectScopeEntry,
+    check_cursor,
+    list_projects_scope_entries,
+    mint_cursor,
+    project_scope_digest,
+    query_digest,
+    scope_entries_from_view,
+)
+from telegram_mcp.authority.epochs import (
+    PresenceRequired,
+    bump_policy_epoch,
+    bump_project_epoch,
+    new_epoch_state,
+    set_locked,
+)
 from telegram_mcp.authority.policy import (
     EGRESS_LEVELS,
     AuthorityChanged,
@@ -15,19 +37,40 @@ from telegram_mcp.authority.policy import (
     evaluate,
     make_view,
 )
+from telegram_mcp.authority.refs import REF_PREFIXES, validate_ref_format
 
 __all__ = [
+    "CURSOR_TTL_S",
     "EGRESS_LEVELS",
+    "REF_PREFIXES",
     "AuthorityChanged",
     "AuthorityRequest",
     "AuthoritySnapshot",
     "AuthorityView",
     "ClientProjectGrant",
     "ClientState",
+    "CursorError",
+    "CursorPresenter",
+    "CursorRecord",
+    "CursorStore",
     "Denial",
     "EffectiveEgress",
+    "InMemoryCursorStore",
+    "PresenceRequired",
+    "ProjectScopeEntry",
     "ProjectState",
+    "bump_policy_epoch",
+    "bump_project_epoch",
+    "check_cursor",
     "check_pre_serialize",
     "evaluate",
+    "list_projects_scope_entries",
     "make_view",
+    "mint_cursor",
+    "new_epoch_state",
+    "project_scope_digest",
+    "query_digest",
+    "scope_entries_from_view",
+    "set_locked",
+    "validate_ref_format",
 ]
