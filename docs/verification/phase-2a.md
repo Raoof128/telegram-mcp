@@ -138,6 +138,32 @@ through validation, authority, broker issue/consume, the synthetic disclosure
 gate, a fake adapter and real result assembly, then proves that revoking the
 grant fails closed at authority with the broker never reached.
 
+## End-to-end smoke
+
+`uv run python scripts/e2e_smoke.py` — **41 checks, 41 passed** in ~9 s. It
+drives the shipped artifacts rather than the units: the demo server as a
+subprocess over a real TCP socket (ten tools advertised, status succeeds, a
+sensitive tool fails closed with non-enumerating text, duplicate JSON keys
+rejected at the protocol level, `private, no-store` and no session id, port
+closed after shutdown), the real schema on disk with the C2 and C4 rules
+proved by direct writes, cursors and epochs through the SQLite bindings,
+leases, the admin socket, the RV-1 handshake and tunnel pins over real
+sockets, the lifecycle and lock, `doctor` including its honest
+`--production` failure, the installed CLI, both installer plans, and the
+consent broker against the real Swift agent.
+
+Writing it caught two ordering defects in the startup sequence, both now
+fixed and pinned by tests:
+
+1. **The single-runtime lock was step 8, not step 2.** A second start would
+   load secrets, open SQLite, run migrations and garbage-collect cursors
+   before discovering the first runtime. The design puts the lock before any
+   of that precisely so a second runtime fails closed without touching
+   shared state.
+2. **The tunnel client started before READY was advertised.** The design says
+   no tunnel polling before READY, and this module's own comment claimed the
+   tuple did that while the tuple did the opposite.
+
 ## Deviations from the plans, and why
 
 1. **`ipc/framing.py` and `ipc/tunnel.py`** are not in Plan 2a's Task-8 file

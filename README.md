@@ -57,7 +57,14 @@ names which gate checks cannot yet be verified.
 uv run python scripts/extract_contracts.py --check
 uv run pytest tests/unit tests/contract tests/integration tests/security -q
 uv run pytest -q --run-platform-gated            # opt-in host probes (macOS + admin)
+uv run python scripts/e2e_smoke.py               # end-to-end across Phase 1 + Phase 2
 ```
+
+The smoke is not the suite. It drives the shipped artifacts in one run — the
+real demo server over a real TCP socket, the real schema on disk, real Unix
+sockets, the installed CLI, and the real agent binary against the real
+broker — and prints one ledger. It mutates nothing outside its sandbox: no
+service accounts, no keychain writes, no Telegram, no host paths.
 
 Evidence: `docs/verification/phase-1.md` and
 `docs/verification/phase-2a.md`. Reviewed pins: `mcp==2.2.0`,

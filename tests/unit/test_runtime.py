@@ -95,7 +95,15 @@ def test_startup_runs_seventeen_steps_in_order_with_seams():
     from telegram_mcp.runtime.lifecycle import STARTUP_STEPS, startup
 
     assert len(STARTUP_STEPS) == 17
-    assert STARTUP_STEPS.index("start_tunnel") == 15  # step 16, 1-based
+    # The design's two load-bearing orderings (§1): the single-runtime lock
+    # is taken before any secret is read or the database is opened, and the
+    # tunnel client starts only after READY is advertised.
+    assert STARTUP_STEPS.index("mint_runtime_id") == 0
+    assert STARTUP_STEPS.index("acquire_lock") == 1
+    for later in ("load_secrets", "open_db", "run_migrations", "gc_cursors"):
+        assert STARTUP_STEPS.index(later) > STARTUP_STEPS.index("acquire_lock"), later
+    assert STARTUP_STEPS.index("start_tunnel") == 16  # step 17, 1-based
+    assert STARTUP_STEPS.index("mark_ready") < STARTUP_STEPS.index("start_tunnel")
     executed = []
 
     def recorder(name):

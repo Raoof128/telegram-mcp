@@ -36,17 +36,28 @@ __all__ = [
 # Controller decision: bounded INTERNAL_ERROR, never hang or half-execute.
 DRAINING_INTERNAL_ERROR = "INTERNAL_ERROR"
 
-# Ordered startup steps 1-17. Tunnel start is step 16: the start_tunnel
-# seam must never run before the runtime is READY (asserted in tests).
+# Ordered startup steps 1-17, in the design's normative order (§1).
+#
+# Two orderings in that list are load-bearing and were wrong here until the
+# end-to-end smoke caught them:
+#
+# * The single-runtime lock is step 2, before any secret is read and before
+#   the database is opened. Acquiring it later let a second start load
+#   secrets, open SQLite, migrate and garbage-collect cursors before it
+#   discovered the first runtime — two processes touching shared state on
+#   their way to a fail-closed refusal.
+# * READY is advertised before the tunnel client starts, never after. The
+#   design says no tunnel polling before READY, and this module's own
+#   comment claimed that while the tuple did the opposite.
 STARTUP_STEPS: tuple[str, ...] = (
-    "load_secrets",  # 1
-    "verify_key_permissions",  # 2
-    "open_db",  # 3
-    "run_migrations",  # 4
-    "gc_cursors",  # 5
-    "recompute_key_ids",  # 6
-    "mint_runtime_id",  # 7
-    "acquire_lock",  # 8
+    "mint_runtime_id",  # 1
+    "acquire_lock",  # 2
+    "load_secrets",  # 3
+    "verify_key_permissions",  # 4
+    "open_db",  # 5
+    "run_migrations",  # 6
+    "gc_cursors",  # 7
+    "recompute_key_ids",  # 8
     "bind_admin_socket",  # 9
     "bind_consent_socket",  # 10
     "handshake_consent",  # 11
@@ -54,8 +65,8 @@ STARTUP_STEPS: tuple[str, ...] = (
     "verify_authority_snapshot",  # 13
     "open_listeners",  # 14
     "verify_ports",  # 15
-    "start_tunnel",  # 16
-    "mark_ready",  # 17
+    "mark_ready",  # 16
+    "start_tunnel",  # 17
 )
 
 # Seams injectable as callables for headless tests (brief Step 6).

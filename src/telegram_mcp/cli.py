@@ -332,3 +332,7 @@ def main() -> None:
     code = _COMMANDS[args.verb](args)
     if code != EXIT_OK:
         raise SystemExit(code)
+
+
+if __name__ == "__main__":  # `python -m telegram_mcp.cli`
+    main()
