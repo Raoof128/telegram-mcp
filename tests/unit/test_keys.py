@@ -130,10 +130,14 @@ def test_provision_creates_only_phase2_file_backed_rows(store_dir):
         assert mode == 0o600
 
 
-def test_provision_phases_3_creates_nothing(store_dir):
+def test_provision_phases_3_creates_exactly_the_three_phase_three_rows(store_dir):
     from telegram_mcp.keys.store import provision_missing
 
-    assert provision_missing(store_dir, phases=(3,)) == []
+    assert sorted(provision_missing(store_dir, phases=(3,))) == [
+        "audit-chain-key",
+        "audit-checkpoint-key",
+        "disclosure-key",
+    ]
 
 
 def test_provision_never_overwrites(store_dir):
@@ -332,3 +336,26 @@ def test_pairing_rejects_malformed_public(store_dir):
         pairing.import_peer_pin("agent-transport-key", b"too-short")
     with pytest.raises(KeyStoreError, match="invalid key material"):
         pairing.import_peer_pin("agent-approval-key", b"\x00" * 32)
+
+
+def test_phase_three_rows_are_provisioned_and_have_distinct_ids(tmp_path):
+    from telegram_mcp.keys.store import key_id, provision_missing
+
+    created = provision_missing(tmp_path, phases=(2, 3))
+
+    assert {"disclosure-key", "audit-checkpoint-key", "audit-chain-key"} <= set(created)
+    assert (tmp_path / "disclosure-key").stat().st_mode & 0o777 == 0o600
+    assert key_id("disclosure-key").startswith("ed25519:sha256:")
+    assert key_id("audit-chain-key").startswith("hmac:sha256:")
+    # Purpose separation: three rows, three distinct recomputed ids.
+    ids = {key_id(n) for n in ("disclosure-key", "audit-checkpoint-key", "audit-chain-key")}
+    assert len(ids) == 3
+
+
+def test_phase_two_only_provisioning_still_skips_phase_three(tmp_path):
+    from telegram_mcp.keys.store import provision_missing
+
+    created = provision_missing(tmp_path, phases=(2,))
+
+    assert "disclosure-key" not in created
+    assert not (tmp_path / "disclosure-key").exists()

@@ -43,7 +43,9 @@ def test_production_gate_fails_while_phase_four_checks_cannot_run():
 
 def test_keys_and_database_checks_pass_against_a_real_store(tmp_path):
     store = tmp_path / "keys"
-    provision_missing(store)
+    # doctor checks every FILE_BACKED_KEYS row, which now includes the three
+    # Phase-3 signing rows. A store missing them is honestly incomplete.
+    provision_missing(store, phases=(2, 3))
     conn = open_db(tmp_path / "db" / "meta.db")
     add_pin(store, spki_digest(b"tunnel-client-der"), now=1_000)
     report = doctor(

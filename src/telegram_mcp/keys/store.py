@@ -56,7 +56,18 @@ ERR_CLIENT = "invalid client reference"
 # file-backed runtime-account secrets. Tunnel references come from install,
 # agent keys live in the keychain/Enclave (daemon keeps pins only), and
 # per-client lease seeds are minted on demand via ``provision_lease_seed``.
-_FILE_BACKED_ROWS = frozenset({"principal-key", "cursor-key", "privacy-key", "challenge-key"})
+_FILE_BACKED_ROWS = frozenset(
+    {
+        "principal-key",
+        "cursor-key",
+        "privacy-key",
+        "challenge-key",
+        # Phase 3: the rows that sign proofs, sign chain heads and MAC events.
+        "disclosure-key",
+        "audit-checkpoint-key",
+        "audit-chain-key",
+    }
+)
 # Public alias: doctor checks exactly these rows as runtime-owned files.
 FILE_BACKED_KEYS = _FILE_BACKED_ROWS
 
