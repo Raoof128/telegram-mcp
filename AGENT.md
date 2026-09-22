@@ -29,3 +29,11 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
 - **Files changed:** Full `src/telegram_mcp` tree, `scripts/extract_contracts.py`, all test suites, `README.md`, `docs/verification/phase-1.md`, `docs/verification/dependencies.md`, this file, `CHANGELOG.md`.
 - **Verification:** Full suite 158 passed; `extract --check` 23 files OK; ruff/mypy/format clean; wheel (39 files) fresh-install smoke OK; modern + legacy (2025-11-25) wire parity; gates A/B/I/K/L recorded partial only.
 - **Follow-ups:** Phase-2 privileged runtime plan next. No Telegram access, no service users, no remote, no production claim.
+
+### 2026-09-22 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase-2 track integration (2a Tasks 1-5, 2b Task 1) and handoff repair.
+- **Summary:** Merged the `phase-2a-authority` and `phase-2b-agent` tracks into `main` and repaired what the tracks left broken: `binascii.Error` is now imported rather than reached through `base64`, `ConsentBroker._pinned_key_id` is narrowed to `str` at construction, `tests/unit/test_policy.py` kwargs are `dict[str, Any]`, and `tests/agent/conftest.py` builds the Swift agent with the plan's exact `swiftc` command so the shell tests no longer depend on an untracked `build/` artifact.
+- **Files changed:** `src/telegram_mcp/consent/broker.py`, `src/telegram_mcp/consent/challenge.py`, `tests/unit/test_policy.py`, `tests/agent/conftest.py`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** `uv run pytest -q` 271 passed, 1 skipped from a clean `build/` (Swift binary rebuilt by the fixture); `ruff check` and `ruff format --check` clean on `src tests`; `mypy src tests` clean (was 8 errors across 3 files at merge).
+- **Follow-ups:** Phase-2a Tasks 6-9 inline on `main` (refs/cursors/epochs, SQLite migrations with C2/C4, admin IPC/leases/rendezvous/tunnel identity/install/doctor, CLI wiring and evidence). Phase-2b Tasks 2-5 still open. No Telegram access, no service users, no remote, no production claim.

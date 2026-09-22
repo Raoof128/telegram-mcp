@@ -25,6 +25,7 @@ only creates a challenge; approval exists solely as agent-signed
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import time
@@ -144,9 +145,10 @@ class ConsentBroker:
         # Monotonic clock with an injectable override for tests. Public so
         # frozen-clock tests can assign ``broker.now = lambda: t``.
         self.now: Callable[[], float] = now or time.monotonic
-        self._pinned_key_id = pinned_key_id or self._resolve_pinned_key_id(agent_verify)
-        if self._pinned_key_id is None:
+        pinned = pinned_key_id or self._resolve_pinned_key_id(agent_verify)
+        if pinned is None:
             raise ValueError("pinned approval key id is unknown")
+        self._pinned_key_id: str = pinned
         self._pending: dict[str, PendingChallenge] = {}
         self._buckets: dict[str, deque[float]] = {}
 
@@ -260,7 +262,7 @@ class ConsentBroker:
             padded = sig + "=" * (-len(sig) % 4)
             try:
                 return base64.urlsafe_b64decode(padded.encode("ascii"))
-            except (ValueError, base64.binascii.Error):
+            except (ValueError, binascii.Error):
                 return None
         return None
 

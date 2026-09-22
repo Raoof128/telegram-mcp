@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 
 from telegram_mcp.authority.policy import (
@@ -15,7 +17,7 @@ from telegram_mcp.authority.policy import (
 
 
 def _full_grant(**over) -> ClientProjectGrant:
-    kw = {
+    kw: dict[str, Any] = {
         "can_read": True,
         "can_cross_search": True,
         "egress_level": "full_text",
