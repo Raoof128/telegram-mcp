@@ -143,3 +143,121 @@ def test_thresholds_are_read_from_the_settings_registry(tmp_path):
     assert thresholds_for(conn, PROJECT).hard_records == 500
     assert thresholds_for(conn, GLOBAL).hard_records == 1_500
     assert thresholds_for(conn, GLOBAL).hard_bytes == 15_000_000
+
+
+def _ledger(tmp_path):
+    from telegram_mcp.disclosure.budget import BudgetLedger
+    from telegram_mcp.storage.db import open_db
+    from telegram_mcp.storage.migrations import migrate
+
+    conn = open_db(tmp_path / "meta.db")
+    migrate(conn)
+    return BudgetLedger(conn)
+
+
+def _worst(client_id=1, records=10, size=1000):
+    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, Usage, subject_digest
+
+    return {BucketKey(client_id, GLOBAL, subject_digest(GLOBAL)): Usage(records, size)}
+
+
+def test_reservation_binds_the_six_frozen_components(tmp_path):
+    ledger = _ledger(tmp_path)
+    reservation = ledger.reserve(
+        client_id=1,
+        security_epoch=4,
+        project_scope_digest="hmac-sha256:" + "0" * 64,
+        consent_challenge_digest="1" * 64,
+        request_nonce="n" * 32,
+        worst_case=_worst(),
+        ttl_seconds=60,
+    )
+    # §23C.3 freezes exactly these; dropping security_epoch or the challenge
+    # digest would let an emergency lock or a different approval be ignored.
+    assert reservation.client_id == 1
+    assert reservation.security_epoch == 4
+    assert reservation.project_scope_digest == "hmac-sha256:" + "0" * 64
+    assert reservation.consent_challenge_digest == "1" * 64
+    assert reservation.request_nonce == "n" * 32
+    assert reservation.expires_at > 0
+    assert reservation.reservation_ref
+
+
+def test_a_live_reservation_counts_against_the_next_consultation(tmp_path):
+    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, subject_digest
+
+    ledger = _ledger(tmp_path)
+    key = BucketKey(1, GLOBAL, subject_digest(GLOBAL))
+    assert ledger.live_usage(key).records == 0
+
+    ledger.reserve(
+        client_id=1,
+        security_epoch=1,
+        project_scope_digest="d",
+        consent_challenge_digest="c",
+        request_nonce="n",
+        worst_case=_worst(records=7),
+        ttl_seconds=60,
+    )
+    assert ledger.live_usage(key).records == 7
+
+
+def test_release_frees_the_reservation(tmp_path):
+    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, subject_digest
+
+    ledger = _ledger(tmp_path)
+    key = BucketKey(1, GLOBAL, subject_digest(GLOBAL))
+    reservation = ledger.reserve(
+        client_id=1,
+        security_epoch=1,
+        project_scope_digest="d",
+        consent_challenge_digest="c",
+        request_nonce="n",
+        worst_case=_worst(records=7),
+        ttl_seconds=60,
+    )
+    ledger.release(reservation.reservation_ref)
+    assert ledger.live_usage(key).records == 0
+
+
+def test_an_expired_reservation_stops_counting(tmp_path):
+    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, BudgetLedger, subject_digest
+    from telegram_mcp.storage.db import open_db
+    from telegram_mcp.storage.migrations import migrate
+
+    now = [1_800_000_000.0]
+    conn = open_db(tmp_path / "meta.db")
+    migrate(conn)
+    ledger = BudgetLedger(conn, clock=lambda: now[0])
+    key = BucketKey(1, GLOBAL, subject_digest(GLOBAL))
+
+    ledger.reserve(
+        client_id=1,
+        security_epoch=1,
+        project_scope_digest="d",
+        consent_challenge_digest="c",
+        request_nonce="n",
+        worst_case=_worst(records=7),
+        ttl_seconds=60,
+    )
+    assert ledger.live_usage(key).records == 7
+    now[0] += 61
+    assert ledger.live_usage(key).records == 0
+
+
+def test_reserving_past_a_hard_ceiling_refuses(tmp_path):
+    import pytest
+
+    from telegram_mcp.disclosure.budget import BudgetError
+
+    ledger = _ledger(tmp_path)
+    with pytest.raises(BudgetError):
+        ledger.reserve(
+            client_id=1,
+            security_epoch=1,
+            project_scope_digest="d",
+            consent_challenge_digest="c",
+            request_nonce="n",
+            worst_case=_worst(records=2_000),  # global hard ceiling is 1500
+            ttl_seconds=60,
+        )

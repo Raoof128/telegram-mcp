@@ -17,7 +17,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import sqlite3
-from collections.abc import Mapping
+import threading
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -29,6 +31,7 @@ from telegram_mcp.disclosure.measure import (
     records_disclosed,
 )
 from telegram_mcp.keys.store import load_key
+from telegram_mcp.opaque import mint_opaque_ref
 from telegram_mcp.storage.settings import get_setting
 
 __all__ = [
@@ -36,6 +39,8 @@ __all__ = [
     "PROJECT",
     "BucketKey",
     "BudgetError",
+    "BudgetLedger",
+    "Reservation",
     "Thresholds",
     "Usage",
     "buckets_for",
@@ -174,3 +179,128 @@ def tier(projected: Usage, limits: Thresholds) -> str:
     if projected.records >= limits.soft_records or projected.bytes >= limits.soft_bytes:
         return "elevated"
     return "normal"
+
+
+@dataclass(frozen=True)
+class Reservation:
+    """Memory-only capability state, never MCP-visible (spec §23C.3).
+
+    The first six fields are the binding §23C.3 freezes. ``security_epoch``
+    is what makes an emergency lock invalidate reservations in flight;
+    ``consent_challenge_digest`` is what stops a reservation minted under one
+    approval being spent by a different call.
+    """
+
+    reservation_ref: str
+    client_id: int
+    security_epoch: int
+    project_scope_digest: str
+    consent_challenge_digest: str
+    request_nonce: str
+    expires_at: float
+    buckets: tuple[tuple[BucketKey, Usage], ...]
+
+
+class BudgetLedger:
+    """Owns the single reservation lock and the live reservations.
+
+    The lock is held while buckets are recomputed and a reservation is
+    created, and released before retrieval — never held across a Telegram
+    call. Plan 3c converts a reservation into ledger rows inside its
+    disclosure-commit transaction.
+    """
+
+    def __init__(self, conn: sqlite3.Connection, *, clock: Callable[[], float] = time.time) -> None:
+        self._conn = conn
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._reservations: dict[str, Reservation] = {}
+
+    # -- live state ---------------------------------------------------------
+
+    def _prune(self) -> None:
+        now = self._clock()
+        expired = [ref for ref, r in self._reservations.items() if r.expires_at <= now]
+        for ref in expired:
+            del self._reservations[ref]
+
+    def live_usage(self, key: BucketKey) -> Usage:
+        """Unexpired reserved quantity for one bucket."""
+        with self._lock:
+            self._prune()
+            total = Usage(0, 0)
+            for reservation in self._reservations.values():
+                for bucket, usage in reservation.buckets:
+                    if bucket == key:
+                        total = total + usage
+            return total
+
+    # -- consultations ------------------------------------------------------
+
+    def _projected(self, key: BucketKey, increment: Usage) -> Usage:
+        minutes = get_setting(self._conn, "exposure_budget.rolling_window_minutes")
+        since = window_start(self._clock(), minutes)
+        committed = committed_usage(self._conn, key, since=since)
+        live = Usage(0, 0)
+        for reservation in self._reservations.values():
+            for bucket, usage in reservation.buckets:
+                if bucket == key:
+                    live = live + usage
+        return committed + live + increment
+
+    def consult(self, worst_case: Mapping[BucketKey, Usage]) -> tuple[str, dict[BucketKey, Usage]]:
+        """Pre-consent evaluation: the strictest tier across every bucket.
+
+        Returns the tier and the projected figure per bucket, which is what
+        the trusted prompt displays as "current/projected".
+        """
+        with self._lock:
+            self._prune()
+            projected: dict[BucketKey, Usage] = {}
+            worst_tier = "normal"
+            for key, increment in worst_case.items():
+                figure = self._projected(key, increment)
+                projected[key] = figure
+                decision = tier(figure, thresholds_for(self._conn, key.kind))
+                if decision == "refuse" or (decision == "elevated" and worst_tier == "normal"):
+                    worst_tier = decision
+            return worst_tier, projected
+
+    # -- reservations -------------------------------------------------------
+
+    def reserve(
+        self,
+        *,
+        client_id: int,
+        security_epoch: int,
+        project_scope_digest: str,
+        consent_challenge_digest: str,
+        request_nonce: str,
+        worst_case: Mapping[BucketKey, Usage],
+        ttl_seconds: int,
+    ) -> Reservation:
+        """Recompute under the lock and reserve the worst case, or refuse."""
+        with self._lock:
+            self._prune()
+            for key, increment in worst_case.items():
+                figure = self._projected(key, increment)
+                if tier(figure, thresholds_for(self._conn, key.kind)) == "refuse":
+                    raise BudgetError("hard exposure threshold reached")
+
+            reservation = Reservation(
+                reservation_ref=mint_opaque_ref("tgl_"),
+                client_id=client_id,
+                security_epoch=security_epoch,
+                project_scope_digest=project_scope_digest,
+                consent_challenge_digest=consent_challenge_digest,
+                request_nonce=request_nonce,
+                expires_at=self._clock() + ttl_seconds,
+                buckets=tuple(worst_case.items()),
+            )
+            self._reservations[reservation.reservation_ref] = reservation
+            return reservation
+
+    def release(self, reservation_ref: str) -> None:
+        """Release on cancellation, stale authority, failure — any non-commit path."""
+        with self._lock:
+            self._reservations.pop(reservation_ref, None)
