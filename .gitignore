@@ -26,5 +26,8 @@ dist/
 .superpowers/sdd/*/scratch/
 docs/verification/scratch/
 
+# Phase-2b consent agent (plan Task 1 Step 5): loose swiftc build scratch
+build/
+
 # Subagent-driven execution worktrees (isolated tracks, never committed)
 .worktrees/
