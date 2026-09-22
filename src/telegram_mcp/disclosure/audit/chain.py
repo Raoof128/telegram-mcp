@@ -22,10 +22,12 @@ from telegram_mcp.consent.challenge import jcs_dumps
 
 __all__ = [
     "ADMIN_EVENTS",
+    "CHECKPOINT_DOMAIN",
     "EVENT_DOMAIN",
     "GENESIS_DOMAIN",
     "ChainError",
     "append_event",
+    "checkpoint_due",
     "event_mac",
     "genesis_mac",
     "head",
@@ -33,6 +35,8 @@ __all__ = [
     "mint_event_id",
     "require_immediate_transaction",
     "verify_chain",
+    "verify_checkpoints",
+    "write_checkpoint",
 ]
 
 EVENT_DOMAIN = b"telegram-mcp-audit-v1"
@@ -257,3 +261,109 @@ def verify_chain(conn: sqlite3.Connection, chain_key: bytes) -> None:
             raise ChainError("event MAC does not verify")
         expected_prev = record["event_mac"]
         expected_seq = record["chain_seq"] + 1
+
+
+CHECKPOINT_DOMAIN = b"telegram-mcp-checkpoint-v1"
+
+
+def _checkpoint_message(row: Mapping[str, Any]) -> bytes:
+    return CHECKPOINT_DOMAIN + jcs_dumps(
+        {
+            "chain_epoch": row["chain_epoch"],
+            "chain_seq": row["chain_seq"],
+            "last_event_id": row["last_event_id"],
+            "last_event_mac": row["last_event_mac"],
+            "created_at": row["created_at"],
+        }
+    )
+
+
+def write_checkpoint(
+    conn: sqlite3.Connection, checkpoint_key: bytes, *, now: str
+) -> dict[str, Any]:
+    """Sign the current head with the dedicated audit-checkpoint key."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from telegram_mcp.opaque import mint_opaque_ref
+
+    current = head(conn)
+    if current is None:
+        raise ChainError("cannot checkpoint an empty chain")
+
+    row = {
+        "checkpoint_ref": mint_opaque_ref("tgl_"),
+        "chain_epoch": current["chain_epoch"],
+        "chain_seq": current["chain_seq"],
+        "last_event_id": current["event_id"],
+        "last_event_mac": current["event_mac"],
+        "created_at": now,
+    }
+    signature = Ed25519PrivateKey.from_private_bytes(checkpoint_key).sign(_checkpoint_message(row))
+    signing_key_id = (
+        "ed25519:sha256:"
+        + hashlib.sha256(
+            Ed25519PrivateKey.from_private_bytes(checkpoint_key).public_key().public_bytes_raw()
+        ).hexdigest()
+    )
+
+    conn.execute(
+        "INSERT INTO audit_checkpoints (checkpoint_ref, chain_epoch, chain_seq, last_event_id,"
+        " last_event_mac, created_at, signing_key_id, signature)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            row["checkpoint_ref"],
+            row["chain_epoch"],
+            row["chain_seq"],
+            row["last_event_id"],
+            row["last_event_mac"],
+            row["created_at"],
+            signing_key_id,
+            signature.hex(),
+        ),
+    )
+    conn.commit()
+    return row
+
+
+def verify_checkpoints(conn: sqlite3.Connection, checkpoint_public: bytes) -> None:
+    """Verify every retained checkpoint signature."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    public = Ed25519PublicKey.from_public_bytes(checkpoint_public)
+    rows = conn.execute(
+        "SELECT chain_epoch, chain_seq, last_event_id, last_event_mac, created_at, signature"
+        " FROM audit_checkpoints ORDER BY chain_epoch, chain_seq"
+    ).fetchall()
+    for row in rows:
+        record = dict(
+            zip(
+                (
+                    "chain_epoch",
+                    "chain_seq",
+                    "last_event_id",
+                    "last_event_mac",
+                    "created_at",
+                    "signature",
+                ),
+                row,
+                strict=True,
+            )
+        )
+        try:
+            public.verify(bytes.fromhex(record["signature"]), _checkpoint_message(record))
+        except (InvalidSignature, ValueError) as exc:
+            raise ChainError("checkpoint signature does not verify") from exc
+
+
+def checkpoint_due(conn: sqlite3.Connection, *, events_since: int, seconds_since: int) -> bool:
+    """§26.5 cadence: at least every 500 events or 60 minutes, whichever first.
+
+    The settings maxima are pinned to that bound, so a configured cadence can
+    only be tighter than the MUST, never looser.
+    """
+    from telegram_mcp.storage.settings import get_setting
+
+    return events_since >= get_setting(conn, "audit.checkpoint_cadence_events") or (
+        seconds_since >= get_setting(conn, "audit.checkpoint_cadence_seconds")
+    )

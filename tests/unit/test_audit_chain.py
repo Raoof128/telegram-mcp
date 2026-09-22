@@ -166,3 +166,42 @@ def test_concurrent_appends_never_fork(tmp_path):
     seqs = [r[0] for r in check.execute("SELECT chain_seq FROM audit_events ORDER BY chain_seq")]
     assert seqs == list(range(1, len(seqs) + 1))
     verify_chain(check, _KEY)
+
+
+def test_checkpoint_signs_the_current_head(conn):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from telegram_mcp.disclosure.audit.chain import verify_checkpoints, write_checkpoint
+
+    seed = bytes(range(32))
+    appended = _append(conn, _event())
+    checkpoint = write_checkpoint(conn, seed, now="2026-09-22T00:00:00Z")
+
+    assert checkpoint["chain_seq"] == appended["chain_seq"]
+    public = Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes_raw()
+    verify_checkpoints(conn, public)
+
+
+def test_a_tampered_checkpoint_fails_verification(conn):
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from telegram_mcp.disclosure.audit.chain import verify_checkpoints, write_checkpoint
+
+    seed = bytes(range(32))
+    _append(conn, _event())
+    write_checkpoint(conn, seed, now="2026-09-22T00:00:00Z")
+    conn.execute("UPDATE audit_checkpoints SET last_event_mac = 'deadbeef'")
+    conn.commit()
+
+    public = Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes_raw()
+    with pytest.raises(ChainError):
+        verify_checkpoints(conn, public)
+
+
+def test_cadence_respects_the_spec_bound(conn):
+    from telegram_mcp.disclosure.audit.chain import checkpoint_due
+
+    # §26.5: at least every 500 events or 60 minutes, whichever comes first.
+    assert checkpoint_due(conn, events_since=500, seconds_since=0)
+    assert checkpoint_due(conn, events_since=0, seconds_since=3_600)
+    assert not checkpoint_due(conn, events_since=99, seconds_since=60)
