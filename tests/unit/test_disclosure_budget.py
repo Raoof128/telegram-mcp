@@ -56,3 +56,52 @@ def test_usage_adds_componentwise():
 def test_bucket_key_is_hashable_for_use_as_a_dict_key():
     key = BucketKey(client_id=1, kind=GLOBAL, subject_digest=subject_digest(GLOBAL))
     assert {key: Usage(0, 0)}[key] == Usage(0, 0)
+
+
+def test_catalogue_tools_charge_only_the_global_bucket():
+    from telegram_mcp.disclosure.budget import GLOBAL, buckets_for
+
+    data = {"projects": [{"project_ref": _P, "origin_project_refs": []}]}
+    buckets = buckets_for("telegram_list_projects", data, client_id=1)
+
+    assert len(buckets) == 1
+    assert next(iter(buckets)).kind == GLOBAL
+
+
+def test_three_projects_touch_four_buckets():
+    from telegram_mcp.disclosure.budget import GLOBAL, PROJECT, buckets_for
+
+    refs = ["tpr_" + c * 26 for c in "abc"]
+    data = {
+        "projects": [{"project_ref": r} for r in refs],
+        "search_scope": {"mode": "cross_project"},
+        "results": [
+            {"message_ref": "tgm_" + "a" * 26, "origin_project_refs": [refs[0]]},
+            {"message_ref": "tgm_" + "b" * 26, "origin_project_refs": [refs[1]]},
+            {"message_ref": "tgm_" + "c" * 26, "origin_project_refs": [refs[2]]},
+        ],
+    }
+    buckets = buckets_for("telegram_cross_project_search", data, client_id=1)
+
+    assert len(buckets) == 4
+    assert sum(1 for k in buckets if k.kind == PROJECT) == 3
+    assert sum(1 for k in buckets if k.kind == GLOBAL) == 1
+
+
+def test_a_shared_record_is_charged_once_globally_and_once_per_project():
+    from telegram_mcp.disclosure.budget import GLOBAL, PROJECT, buckets_for
+
+    a, b = "tpr_" + "a" * 26, "tpr_" + "b" * 26
+    data = {
+        "projects": [{"project_ref": a}, {"project_ref": b}],
+        "search_scope": {"mode": "cross_project"},
+        "results": [{"message_ref": "tgm_" + "a" * 26, "origin_project_refs": [a, b]}],
+    }
+    buckets = buckets_for("telegram_cross_project_search", data, client_id=1)
+
+    glob = next(u for k, u in buckets.items() if k.kind == GLOBAL)
+    projects = [u for k, u in buckets.items() if k.kind == PROJECT]
+    assert glob.records == 1
+    assert [u.records for u in projects] == [1, 1]
+    # Deduplication at the retrieval layer must never reach accounting.
+    assert sum(u.records for u in projects) == 2

@@ -16,9 +16,18 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
+from telegram_mcp.disclosure.measure import (
+    RECORD_ELEMENT,
+    bytes_disclosed,
+    project_bytes,
+    records_disclosed,
+)
 from telegram_mcp.keys.store import load_key
 
 __all__ = [
@@ -27,6 +36,8 @@ __all__ = [
     "BucketKey",
     "BudgetError",
     "Usage",
+    "buckets_for",
+    "committed_usage",
     "subject_digest",
     "window_start",
 ]
@@ -82,3 +93,44 @@ def window_start(now: float, minutes: int) -> str:
         raise ValueError("rolling window must be positive")
     started = datetime.fromtimestamp(now - minutes * 60, tz=UTC)
     return started.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def committed_usage(conn: sqlite3.Connection, key: BucketKey, *, since: str) -> Usage:
+    """Sum the ledger rows for one bucket inside the rolling window."""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(records_disclosed), 0), COALESCE(SUM(bytes_disclosed), 0)"
+        " FROM exposure_ledger"
+        " WHERE client_id = ? AND budget_subject_kind = ?"
+        "   AND budget_subject_digest = ? AND ts >= ?",
+        (key.client_id, key.kind, key.subject_digest, since),
+    ).fetchone()
+    return Usage(int(row[0]), int(row[1]))
+
+
+def buckets_for(
+    tool_name: str, data: Mapping[str, Any], *, client_id: int
+) -> dict[BucketKey, Usage]:
+    """Every bucket this response charges, with the quantity for each.
+
+    The global bucket takes the whole ``data`` object's canonical bytes and
+    every record. Each contributing project takes its own records and the
+    canonical bytes of the records attributed to it — ``data``-container
+    overhead is global only, and ``meta`` (including ``coverage`` and the
+    proof envelope) is outside the measurement entirely.
+    """
+    global_key = BucketKey(client_id, GLOBAL, subject_digest(GLOBAL))
+    buckets: dict[BucketKey, Usage] = {
+        global_key: Usage(records_disclosed(tool_name, data), bytes_disclosed(data))
+    }
+
+    per_project_bytes = project_bytes(tool_name, data)
+    per_project_records: dict[str, int] = {}
+    for record in data.get(RECORD_ELEMENT[tool_name], []):
+        for project_ref in record.get("origin_project_refs") or []:
+            per_project_records[project_ref] = per_project_records.get(project_ref, 0) + 1
+
+    for project_ref, size in per_project_bytes.items():
+        key = BucketKey(client_id, PROJECT, subject_digest(PROJECT, project_ref))
+        buckets[key] = Usage(per_project_records.get(project_ref, 0), size)
+
+    return buckets
