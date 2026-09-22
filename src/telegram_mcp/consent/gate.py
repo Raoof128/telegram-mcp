@@ -43,6 +43,11 @@ class DisclosureGate(Protocol):
 class SyntheticDisclosureGate:
     """Phase-2 synthetic gate: always allow, zero accounting.
 
+    Not the Phase-3 seam. ``authorize_disclosure`` returns a boolean, so it
+    cannot release a payload; the Phase-3 coordinator owns retrieval through
+    anchor refresh and returns the payload with its receipt. This class has
+    no production caller and survives Phase 3 only as a test double.
+
     ``accounted_records`` is a hard-zero property (not a counter) so the
     synthetic form cannot accumulate disclosure accounting by accident.
     """

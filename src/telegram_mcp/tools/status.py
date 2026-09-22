@@ -2,6 +2,15 @@
 
 Uses a public deterministic test key. Production key providers must never
 import or reuse this factory.
+
+**Phase-3 obligation.** Appendix K.2 step 4 tells a verifier to resolve a
+receipt's ``proof_key_id`` against the key this tool advertises. The key
+below is derived from 32 zero bytes: its private half is public knowledge.
+That is honest while nothing signs anything, and a forgery oracle the
+moment a real disclosure signer exists. Phase 3a MUST replace this factory
+with the recomputed ``disclosure-key`` id and public half before any
+receipt is signed. ``tests/security/test_demo_isolation.py`` carries the
+tripwire that fails when it is time.
 """
 
 import base64

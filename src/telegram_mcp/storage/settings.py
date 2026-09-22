@@ -75,13 +75,16 @@ SETTINGS_REGISTRY: dict[str, SettingSpec] = {
     "exposure_budget.hard_records_per_client_global": _budget(1_500),
     "exposure_budget.soft_bytes_per_client_global": _budget(1_500_000),
     "exposure_budget.hard_bytes_per_client_global": _budget(15_000_000),
-    # audit-checkpoint cadence: spec §12.2 allows the key and states no
-    # number, so these defaults are implementation choices.
+    # audit-checkpoint cadence. Spec §26.5 is normative and explicit: a
+    # signed checkpoint "at least every 500 events or 60 minutes, whichever
+    # comes first". The maxima are therefore that bound, not a comfort
+    # limit, so no operator write can configure a non-compliant cadence.
+    # The defaults are tighter than the bound, which §26.5 permits.
     "audit.checkpoint_cadence_events": SettingSpec(
-        "int", 100, minimum=1, maximum=100_000, origin="impl", phase=3
+        "int", 100, minimum=1, maximum=500, origin="impl", phase=3
     ),
     "audit.checkpoint_cadence_seconds": SettingSpec(
-        "int", 3_600, minimum=60, maximum=604_800, origin="impl", phase=3
+        "int", 3_600, minimum=60, maximum=3_600, phase=3
     ),
     # non-secret release metadata.
     "release.profile": SettingSpec("str", "safe_demo", choices=_RELEASE_PROFILES),

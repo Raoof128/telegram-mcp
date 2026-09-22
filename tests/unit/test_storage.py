@@ -245,3 +245,18 @@ def test_no_registry_key_can_carry_telegram_content():
     forbidden = ("query", "message", "body", "caption", "username", "phone", "url", "text")
     for key in SETTINGS_REGISTRY:
         assert not any(word in key.lower() for word in forbidden)
+
+
+def test_checkpoint_cadence_cannot_exceed_the_spec_26_5_bound():
+    """Spec §26.5: a checkpoint at least every 500 events or 60 minutes.
+
+    The registry bounds must make a non-compliant cadence unwritable; an
+    operator with user presence must not be able to configure a cadence
+    that violates the MUST.
+    """
+    assert validate_setting("audit.checkpoint_cadence_events", 500) == 500
+    assert validate_setting("audit.checkpoint_cadence_seconds", 3_600) == 3_600
+    with pytest.raises(ValueError):
+        validate_setting("audit.checkpoint_cadence_events", 501)
+    with pytest.raises(ValueError):
+        validate_setting("audit.checkpoint_cadence_seconds", 3_601)
