@@ -12,7 +12,7 @@ import json
 import subprocess
 
 VECTORS = "tests/fixtures/consent/jcs_vectors.json"
-AGENT_BIN = "build/consent/telegram-mcp-consent"  # Task 4 re-points this at the bundle binary and re-runs green
+AGENT_BIN = "build/consent/TelegramMCPConsent.app/Contents/MacOS/telegram-mcp-consent"
 
 
 def test_jcs_vectors_match_frozen_bytes():
@@ -245,3 +245,190 @@ def test_handshake_refuses_an_agent_with_the_wrong_transport_key():
     result = run_scenario("wrong-transport-key", timeout=60)
     assert result["handshake_completed"] is False
     assert result["agent_exited"] is True
+
+
+# --- Task 4: pairing, bundle, signing ----------------------------------------
+
+BUNDLE = "build/consent/TelegramMCPConsent.app"
+LAUNCH_AGENT_PLIST = "agent/ConsentAgent-Info.plist"
+
+
+def _pairing(*args, timeout=60):
+    return subprocess.run([AGENT_BIN, *args], capture_output=True, text=True, timeout=timeout)
+
+
+def test_adhoc_build_cannot_pair():
+    gen = _pairing("pairing", "generate")
+    assert gen.returncode != 0
+    assert "ad-hoc" in (gen.stdout + gen.stderr).lower()
+
+
+def test_adhoc_build_changes_no_pairing_state():
+    """A refused pairing must leave the keychain exactly as it was."""
+    before = _pairing("pairing-status")
+    assert _pairing("pairing", "generate").returncode != 0
+    assert _pairing("pairing", "import-daemon-pin", "AAAA").returncode != 0
+    after = _pairing("pairing-status")
+    assert before.stdout == after.stdout
+
+
+def test_pairing_status_reports_the_real_code_identity():
+    """Identity is read from the signature, never self-reported."""
+    status = _pairing("pairing-status")
+    assert status.returncode == 0, status.stderr
+    report = json.loads(status.stdout)
+    assert report["identity"]["kind"] in {"adhoc", "unsigned", "apple-development", "developer-id"}
+    codesign = subprocess.run(
+        ["codesign", "-dv", AGENT_BIN], capture_output=True, text=True, check=False, timeout=60
+    )
+    combined = codesign.stdout + codesign.stderr
+    if "adhoc" in combined:
+        assert report["identity"]["kind"] == "adhoc"
+    if "Authority=" in combined:
+        authority = next(
+            line.split("=", 1)[1] for line in combined.splitlines() if line.startswith("Authority=")
+        )
+        assert report["identity"]["authority"] == authority
+
+
+def test_signed_build_pairs(signed_agent_binary):
+    """A certificate-signed bundle is pairable; the ad-hoc one is not.
+
+    The plan asked for `developer-id:` here. Developer ID governs
+    distribution — Gatekeeper checks software that arrives from elsewhere,
+    and locally built software is not checked — so the rule this agent
+    enforces is a *stable* identity, which a free Apple Development
+    certificate provides. The deviation is recorded in the phase-2b evidence.
+    """
+    out = subprocess.run(
+        [str(signed_agent_binary), "pairing-status"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    report = json.loads(out.stdout)
+    assert report["identity"]["kind"] in {"developer-id", "apple-development"}
+    assert report["identity"]["team_id"]
+    assert report["pairable"] is True
+    assert json.loads(_pairing("pairing-status").stdout)["pairable"] is False
+
+
+@pytest.mark.platform_gated
+def test_pairing_generate_creates_the_enclave_and_transport_keys(signed_agent_binary):
+    """Host-mutating: writes real keychain records for this operator."""
+    generated = subprocess.run(
+        [str(signed_agent_binary), "pairing", "generate"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert generated.returncode == 0, generated.stderr
+    report = json.loads(generated.stdout)
+    assert re.fullmatch(r"p256:sha256:[0-9a-f]{64}", report["approval_fingerprint"])
+    assert re.fullmatch(r"ed25519:sha256:[0-9a-f]{64}", report["transport_fingerprint"])
+
+    status = json.loads(
+        subprocess.run(
+            [str(signed_agent_binary), "pairing-status"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+    )
+    assert status["records"]["approval"] == report["approval_fingerprint"]
+    assert status["records"]["transport"] == report["transport_fingerprint"]
+
+    # the agent restarts onto the same public key
+    again = json.loads(
+        subprocess.run(
+            [str(signed_agent_binary), "pairing", "export", "approval"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+    )
+    assert again["fingerprint"] == report["approval_fingerprint"]
+
+
+def test_launch_agent_definition_is_disabled_by_default():
+    import plistlib
+
+    with open(LAUNCH_AGENT_PLIST, "rb") as handle:
+        plist = plistlib.load(handle)
+    assert plist["RunAtLoad"] is False
+    assert plist["StandardOutPath"] == "/dev/null"
+    assert plist["StandardErrorPath"] == "/dev/null"
+    assert plist["ProcessType"] == "Interactive"
+    assert plist["ProgramArguments"][0].endswith("MacOS/telegram-mcp-consent")
+
+
+def test_the_installed_copy_matches_the_agent_definition():
+    """One source of truth: the launcher installs exactly this file."""
+    import plistlib
+
+    with open(LAUNCH_AGENT_PLIST, "rb") as handle:
+        source = plistlib.load(handle)
+    with open("scripts/consent-agent.plist", "rb") as handle:
+        installed = plistlib.load(handle)
+    assert source == installed
+
+
+def test_the_bundle_is_assembled_and_signed():
+    from pathlib import Path
+
+    assert Path(BUNDLE, "Contents", "MacOS", "telegram-mcp-consent").exists()
+    assert Path(BUNDLE, "Contents", "Info.plist").exists()
+    assert Path(BUNDLE, "Contents", "_CodeSignature").exists()
+    verify = subprocess.run(
+        ["codesign", "--verify", "--strict", BUNDLE],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert verify.returncode == 0, verify.stderr
+
+
+def test_no_challenge_or_display_bytes_reach_any_agent_output_file(tmp_path):
+    from pathlib import Path
+
+    from tests.agent.stub_broker import run_scenario
+
+    result = run_scenario("good", timeout=60)
+    assert result["approved"] is True
+    case = _case()
+    secrets_in_play = [
+        "list chats",
+        "Ops",
+        json.load(open(VECTORS))["cases"][0]["input"]["nonce"],
+    ]
+    for path in Path("build").rglob("*"):
+        if not path.is_file() or path.suffix in {".o", ""} and path.stat().st_size > 5_000_000:
+            continue
+        blob = path.read_bytes()
+        for needle in secrets_in_play:
+            assert needle.encode() not in blob, f"{needle!r} leaked into {path}"
+    assert case["jcs_hex"] not in (result.get("agent_stdout", "") + result.get("agent_stderr", ""))
+
+
+def test_running_without_a_pairing_record_refuses_with_a_fixed_error():
+    """A deleted or absent keychain record means re-pair, never degrade."""
+    out = _pairing("run", "/tmp/telegram-mcp-absent.sock")
+    assert out.returncode != 0
+    combined = out.stdout + out.stderr
+    assert "MISSING-RECORD" in combined
+    assert "pairing generate" in combined
+    assert "sock" not in out.stdout  # no socket work was attempted
+
+
+def test_approval_without_a_paired_enclave_key_refuses(tmp_path):
+    out = subprocess.run(
+        [AGENT_BIN, "approve", VECTORS, "0"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "CONSENT_NO_UI": "1"},
+    )
+    assert out.returncode != 0
+    assert "NO-UI" in (out.stdout + out.stderr)

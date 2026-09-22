@@ -3,6 +3,26 @@
 // Task 1: TG-JCS-v1 canonical encoder + Ed25519 challenge verification, with
 // `selftest-jcs` / `selftest-verify` subcommands — pure computation, headless.
 //
+// Task 4: pairing. The approval key is generated inside the Secure Enclave
+// under a biometry-bound access control and never leaves it; only its
+// encrypted blob and the software transport key live in the operator
+// keychain, and the daemon's challenge public key is pinned there rather
+// than compiled in, so rotating it is a re-pairing ceremony and not a
+// rebuild.
+//
+// Pairing requires a *stable* code identity and refuses ad-hoc or unsigned
+// builds, whose identity changes with every rebuild — a key bound to one
+// would be bound to nothing. It does not require a Developer ID
+// certificate. Developer ID and notarization govern distribution: Gatekeeper
+// checks software that arrives from elsewhere, and locally built software
+// running on its own Mac is not checked at all. A free Apple Development
+// certificate gives the same stable binding for an agent that never leaves
+// this machine, and the Enclave path used here needs no entitlement: the
+// key stays in the Enclave and the app keeps only the encrypted
+// `dataRepresentation` blob, so the data-protection keychain — the part that
+// does require a provisioning-profile-authorised entitlement — is never
+// involved. Verified on this host before the rule was written.
+//
 // Task 3: the RV-1 rendezvous client — connect, authenticate both ways with
 // the *transport* key (never the biometric approval key, so starting MCP
 // costs no prompt), then serve prompts until the broker disconnects and
@@ -500,6 +520,304 @@ func emitApproval(_ envelope: ApprovalEnvelope, publicKeyDER: Data) {
         let text = String(data: data, encoding: .utf8)
     else {
         eprint("approval: could not encode output")
+        exit(1)
+    }
+    print(text)
+}
+
+// MARK: - Code identity
+
+struct CodeIdentity {
+    let kind: String  // "developer-id" | "apple-development" | "adhoc" | "unsigned" | "other"
+    let authority: String?
+    let teamID: String?
+    let bundleID: String?
+
+    /// Certificate-backed, so the keychain and Enclave ACLs bind to
+    /// something that survives a rebuild.
+    var isStable: Bool { kind == "developer-id" || kind == "apple-development" }
+
+    var json: [String: Any] {
+        [
+            "kind": kind,
+            "authority": authority ?? NSNull(),
+            "team_id": teamID ?? NSNull(),
+            "bundle_id": bundleID ?? NSNull(),
+        ]
+    }
+}
+
+/// Read this process's own signature. Self-reporting is never trusted:
+/// every field here comes from the code signature the kernel sees.
+func currentCodeIdentity() -> CodeIdentity {
+    var code: SecCode?
+    guard SecCodeCopySelf(SecCSFlags(), &code) == errSecSuccess, let live = code else {
+        return CodeIdentity(kind: "unsigned", authority: nil, teamID: nil, bundleID: nil)
+    }
+    var staticCode: SecStaticCode?
+    guard SecCodeCopyStaticCode(live, SecCSFlags(), &staticCode) == errSecSuccess,
+        let frozen = staticCode
+    else {
+        return CodeIdentity(kind: "unsigned", authority: nil, teamID: nil, bundleID: nil)
+    }
+    var infoRef: CFDictionary?
+    let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
+    let status = SecCodeCopySigningInformation(frozen, flags, &infoRef)
+    guard status == errSecSuccess, let info = infoRef as? [String: Any] else {
+        return CodeIdentity(kind: "unsigned", authority: nil, teamID: nil, bundleID: nil)
+    }
+    let bundleID = info[kSecCodeInfoIdentifier as String] as? String
+    let teamID = info[kSecCodeInfoTeamIdentifier as String] as? String
+    let signFlags = (info[kSecCodeInfoFlags as String] as? UInt32) ?? 0
+    let adhocFlag: UInt32 = 0x2
+    let certificates = info[kSecCodeInfoCertificates as String] as? [SecCertificate] ?? []
+    if signFlags & adhocFlag != 0 || certificates.isEmpty {
+        return CodeIdentity(kind: "adhoc", authority: nil, teamID: teamID, bundleID: bundleID)
+    }
+    var commonName: CFString?
+    SecCertificateCopyCommonName(certificates[0], &commonName)
+    let authority = commonName as String?
+    let kind: String
+    switch authority {
+    case let name? where name.hasPrefix("Developer ID Application"):
+        kind = "developer-id"
+    case let name? where name.hasPrefix("Apple Development") || name.hasPrefix("Apple Distribution"):
+        kind = "apple-development"
+    default:
+        kind = "other"
+    }
+    return CodeIdentity(kind: kind, authority: authority, teamID: teamID, bundleID: bundleID)
+}
+
+enum PairingError: Error, CustomStringConvertible {
+    case adHocIdentity(String)
+    case wrongIdentity(String)
+    case enclaveUnavailable
+    case keychain(OSStatus, String)
+    case missingRecord(String)
+    case malformedInput(String)
+
+    var description: String {
+        switch self {
+        case let .adHocIdentity(m): return "AD-HOC-IDENTITY: \(m)"
+        case let .wrongIdentity(m): return "WRONG-IDENTITY: \(m)"
+        case .enclaveUnavailable: return "ENCLAVE-UNAVAILABLE: this Mac has no Secure Enclave"
+        case let .keychain(status, m): return "KEYCHAIN-ERROR(\(status)): \(m)"
+        case let .missingRecord(m): return "MISSING-RECORD: \(m)"
+        case let .malformedInput(m): return "MALFORMED-INPUT: \(m)"
+        }
+    }
+}
+
+/// Pairing binds keys to a code identity, so it refuses anything that has
+/// no stable one. An ad-hoc build changes identity on every rebuild; a
+/// certificate-backed signature (Developer ID or Apple Development) does not.
+func requireStableIdentity() throws -> CodeIdentity {
+    let identity = currentCodeIdentity()
+    switch identity.kind {
+    case "developer-id", "apple-development":
+        return identity
+    case "adhoc", "unsigned":
+        throw PairingError.adHocIdentity(
+            "this build is ad-hoc or unsigned; pair only a certificate-signed bundle"
+        )
+    default:
+        throw PairingError.wrongIdentity(
+            "signing authority \(identity.authority ?? "unknown") is not a recognised Apple certificate"
+        )
+    }
+}
+
+// MARK: - Keychain records
+
+let keychainService = "com.telegram-mcp.consent"
+let approvalBlobAccount = "approval-key-blob"
+let transportKeyAccount = "transport-key"
+let daemonPinAccount = "daemon-challenge-pin"
+
+func keychainRead(_ account: String) -> Data? {
+    let query: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: keychainService,
+        kSecAttrAccount as String: account,
+        kSecReturnData as String: true,
+        kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var out: CFTypeRef?
+    guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess else { return nil }
+    return out as? Data
+}
+
+func keychainWrite(_ account: String, _ value: Data) throws {
+    let base: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: keychainService,
+        kSecAttrAccount as String: account,
+    ]
+    let update = SecItemUpdate(base as CFDictionary, [kSecValueData as String: value] as CFDictionary)
+    if update == errSecSuccess { return }
+    guard update == errSecItemNotFound else {
+        throw PairingError.keychain(update, "could not update \(account)")
+    }
+    var insert = base
+    insert[kSecValueData as String] = value
+    insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    let added = SecItemAdd(insert as CFDictionary, nil)
+    guard added == errSecSuccess else {
+        throw PairingError.keychain(added, "could not store \(account)")
+    }
+}
+
+// MARK: - Secure Enclave approval key
+
+struct EnclaveApprovalKey: ApprovalKey {
+    let key: SecureEnclave.P256.Signing.PrivateKey
+
+    var publicKeyDER: Data { key.publicKey.derRepresentation }
+
+    func signature(over data: Data) throws -> Data {
+        try key.signature(for: data).derRepresentation
+    }
+}
+
+/// Loads the Enclave key with the exact `LAContext` the prompt ran on, so
+/// the signature and the biometric check belong to one consent.
+struct EnclaveKeyProvider: KeyProvider {
+    func keyForApproval(context: LAContext?) throws -> ApprovalKey {
+        guard SecureEnclave.isAvailable else { throw PairingError.enclaveUnavailable }
+        guard let blob = keychainRead(approvalBlobAccount) else {
+            throw PairingError.missingRecord("approval key: run `pairing generate`")
+        }
+        let key = try SecureEnclave.P256.Signing.PrivateKey(
+            dataRepresentation: blob, authenticationContext: context
+        )
+        return EnclaveApprovalKey(key: key)
+    }
+}
+
+// MARK: - Pairing commands
+
+func pairingGenerate() -> Int32 {
+    do {
+        _ = try requireStableIdentity()
+        guard SecureEnclave.isAvailable else { throw PairingError.enclaveUnavailable }
+        var accessError: Unmanaged<CFError>?
+        guard let access = SecAccessControlCreateWithFlags(
+            kCFAllocatorDefault,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            [.privateKeyUsage, .biometryCurrentSet],
+            &accessError
+        ) else {
+            throw PairingError.keychain(errSecParam, "access control: \(accessError.debugDescription)")
+        }
+        let approval = try SecureEnclave.P256.Signing.PrivateKey(accessControl: access)
+        let transport = Curve25519.Signing.PrivateKey()
+        try keychainWrite(approvalBlobAccount, approval.dataRepresentation)
+        try keychainWrite(transportKeyAccount, transport.rawRepresentation)
+        let approvalDER = approval.publicKey.derRepresentation
+        let transportRaw = transport.publicKey.rawRepresentation
+        emitJSON([
+            "approval_public_der_b64url": base64URLEncode(approvalDER),
+            "approval_fingerprint": "p256:sha256:" + hexEncode(Data(SHA256.hash(data: approvalDER))),
+            "transport_public_b64url": base64URLEncode(transportRaw),
+            "transport_fingerprint": "ed25519:sha256:" + hexEncode(Data(SHA256.hash(data: transportRaw))),
+        ])
+        return 0
+    } catch {
+        eprint("pairing generate: \(error)")
+        return 1
+    }
+}
+
+func pairingExport(_ which: String?) -> Int32 {
+    switch which {
+    case "approval":
+        guard let blob = keychainRead(approvalBlobAccount),
+            let key = try? SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: blob)
+        else {
+            eprint("pairing export: \(PairingError.missingRecord("approval key"))")
+            return 1
+        }
+        let der = key.publicKey.derRepresentation
+        emitJSON([
+            "name": "agent-approval-key",
+            "public_der_b64url": base64URLEncode(der),
+            "fingerprint": "p256:sha256:" + hexEncode(Data(SHA256.hash(data: der))),
+        ])
+        return 0
+    case "transport":
+        guard let seed = keychainRead(transportKeyAccount),
+            let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+        else {
+            eprint("pairing export: \(PairingError.missingRecord("transport key"))")
+            return 1
+        }
+        let raw = key.publicKey.rawRepresentation
+        emitJSON([
+            "name": "agent-transport-key",
+            "public_b64url": base64URLEncode(raw),
+            "fingerprint": "ed25519:sha256:" + hexEncode(Data(SHA256.hash(data: raw))),
+        ])
+        return 0
+    default:
+        eprint("pairing export: expected <approval|transport>")
+        return 2
+    }
+}
+
+func pairingImportDaemonPin(_ encoded: String?) -> Int32 {
+    do {
+        _ = try requireStableIdentity()
+        guard let text = encoded, let raw = base64URLDecode(text), raw.count == 32,
+            (try? Curve25519.Signing.PublicKey(rawRepresentation: raw)) != nil
+        else {
+            throw PairingError.malformedInput("expected 32 base64url-encoded public key bytes")
+        }
+        try keychainWrite(daemonPinAccount, raw)
+        emitJSON([
+            "name": "daemon-challenge-key",
+            "fingerprint": "ed25519:sha256:" + hexEncode(Data(SHA256.hash(data: raw))),
+        ])
+        return 0
+    } catch {
+        eprint("pairing import-daemon-pin: \(error)")
+        return 1
+    }
+}
+
+func pairingStatus() -> Int32 {
+    let identity = currentCodeIdentity()
+    var records: [String: Any] = [:]
+    if let blob = keychainRead(approvalBlobAccount),
+        let key = try? SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: blob)
+    {
+        records["approval"] = "p256:sha256:" + hexEncode(Data(SHA256.hash(data: key.publicKey.derRepresentation)))
+    }
+    if let seed = keychainRead(transportKeyAccount),
+        let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+    {
+        records["transport"] = "ed25519:sha256:" + hexEncode(Data(SHA256.hash(data: key.publicKey.rawRepresentation)))
+    }
+    if let pin = keychainRead(daemonPinAccount) {
+        records["daemon_pin"] = "ed25519:sha256:" + hexEncode(Data(SHA256.hash(data: pin)))
+    }
+    var line = identity.kind
+    if let authority = identity.authority { line += ": " + authority }
+    emitJSON([
+        "identity": identity.json,
+        "identity_line": line,
+        "records": records,
+        "pairable": identity.isStable,
+        "paired": records["approval"] != nil && records["transport"] != nil && records["daemon_pin"] != nil,
+    ])
+    return 0
+}
+
+func emitJSON(_ object: [String: Any]) {
+    guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+        let text = String(data: data, encoding: .utf8)
+    else {
+        eprint("output: could not encode")
         exit(1)
     }
     print(text)
@@ -1116,14 +1434,6 @@ func selfTestApproveWrongDaemonKey(vectorsPath: String?) -> Int32 {
 /// keychain. Anything else is a refusal.
 func productionKeyProvider() -> KeyProvider { EnclaveKeyProvider() }
 
-struct EnclaveKeyProvider: KeyProvider {
-    func keyForApproval(context: LAContext?) throws -> ApprovalKey {
-        throw ApprovalError.providerUnavailable(
-            "no paired Secure Enclave approval key (Plan 2b Task 4)"
-        )
-    }
-}
-
 /// Headless rendezvous run: the same protocol code as production, with the
 /// key material injected through selftest-only environment variables. The
 /// production `run` path reads none of them.
@@ -1157,9 +1467,15 @@ func selfTestRendezvous(socketPath: String?) -> Int32 {
 /// The paired transport key and the pinned daemon challenge key, both from
 /// the operator keychain. Bound by Plan 2b Task 4.
 func pairedIdentity() throws -> RendezvousIdentity {
-    throw ApprovalError.providerUnavailable(
-        "no keychain pairing record (Plan 2b Task 4)"
-    )
+    guard let seed = keychainRead(transportKeyAccount),
+        let transport = try? Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+    else {
+        throw PairingError.missingRecord("transport key: run `pairing generate`")
+    }
+    guard let pin = keychainRead(daemonPinAccount), pin.count == 32 else {
+        throw PairingError.missingRecord("daemon pin: run `pairing import-daemon-pin`")
+    }
+    return RendezvousIdentity(transportKey: transport, daemonPublic: pin)
 }
 
 // MARK: - Production approval command
@@ -1201,7 +1517,7 @@ func runCommand(socketPath: String?) -> Int32 {
     do {
         identity = try pairedIdentity()
     } catch {
-        eprint("run: \\(error)")
+        eprint("run: \(error)")
         return 3
     }
     return runAgent(
@@ -1224,6 +1540,10 @@ struct ConsentAgent {
     usage: telegram-mcp-consent <command> [arguments]
 
       run <socket-path>               serve prompts from the daemon
+      pairing generate                 create the Enclave and transport keys
+      pairing export <approval|transport>
+      pairing import-daemon-pin <b64url>
+      pairing-status                   signing identity and pairing records
       approve <vectors-file> [index]   verify, show and sign one challenge
       selftest-jcs <vectors-file>
       selftest-verify <vectors-file>
@@ -1249,6 +1569,17 @@ struct ConsentAgent {
             exit(runCommand(socketPath: path))
         case "selftest-rendezvous":
             exit(selfTestRendezvous(socketPath: path))
+        case "pairing":
+            switch path {
+            case "generate": exit(pairingGenerate())
+            case "export": exit(pairingExport(extra))
+            case "import-daemon-pin": exit(pairingImportDaemonPin(extra))
+            default:
+                eprint("pairing: expected <generate|export|import-daemon-pin>")
+                exit(2)
+            }
+        case "pairing-status":
+            exit(pairingStatus())
         case "selftest-jcs":
             exit(selfTestJCS(vectorsPath: path))
         case "selftest-verify":

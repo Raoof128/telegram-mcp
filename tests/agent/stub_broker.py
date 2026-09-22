@@ -50,7 +50,7 @@ from telegram_mcp.ipc.framing import (
 )
 from telegram_mcp.ipc.rendezvous import serve_rendezvous
 
-AGENT_BIN = "build/consent/telegram-mcp-consent"
+AGENT_BIN = "build/consent/TelegramMCPConsent.app/Contents/MacOS/telegram-mcp-consent"
 
 # Plan 2a's normative fixture seed for the daemon challenge key.
 CHALLENGE_KEY = b"\x01" * 32
