@@ -435,7 +435,11 @@ def test_excerpt_shorter_than_limit_is_not_truncated():
 def test_transformation_never_sanitises_message_text():
     # Bidi and C0 controls survive verbatim: sanitising a body would corrupt
     # the evidence the model reads (design §3.1).
-    hostile = "a‮b\u0007c"
+    # Built with chr() rather than a literal: ruff's PLE2502 trojan-source
+    # rule rejects a bidi control in source, and it is right to -- the point
+    # here is that the transformer passes the character through, not that
+    # this file contains one.
+    hostile = "a" + chr(0x202E) + "b" + chr(0x07) + "c"
     out = transform_record({"message_ref": "tgm_" + "a" * 26, "text": hostile}, "full_text", None)
     assert out["text"] == hostile
 
