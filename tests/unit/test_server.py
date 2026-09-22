@@ -5,7 +5,8 @@ from telegram_mcp.server import build_server
 def test_minimal_capabilities_and_instructions():
     server = build_server(DemoConfig())
     capabilities = server.create_initialization_options().capabilities.model_dump(
-        by_alias=True, exclude_none=True,
+        by_alias=True,
+        exclude_none=True,
     )
     assert "tools" in capabilities
     assert not any(key in capabilities for key in ("prompts", "resources", "tasks"))

@@ -1,6 +1,6 @@
 """SDK result construction and privacy-safe bounded errors."""
 
-import mcp.types as types
+from mcp import types
 
 from telegram_mcp.contract import load_contracts
 from telegram_mcp.observability.logging import emit_event

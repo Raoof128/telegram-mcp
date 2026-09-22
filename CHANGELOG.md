@@ -15,3 +15,11 @@
 - **Files changed:** `pyproject.toml`, `uv.lock`, `.python-version`, `.gitignore`, `src/telegram_mcp/__init__.py`, `tests/unit/test_package.py`, `docs/verification/dependencies.md`, `AGENT.md`, this file.
 - **Verification:** `uv sync --locked` (67 packages); mcp 2.2.0 / telethon 1.45.0 confirmed; `pytest tests/unit/test_package.py -q` 1 passed (RED→GREEN); `git check-ignore` blocks session/env probes.
 - **Follow-ups:** Continue Phase-1 Tasks 2–7 natively; no Telegram access, no service users, no remote.
+
+### 2026-09-22 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Telegram MCP Phase-1 foundation complete (Tasks 1–7).
+- **Summary:** Synthetic-only MCP foundation: locked deps, validated ten-tool contracts, closed dispatch, public-SDK transport, 158-test acceptance with modern + legacy wire parity.
+- **Files changed:** `src/telegram_mcp`, `scripts/extract_contracts.py`, test suites, `README.md`, `docs/verification/`, `AGENT.md`, this file.
+- **Verification:** 158 passed; lint/type/format clean; wheel fresh-install smoke OK; gates A/B/I/K/L partial only.
+- **Follow-ups:** Phase-2 privileged runtime plan next; no production claim.

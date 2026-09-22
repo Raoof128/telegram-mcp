@@ -173,16 +173,20 @@ def test_message_definition_is_at_schema_root():
 
 def test_conflicting_definitions_rejected():
     with pytest.raises(ValueError, match="conflicting schema definition"):
-        assemble_output({"$defs": {"x": {"type": "string"}}}, {"$defs": {"x": {"type": "integer"}}}, {})
+        assemble_output(
+            {"$defs": {"x": {"type": "string"}}}, {"$defs": {"x": {"type": "integer"}}}, {}
+        )
 
 
 def test_external_ref_rejected():
+    from jsonschema.exceptions import _WrappedReferencingError  # exact pin: jsonschema==4.26.0
+
     contracts = load_contracts()
     bad = copy.deepcopy(contracts["telegram_status"].output_schema)
     bad["oneOf"][0]["properties"]["data"]["properties"]["connected"] = {
         "$ref": "https://example.invalid/schema.json#/x"
     }
-    with pytest.raises(Exception):
+    with pytest.raises(_WrappedReferencingError):
         # External ref cannot resolve locally; validator raises instead of fetching.
         Draft202012Validator(bad, format_checker=FormatChecker()).validate(
             {"ok": True, "data": _data("telegram_status"), "meta": GATEWAY_META}
@@ -297,4 +301,7 @@ def test_tool_not_found_not_in_error_enum():
     for tool in EXPECTED_TOOLS:
         schema = contracts[tool].output_schema
         error_branch = schema["oneOf"][1]
-        assert "TOOL_NOT_FOUND" not in error_branch["properties"]["error"]["properties"]["code"]["enum"]
+        assert (
+            "TOOL_NOT_FOUND"
+            not in error_branch["properties"]["error"]["properties"]["code"]["enum"]
+        )

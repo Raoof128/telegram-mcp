@@ -42,7 +42,7 @@ def strict_json_loads(text: str) -> Any:
 
 def assemble_output(data: dict, meta: dict, error: dict) -> dict:
     data, meta, error = deepcopy((data, meta, error))
-    definitions = {}
+    definitions: dict[str, Any] = {}
     for fragment in (data, meta, error):
         for name, definition in fragment.pop("$defs", {}).items():
             if name in definitions and definitions[name] != definition:
@@ -50,6 +50,10 @@ def assemble_output(data: dict, meta: dict, error: dict) -> dict:
             definitions[name] = definition
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
+        # "type": "object" is implied by both oneOf branches and keeps the
+        # legacy handshake-era wire Tool model (which requires outputSchema.type)
+        # able to serve the same descriptors. Semantically equivalent to E.10.
+        "type": "object",
         "$defs": definitions,
         "oneOf": [
             {
@@ -116,7 +120,7 @@ def load_contracts() -> dict[str, ToolContract]:
     global _contracts_cache
     if _contracts_cache is not None:
         return {name: c for name, c in _contracts_cache.items()}
-    import importlib.resources as resources
+    from importlib import resources
 
     base = resources.files("telegram_mcp") / "contracts"
     manifest = strict_json_loads((base / "manifest.json").read_text(encoding="utf-8"))

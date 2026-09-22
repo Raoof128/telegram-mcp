@@ -94,9 +94,7 @@ def test_status_empty_accepted_nonobject_rejected():
 def test_naive_offset_rejected():
     c = load_contracts()["telegram_search_messages"]
     with pytest.raises(ArgumentError) as exc:
-        validate_arguments(
-            c, {"project_ref": TPR, "query": "q", "since": "2026-09-22T00:00:00"}
-        )
+        validate_arguments(c, {"project_ref": TPR, "query": "q", "since": "2026-09-22T00:00:00"})
     assert exc.value.code == "INVALID_TIME"
 
 
@@ -109,7 +107,9 @@ def test_reversed_and_equal_ranges_rejected():
         )
     assert exc.value.code == "INVALID_TIME"
     with pytest.raises(ArgumentError) as exc:
-        validate_arguments(c, {**base, "since": "2026-09-22T00:00:00Z", "until": "2026-09-22T00:00:00Z"})
+        validate_arguments(
+            c, {**base, "since": "2026-09-22T00:00:00Z", "until": "2026-09-22T00:00:00Z"}
+        )
     assert exc.value.code == "INVALID_TIME"
 
 
@@ -140,9 +140,7 @@ def test_offset_equivalent_instants():
 def test_leap_second_is_invalid_time():
     c = load_contracts()["telegram_search_messages"]
     with pytest.raises(ArgumentError) as exc:
-        validate_arguments(
-            c, {"project_ref": TPR, "query": "q", "since": "2016-12-31T23:59:60Z"}
-        )
+        validate_arguments(c, {"project_ref": TPR, "query": "q", "since": "2016-12-31T23:59:60Z"})
     assert exc.value.code == "INVALID_TIME"
 
 

@@ -2,8 +2,6 @@
 
 import sys
 
-import pytest
-
 from telegram_mcp import config as config_module
 
 

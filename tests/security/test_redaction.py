@@ -47,7 +47,9 @@ def test_status_reveals_no_path_label_or_secret():
 
 def test_secret_in_args_never_reflected(caplog):
     caplog.set_level(logging.INFO, logger="telegram_mcp")
-    result = dispatch("telegram_resolve_peer", {"project_ref": TPR_A, "query": "SYNTHETIC_CANARY_Q"})
+    result = dispatch(
+        "telegram_resolve_peer", {"project_ref": TPR_A, "query": "SYNTHETIC_CANARY_Q"}
+    )
     raw = result.model_dump_json(by_alias=True)
     assert "SYNTHETIC_CANARY_Q" not in raw
     assert "SYNTHETIC_CANARY_Q" not in caplog.text

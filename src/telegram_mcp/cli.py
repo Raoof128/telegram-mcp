@@ -9,11 +9,9 @@ logger = logging.getLogger("telegram_mcp")
 
 
 def _init_safe_logging() -> None:
-    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    logger.setLevel(logging.INFO)
-    for noisy in ("uvicorn", "uvicorn.access", "uvicorn.error", "mcp"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
-        logging.getLogger(noisy).propagate = False
+    from telegram_mcp.observability.logging import install_safe_logging
+
+    install_safe_logging()
 
 
 def main() -> None:

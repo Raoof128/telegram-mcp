@@ -36,12 +36,13 @@ def validate_arguments(contract: ToolContract, arguments: object) -> dict[str, A
         code = "INVALID_TIME" if exc.validator == "format" else "INVALID_ARGUMENT"
         raise ArgumentError(code) from None
     value = deepcopy(arguments)
+    if not isinstance(value, dict):
+        raise ArgumentError("INVALID_ARGUMENT")
     for name, property_schema in contract.input_schema.get("properties", {}).items():
         if name not in value and "default" in property_schema:
             value[name] = deepcopy(property_schema["default"])
     if isinstance(value, dict) and "since" in value and "until" in value:
         since, until = value["since"], value["until"]
-        if since is not None and until is not None:
-            if _parse_offset(since) >= _parse_offset(until):
-                raise ArgumentError("INVALID_TIME")
+        if since is not None and until is not None and _parse_offset(since) >= _parse_offset(until):
+            raise ArgumentError("INVALID_TIME")
     return value

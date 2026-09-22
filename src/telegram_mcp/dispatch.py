@@ -2,7 +2,7 @@
 
 import asyncio
 
-import mcp.types as types
+from mcp import types
 
 from telegram_mcp.contract import EXPECTED_TOOLS, load_contracts
 from telegram_mcp.results import error_result, success_result, unknown_tool_result
@@ -17,12 +17,12 @@ def dispatch(
         return unknown_tool_result()
     contracts = load_contracts()
     try:
-        validated = validate_arguments(contracts[name], arguments)
+        _validated = validate_arguments(contracts[name], arguments)
     except ArgumentError as exc:
         return error_result(exc.code)
     except (asyncio.CancelledError, KeyboardInterrupt):
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001 — unexpected failures are bounded INTERNAL_ERROR
         return error_result("INTERNAL_ERROR")
     try:
         if name == "telegram_status":
@@ -33,5 +33,5 @@ def dispatch(
         return error_result("POLICY_UNCONFIGURED")
     except (asyncio.CancelledError, KeyboardInterrupt):
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001 — unexpected failures are bounded INTERNAL_ERROR
         return error_result("INTERNAL_ERROR")
