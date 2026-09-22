@@ -47,6 +47,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ADMIN_COMMANDS",
+    "CONTROL_REQUESTS",
     "AdminRouter",
     "PeerCredentials",
     "getpeereid",
@@ -128,6 +129,9 @@ ADMIN_COMMANDS: tuple[str, ...] = (
 # proof for `lock` too, which is the stricter choice and the one taken here.
 PRESENCE_GATED: frozenset[str] = frozenset({"lock", "unlock"})
 
+# Bootstrap control requests, outside the §33 surface (design §2).
+CONTROL_REQUESTS: tuple[str, ...] = ("stop",)
+
 
 @dataclass(frozen=True)
 class PeerCredentials:
@@ -184,19 +188,52 @@ class AdminRouter:
         handlers: Mapping[str, Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
         *,
         presence_verifier: Callable[[Any], bool] | None = None,
+        control_handlers: Mapping[str, Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
     ) -> None:
         unknown = set(handlers or {}) - set(ADMIN_COMMANDS)
         if unknown:
             raise ValueError("handler for a command outside spec §33")
+        bad_control = set(control_handlers or {}) - set(CONTROL_REQUESTS)
+        if bad_control:
+            raise ValueError("handler for an unknown control request")
         self._handlers = dict(handlers or {})
         self._presence = presence_verifier
+        self._control = dict(control_handlers or {})
 
     @staticmethod
     def _error(code: str, reason: str) -> dict[str, Any]:
         return {"ok": False, "code": code, "reason": reason}
 
+    def _dispatch_control(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """Bootstrap control channel: the runtime's own stop request.
+
+        Design §2 keeps bootstrap control (start/stop/status) separate from
+        the §33 admin surface. ``stop`` still travels over this socket so a
+        running runtime can drain gracefully instead of being signalled, so
+        it is a ``control`` request, never a ``cmd``.
+        """
+        name = request.get("control")
+        if set(request) - {"control", "args"}:
+            return self._error(MALFORMED_REQUEST, "unknown request field")
+        args = request.get("args", {})
+        if not isinstance(args, dict):
+            return self._error(MALFORMED_REQUEST, "args must be an object")
+        if not isinstance(name, str) or name not in CONTROL_REQUESTS:
+            return self._error(UNKNOWN_COMMAND, "unknown control request")
+        handler = self._control.get(name)
+        if handler is None:
+            return self._error(NOT_AVAILABLE_IN_PHASE, "control request is not wired")
+        try:
+            data = handler(args)
+        except Exception:
+            _logger.exception("admin control failed", extra={"control": name})
+            return self._error(INTERNAL_ERROR, "handler failed")
+        return {"ok": True, "data": data}
+
     def dispatch(self, request: Mapping[str, Any]) -> dict[str, Any]:
         """Route one already strictly decoded request object."""
+        if "control" in request:
+            return self._dispatch_control(request)
         command = request.get("cmd")
         if not isinstance(command, str) or not command:
             return self._error(MALFORMED_REQUEST, "cmd must be a non-empty string")

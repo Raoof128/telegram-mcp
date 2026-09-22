@@ -428,6 +428,26 @@ def stop_all(
     return {"state": "OFF", "stopped": stopped}
 
 
+def _send_control_stop(admin_path: Path, timeout: float) -> None:
+    """Framed ``{"control": "stop"}`` on the admin socket; ack read and dropped.
+
+    The admin socket speaks the length-prefixed strict-JSON protocol in
+    ``ipc.framing``; a bare sentinel would be read as a length header and
+    refused, so the graceful stop path uses the real frame.
+    """
+    from telegram_mcp.ipc.framing import encode_json_frame
+
+    payload = encode_json_frame({"control": "stop"})
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        sock.connect(str(admin_path))
+        sock.sendall(len(payload).to_bytes(4, "big") + payload)
+        try:
+            sock.recv(4096)
+        except OSError:
+            pass  # a drained runtime may close before acking
+
+
 def request_stop(
     timeout: float = 5.0,
     *,
@@ -446,10 +466,7 @@ def request_stop(
         return
     admin_path = directory / ADMIN_SOCK_NAME
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            sock.connect(str(admin_path))
-            sock.sendall(b"STOP")
+        _send_control_stop(admin_path, timeout)
     except OSError:
         # TERM fallback, guarded by a fresh kernel-lock liveness probe so
         # a recycled PID from diagnostics can never be signalled blindly.
