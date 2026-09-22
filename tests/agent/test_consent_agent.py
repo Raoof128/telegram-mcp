@@ -38,3 +38,14 @@ def test_challenge_signatures_verify_and_tamper_rejected():
     )
     assert out.returncode == 0, out.stderr
     assert "VERIFY-OK" in out.stdout
+
+
+def test_jcs_encode_rejects_directly_constructed_non_ascii_key():
+    out = subprocess.run(
+        [AGENT_BIN, "selftest-jcs-rejects-nonascii-key"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    assert "REJECT-OK" in out.stdout

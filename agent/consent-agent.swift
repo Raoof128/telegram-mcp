@@ -149,6 +149,9 @@ func jcsEncodeValue(_ value: JCSValue, into out: inout Data) throws {
         let sorted = pairs.sorted { $0.key.utf8.lexicographicallyPrecedes($1.key.utf8) }
         for (index, pair) in sorted.enumerated() {
             if index > 0 { out.append(0x2C) } // ,
+            guard pair.key.unicodeScalars.allSatisfy({ $0.value < 128 }) else {
+                throw JCSError.nonASCIIKey(pair.key)
+            }
             try jcsEncodeString(pair.key, into: &out)
             out.append(0x3A) // :
             try jcsEncodeValue(pair.value, into: &out)
@@ -370,6 +373,24 @@ func selfTestVerify(vectorsPath: String?) -> Int32 {
     return 0
 }
 
+/// Direct-construction rejection probe: builds a `JCSValue.object` with a
+/// non-ASCII key *without* going through decode, and requires `jcsEncode`
+/// to throw (the encoder must re-assert ASCII keys itself).
+func selfTestJCSRejectsNonASCIIKey() -> Int32 {
+    let direct = JCSValue.object([(key: "cl\u{00E9}", value: .integer(1))])
+    do {
+        _ = try jcsEncode(direct)
+    } catch JCSError.nonASCIIKey {
+        print("REJECT-OK")
+        return 0
+    } catch {
+        eprint("selftest-jcs-rejects-nonascii-key: wrong error: \(error)")
+        return 1
+    }
+    eprint("selftest-jcs-rejects-nonascii-key: non-ASCII key encoded instead of throwing")
+    return 1
+}
+
 // MARK: - Entry point
 //
 // NOTE: written as top-level dispatch into `ConsentAgent.main()` rather than
@@ -381,7 +402,7 @@ struct ConsentAgent {
     static func main() {
         let args = CommandLine.arguments
         guard args.count >= 2 else {
-            eprint("usage: telegram-mcp-consent <selftest-jcs|selftest-verify> <vectors-file>")
+            eprint("usage: telegram-mcp-consent <selftest-jcs|selftest-verify|selftest-jcs-rejects-nonascii-key> [vectors-file]")
             exit(2)
         }
         let path = args.count >= 3 ? args[2] : nil
@@ -390,6 +411,8 @@ struct ConsentAgent {
             exit(selfTestJCS(vectorsPath: path))
         case "selftest-verify":
             exit(selfTestVerify(vectorsPath: path))
+        case "selftest-jcs-rejects-nonascii-key":
+            exit(selfTestJCSRejectsNonASCIIKey())
         default:
             eprint("unknown subcommand: \(args[1])")
             exit(2)
