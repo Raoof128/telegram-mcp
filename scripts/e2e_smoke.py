@@ -1101,14 +1101,21 @@ def phase2_consent(ledger: Ledger) -> None:
         from tests.agent.stub_broker import run_scenario
 
         outcomes = {}
-        for scenario in ("good", "replay", "tamper-display", "kill-mid-prompt"):
+        for scenario in (
+            "good-approval",
+            "duplicate-approval",
+            "display-tamper",
+            "broker-death-mid-prompt",
+        ):
             result = run_scenario(scenario, timeout=90)
             outcomes[scenario] = result
-        assert outcomes["good"]["approved"] and outcomes["good"]["signature_valid"]
-        assert outcomes["replay"]["second_consume"] == "rejected"
-        assert outcomes["tamper-display"]["denial_reason"] == "DISPLAY-MISMATCH"
-        assert outcomes["kill-mid-prompt"]["agent_exited"]
-        assert outcomes["kill-mid-prompt"]["exit_seconds"] < 5.0
+        assert (
+            outcomes["good-approval"]["approved"] and outcomes["good-approval"]["signature_valid"]
+        )
+        assert outcomes["duplicate-approval"]["second_consume"] == "rejected"
+        assert outcomes["display-tamper"]["denial_reason"] == "DISPLAY-MISMATCH"
+        assert outcomes["broker-death-mid-prompt"]["agent_exited"]
+        assert outcomes["broker-death-mid-prompt"]["exit_seconds"] < 5.0
         return "good, replay-rejected, tamper-denied, no orphan on broker death"
 
     ledger.run(area, "broker exact-once and gate", broker_exact_once)

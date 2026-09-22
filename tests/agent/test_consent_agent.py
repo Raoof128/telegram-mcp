@@ -1,4 +1,4 @@
-def test_the_transport_key_is_scoped_to_the_agents_code_identity(signed_agent_binary):
+def test_the_transport_key_is_scoped_to_the_agents_code_identity(paired_agent_binary):
     """A foreign code identity must not be able to read the pairing records.
 
     Login-keychain items are readable by anything running as this operator
@@ -14,16 +14,18 @@ def test_the_transport_key_is_scoped_to_the_agents_code_identity(signed_agent_bi
     rendezvous socket, so leaving it readable would let any local process
     impersonate the agent there.
     """
-    paired = json.loads(
-        subprocess.run(
-            [str(signed_agent_binary), "pairing-status"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        ).stdout
+    status = subprocess.run(
+        [str(paired_agent_binary), "pairing-status"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
     )
-    if "transport" not in paired.get("records", {}):
-        pytest.skip("nothing paired on this host")
+    assert status.returncode == 0, status.stderr
+    paired = json.loads(status.stdout)
+    # the fixture pairs when nothing is paired, so an empty record set here
+    # is a real failure and not a reason to skip quietly
+    assert "transport" in paired["records"], paired
 
     # the ad-hoc bundle is a different code identity from the signed one
     foreign = json.loads(_pairing("pairing-status").stdout)
@@ -254,21 +256,21 @@ def test_live_touch_id_approval_signs_with_the_enclave_key(paired_agent_binary):
 def test_good_challenge_round_trip():
     from tests.agent.stub_broker import run_scenario
 
-    result = run_scenario("good", timeout=60)
+    result = run_scenario("good-approval", timeout=60)
     assert result["approved"] is True and result["signature_valid"] is True
 
 
 def test_replay_rejected():
     from tests.agent.stub_broker import run_scenario
 
-    result = run_scenario("replay", timeout=60)
+    result = run_scenario("duplicate-approval", timeout=60)
     assert result["approved"] is True and result["second_consume"] == "rejected"
 
 
 def test_tampered_display_is_denied_over_the_wire():
     from tests.agent.stub_broker import run_scenario
 
-    result = run_scenario("tamper-display", timeout=60)
+    result = run_scenario("display-tamper", timeout=60)
     assert result["approved"] is False
     assert result["denial_reason"] == "DISPLAY-MISMATCH"
 
@@ -284,7 +286,7 @@ def test_wrong_daemon_key_is_denied_over_the_wire():
 def test_kill_mid_prompt_leaves_no_orphan_agent():
     from tests.agent.stub_broker import run_scenario
 
-    result = run_scenario("kill-mid-prompt", timeout=60)
+    result = run_scenario("broker-death-mid-prompt", timeout=60)
     assert result["agent_exited"] is True
     assert result["exit_seconds"] < 5.0
 
@@ -470,7 +472,7 @@ def test_no_challenge_or_display_bytes_reach_any_agent_output_file(tmp_path):
 
     from tests.agent.stub_broker import run_scenario
 
-    result = run_scenario("good", timeout=60)
+    result = run_scenario("good-approval", timeout=60)
     assert result["approved"] is True
     case = _case()
     secrets_in_play = [
@@ -499,32 +501,6 @@ def test_running_without_a_complete_pairing_record_refuses_with_a_fixed_error():
     assert "MISSING-RECORD" in combined
     assert "pairing generate" in combined or "pairing import-daemon-pin" in combined
     assert out.stdout == ""  # no socket work was attempted
-
-
-def test_the_transport_key_is_readable_by_any_code_identity_of_this_user():
-    """Documents a real limit of the free-certificate path.
-
-    Keychain items written here are ordinary login-keychain generic
-    passwords. Without the data-protection keychain — which needs an
-    `application-identifier` entitlement authorised by a provisioning
-    profile — the file keychain does not scope them to the writing code
-    identity, so any process running as this operator can read the
-    *transport* private key. That key authenticates the agent to the
-    daemon's rendezvous socket; it cannot approve anything, because
-    approvals need the Secure Enclave key, which is biometry-bound and not
-    extractable.
-
-    This test asserts the current, understood behaviour so a future change
-    to it is a visible one. It skips when nothing is paired.
-    """
-    status = json.loads(_pairing("pairing-status").stdout)
-    if "transport" not in status.get("records", {}):
-        pytest.skip("nothing paired on this host")
-    # the ad-hoc bundle is a different code identity from the signed one
-    assert status["identity"]["kind"] == "adhoc"
-    exported = _pairing("pairing", "export", "transport")
-    assert exported.returncode == 0, exported.stderr
-    assert json.loads(exported.stdout)["fingerprint"] == status["records"]["transport"]
 
 
 def test_approval_without_a_paired_enclave_key_refuses(tmp_path):

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import socket
 import sqlite3
 import stat
@@ -41,9 +42,11 @@ from telegram_mcp.runtime.bootstrap import (
     ADMIN_SOCK_NAME,
     CHATGPT_PORT,
     CONSENT_SOCK_NAME,
+    JOB_STRAY_MARKERS,
     LOCAL_PORT,
     RUNTIME_LABEL,
     TUNNEL_LABEL,
+    _default_uid_of,
     _list_processes_ps,
 )
 
@@ -310,6 +313,34 @@ def _port_is_closed(port: int) -> bool:
     return True
 
 
+def _runtime_processes() -> list[int]:
+    """PIDs that *are* the runtime or the tunnel, not ones that name them.
+
+    Matching on the joined command line made the probe cry wolf: a probe
+    such as ``dscl . -read /Users/telegram-mcpd``, or ``sudo -n -u
+    telegram-mcp-tunnel true``, mentions the label without being it. A
+    process is one of ours when its executable is the job binary, or when
+    the label appears as an exact argv element *and* it runs as that
+    service account — the same rule the stray sweep uses.
+    """
+    markers = {JOB_STRAY_MARKERS[RUNTIME_LABEL], JOB_STRAY_MARKERS[TUNNEL_LABEL]}
+    owners = {marker: _default_uid_of(label) for label, marker in JOB_STRAY_MARKERS.items()}
+    self_pid = os.getpid()
+    found: list[int] = []
+    for entry in _list_processes_ps():
+        if entry.pid == self_pid or not entry.argv:
+            continue
+        if Path(entry.argv[0]).name in markers:
+            found.append(entry.pid)
+            continue
+        for marker in markers & set(entry.argv):
+            owner = owners.get(marker)
+            if owner is not None and entry.uid == owner:
+                found.append(entry.pid)
+                break
+    return found
+
+
 def _check_off_probe(ctx: DoctorContext) -> CheckResult:
     listening = [port for port in ctx.ports if not _port_is_closed(port)]
     sockets_present: list[str] = []
@@ -320,11 +351,7 @@ def _check_off_probe(ctx: DoctorContext) -> CheckResult:
             for name in (ADMIN_SOCK_NAME, CONSENT_SOCK_NAME)
             if (directory / name).exists() or (directory / name).is_symlink()
         ]
-    running = [
-        entry.pid
-        for entry in _list_processes_ps()
-        if any(label in " ".join(entry.argv) for label in (RUNTIME_LABEL, TUNNEL_LABEL))
-    ]
+    running = _runtime_processes()
     problems: list[str] = []
     if listening:
         problems.append(f"ports still listening: {listening}")

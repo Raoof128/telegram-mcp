@@ -30,8 +30,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import os
 import secrets
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -59,14 +61,29 @@ PRINCIPAL = "prn_" + "a" * 26
 CLIENT = "tcl_" + "b" * 26
 ACCOUNT = "tga_" + "c" * 26
 
+# Plan 2a Task 9 Step 4's join-gate set, plus the two handshake scenarios
+# this driver needs to cover RV-1 itself. Names are the gate's.
 SCENARIOS = (
-    "good",
-    "replay",
-    "tamper-display",
+    "good-approval",
+    "display-tamper",
+    "challenge-tamper",
     "wrong-daemon-key",
-    "kill-mid-prompt",
+    "wrong-approval-key",
+    "wrong-key-id",
+    "wrong-challenge-sha256",
+    "duplicate-approval",
+    "runtime-id-mismatch",
+    "broker-death-mid-prompt",
+    "agent-death-mid-prompt",
+    "daemon-key-rotation",
+    "agent-key-rotation",
     "wrong-transport-key",
 )
+
+# Scenarios whose subject is the broker's verification order rather than the
+# agent's behaviour: the real agent emits a correct envelope, so the driver
+# mutates it after receipt to stand in for a hostile or buggy signer.
+BROKER_SIDE_TAMPERS = frozenset({"wrong-approval-key", "wrong-key-id", "wrong-challenge-sha256"})
 
 DISPLAY = {
     "action_display": "list chats",
@@ -94,18 +111,34 @@ def _approval_public(seed: bytes) -> tuple[ec.EllipticCurvePublicKey, bytes, str
 
 
 class _Run:
-    """One scenario: real rendezvous server, real broker, real agent binary."""
+    """One scenario: real rendezvous server, real broker, real agent binary.
 
-    def __init__(self, scenario: str, socket_dir: Path, binary: str) -> None:
+    ``interactive`` drives the production ``run`` path instead of
+    ``selftest-rendezvous``: the agent uses its paired Secure Enclave key
+    behind a real Touch ID prompt, and the broker pins the public halves the
+    agent exports rather than seeds it was handed.
+    """
+
+    def __init__(
+        self, scenario: str, socket_dir: Path, binary: str, *, interactive: bool = False
+    ) -> None:
         self.scenario = scenario
         self.socket_dir = socket_dir
         self.binary = binary
+        self.interactive = interactive
         self.transport_seed = secrets.token_bytes(32)
-        self.approval_seed = (
-            bytes([0] * 31 + [9]) if scenario == "replay" else secrets.token_bytes(32)
+        self.approval_seed = secrets.token_bytes(32)
+        # The pin the broker checks against. "agent-key-rotation" pins a key
+        # the agent no longer holds, which is the state right after the
+        # operator rotates the Enclave key and before the daemon is re-pinned.
+        self.pinned_approval_seed = (
+            secrets.token_bytes(32) if scenario == "agent-key-rotation" else self.approval_seed
         )
+        self._process: Any = None
         self.result: dict[str, Any] = {
             "scenario": scenario,
+            "agent_rendered": False,
+            "broker_accepted": False,
             "handshake_completed": False,
             "approved": False,
             "signature_valid": False,
@@ -121,6 +154,23 @@ class _Run:
     def transport_private(self) -> ed25519.Ed25519PrivateKey:
         return ed25519.Ed25519PrivateKey.from_private_bytes(self.transport_seed)
 
+    def _export(self, which: str) -> dict[str, Any]:
+        done = subprocess.run(  # noqa: PLW1510 -- returncode is asserted below
+            [self.binary, "pairing", "export", which],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert done.returncode == 0, done.stderr
+        return json.loads(done.stdout)
+
+    @property
+    def agent_transport_public(self) -> bytes:
+        """What the broker pins as the agent's transport identity."""
+        if self.interactive:
+            return _unb64url(self._export("transport")["public_b64url"])
+        return self.transport_private.public_key().public_bytes_raw()
+
     @property
     def daemon_public_hex(self) -> str:
         public = ed25519.Ed25519PrivateKey.from_private_bytes(CHALLENGE_KEY).public_key()
@@ -130,18 +180,28 @@ class _Run:
         seed = self.transport_seed
         if self.scenario == "wrong-transport-key":
             seed = secrets.token_bytes(32)  # not the key the broker pinned
-        return {
+        env = {
             **os.environ,
             "CONSENT_NO_UI": "1",
             "CONSENT_SELFTEST_TRANSPORT_SEED": seed.hex(),
             "CONSENT_SELFTEST_APPROVAL_SEED": self.approval_seed.hex(),
             "CONSENT_SELFTEST_DAEMON_PUB": self.daemon_public_hex,
         }
+        if self.scenario == "runtime-id-mismatch":
+            # an agent left over from a previous runtime pins the old id
+            env["CONSENT_SELFTEST_EXPECT_RUNTIME"] = (b"\x77" * 16).hex()
+        return env
 
     # --- broker side ------------------------------------------------------
 
     def _broker(self) -> ConsentBroker:
-        public, _der, key_id = _approval_public(self.approval_seed)
+        if self.interactive:
+            exported = self._export("approval")
+            der = _unb64url(exported["public_der_b64url"])
+            public = serialization.load_der_public_key(der)
+            key_id = exported["fingerprint"]
+        else:
+            public, _der, key_id = _approval_public(self.pinned_approval_seed)
 
         def verify(sig: bytes, msg: bytes) -> bool:
             try:
@@ -176,27 +236,46 @@ class _Run:
         )
         challenge = broker.challenge_bytes(handle)
         signature = broker.daemon_signature(handle)
-        if self.scenario == "tamper-display":
+        wire_challenge = challenge
+        if self.scenario == "display-tamper":
             # the signed challenge still carries the honest digest
             display["action_display"] = "list chats "
-        if self.scenario == "wrong-daemon-key":
-            # a well-formed signature from a key the agent has not pinned
+        if self.scenario == "challenge-tamper":
+            # one byte of the challenge changes after it was signed
+            mutated = bytearray(challenge)
+            mutated[-2] ^= 0x01
+            wire_challenge = bytes(mutated)
+        if self.scenario in ("wrong-daemon-key", "daemon-key-rotation"):
+            # a well-formed signature from a key the agent has not pinned:
+            # an impostor, or a daemon key rotated without re-pairing
             impostor = ed25519.Ed25519PrivateKey.from_private_bytes(b"\x03" * 32)
-            signature = _b64url(impostor.sign(challenge))
+            signature = _b64url(impostor.sign(wire_challenge))
         await write_frame(
             writer,
             encode_json_frame(
                 {
                     "type": "PROMPT",
                     "handle": handle,
-                    "challenge": _b64url(challenge),
+                    "challenge": _b64url(wire_challenge),
                     "sig": signature,
                     "display": display,
                 }
             ),
         )
-        if self.scenario == "kill-mid-prompt":
+        if self.scenario == "broker-death-mid-prompt":
             writer.close()
+            return
+        if self.scenario == "agent-death-mid-prompt":
+            self.result["pending_before_death"] = broker.pending_count()
+            assert self._process is not None
+            self._process.kill()
+            try:
+                await asyncio.wait_for(read_frame(reader, idle_s=10), timeout=10)
+            except (FrameError, TimeoutError):
+                pass
+            # the daemon's disconnect sweep releases the pending challenge
+            self.result["swept"] = broker.invalidate_where(lambda record: True)
+            self.result["pending_after_sweep"] = broker.pending_count()
             return
         try:
             raw = await read_frame(reader, idle_s=20)
@@ -207,23 +286,45 @@ class _Run:
         answer = decode_json_frame(raw)
         if answer.get("type") == "DENIAL":
             self.result["denial_reason"] = answer.get("reason")
+            self.result["agent_rendered"] = True
             return
         envelope = answer.get("envelope", {})
+        self.result["agent_rendered"] = True
         envelope = {**envelope, "sig": _unb64url(envelope["sig"])}
+        envelope = self._tamper(envelope, challenge)
         try:
             await broker.consume(answer["handle"], envelope)
         except ConsentError as exc:
             self.result["denial_reason"] = str(exc)
+            self.result["broker_accepted"] = False
             return
         self.result["approved"] = True
         self.result["signature_valid"] = True
-        if self.scenario == "replay":
+        self.result["broker_accepted"] = True
+        if self.scenario == "duplicate-approval":
             try:
                 await broker.consume(answer["handle"], envelope)
             except ConsentError:
                 self.result["second_consume"] = "rejected"
             else:
                 self.result["second_consume"] = "accepted"
+
+    def _tamper(self, envelope: dict[str, Any], challenge: bytes) -> dict[str, Any]:
+        """Stand in for a hostile signer; the broker is the subject here."""
+        if self.scenario == "wrong-approval-key":
+            other = ec.derive_private_key(
+                int.from_bytes(secrets.token_bytes(32), "big"), ec.SECP256R1()
+            )
+            return {
+                **envelope,
+                "sig": other.sign(challenge, ec.ECDSA(hashes.SHA256())),
+            }
+        if self.scenario == "wrong-key-id":
+            _public, _der, other_id = _approval_public(secrets.token_bytes(32))
+            return {**envelope, "key_id": other_id}
+        if self.scenario == "wrong-challenge-sha256":
+            return {**envelope, "challenge_sha256": hashlib.sha256(b"not it").hexdigest()}
+        return envelope
 
     # --- driver -----------------------------------------------------------
 
@@ -235,18 +336,19 @@ class _Run:
             runtime_id=RUNTIME_ID,
             daemon_key_id="ed25519:sha256:"
             + hashlib.sha256(bytes.fromhex(self.daemon_public_hex)).hexdigest(),
-            agent_transport_public=self.transport_private.public_key().public_bytes_raw(),
+            agent_transport_public=self.agent_transport_public,
             on_session=self._serve_prompt,
         )
         started = time.monotonic()
         process = await asyncio.create_subprocess_exec(
             self.binary,
-            "selftest-rendezvous",
+            "run" if self.interactive else "selftest-rendezvous",
             str(socket_path),
-            env=self.agent_env(),
+            env=dict(os.environ) if self.interactive else self.agent_env(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        self._process = process
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
             self.result["agent_exited"] = True
@@ -264,8 +366,19 @@ class _Run:
         return self.result
 
 
-def run_scenario(name: str, *, timeout: float = 60.0, binary: str = AGENT_BIN) -> dict[str, Any]:
-    """Run one scenario end to end and return its result dictionary."""
+def run_scenario(
+    name: str,
+    *,
+    timeout: float = 60.0,
+    binary: str = AGENT_BIN,
+    interactive: bool = False,
+) -> dict[str, Any]:
+    """Run one scenario end to end and return its result dictionary.
+
+    ``interactive`` drives the agent's production ``run`` path — paired
+    Enclave key, real Touch ID prompt — instead of the headless selftest
+    route.
+    """
     if name not in SCENARIOS:
         raise ValueError(f"unknown scenario: {name}")
     if not Path(binary).exists():
@@ -276,6 +389,7 @@ def run_scenario(name: str, *, timeout: float = 60.0, binary: str = AGENT_BIN) -
 
         # AF_UNIX paths cap near 104 bytes, so the socket lives in a short dir.
         with tempfile.TemporaryDirectory(dir="/tmp") as short_dir:
-            return await _Run(name, Path(short_dir), binary).drive(timeout)
+            run = _Run(name, Path(short_dir), binary, interactive=interactive)
+            return await run.drive(timeout)
 
     return asyncio.run(main())

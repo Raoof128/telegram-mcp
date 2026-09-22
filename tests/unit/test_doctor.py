@@ -124,3 +124,36 @@ def test_off_probe_fails_while_a_port_is_open(tmp_path):
 def test_unknown_check_name_is_refused():
     with pytest.raises(ValueError):
         doctor(("does.not.exist",))
+
+
+def test_off_probe_ignores_processes_that_merely_mention_the_labels():
+    """A probe like `dscl . -read /Users/telegram-mcpd` is not a runtime."""
+    import telegram_mcp.doctor as doctor_module
+    from telegram_mcp.runtime.bootstrap import ProcessEntry
+
+    mentions = [
+        ProcessEntry(
+            pid=4242, uid=os.getuid(), argv=("/usr/bin/dscl", ".", "-read", "/Users/telegram-mcpd")
+        ),
+        ProcessEntry(
+            pid=4243,
+            uid=os.getuid(),
+            argv=("/usr/bin/sudo", "-n", "-u", "telegram-mcp-tunnel", "true"),
+        ),
+    ]
+    original = doctor_module._list_processes_ps
+    doctor_module._list_processes_ps = lambda: mentions
+    try:
+        report = doctor(("off.probe",), context=DoctorContext(ports=()), off=True)
+        assert _status(report, "off.probe") == "ok", report
+
+        actual = [
+            ProcessEntry(
+                pid=4244, uid=os.getuid(), argv=("/usr/local/bin/telegram-mcpd", "--serve")
+            )
+        ]
+        doctor_module._list_processes_ps = lambda: actual
+        loud = doctor(("off.probe",), context=DoctorContext(ports=()), off=True)
+        assert _status(loud, "off.probe") == "fail", loud
+    finally:
+        doctor_module._list_processes_ps = original

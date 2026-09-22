@@ -120,33 +120,35 @@ the paired state instead of calling `pairing generate` again, because
 rotating the approval key would silently invalidate whatever the daemon has
 pinned. Rotation has its own test behind `TELEGRAM_MCP_ALLOW_REPAIR=1`.
 
-### Finding: keychain items are not scoped to the writing code identity
+### Closed: keychain items are scoped to the writing code identity
 
-Running the two legs exposed this, and it is a direct cost of the
-free-certificate path rather than a bug in the agent. The records are
-ordinary login-keychain generic passwords. Scoping them to the writing code
-identity needs the data-protection keychain, which needs an
-`application-identifier` / `keychain-access-groups` entitlement authorised by
-a provisioning profile — the thing this host does not have. Consequence: any
-process running as this operator can read the **transport private key**,
-which authenticates the agent to the daemon's rendezvous socket. A test
-asserts this current behaviour so a change to it is visible.
+Running the two legs exposed that the records were ordinary login-keychain
+generic passwords, readable by anything running as this operator — including
+the **transport private key**, which authenticates the agent to the daemon's
+rendezvous socket. The approval key was never exposed: the keychain holds
+only its encrypted, device-bound Enclave blob, useless without a biometric
+check on this Mac.
 
-What it does not reach: approvals. The approval key lives in the Secure
-Enclave under `.biometryCurrentSet`; the keychain holds only its encrypted,
-device-bound blob, which is useless to anything that cannot pass a biometric
-check on this Mac. So the exposure is impersonation of the agent's
-*transport* identity to the rendezvous socket, not the ability to approve a
-disclosure.
+Closed with the file keychain's own mechanism, which costs nothing: each
+record is written with a `SecAccess` naming this binary as the only trusted
+application, and reads disable interaction so a foreign identity fails
+closed instead of raising an authorization dialog. Writes replace rather
+than update, because an update inherits the ACL the existing item carries.
+Scoping by access group instead would need the data-protection keychain,
+whose entitlement requires a paid membership's provisioning profile.
 
-Three ways to close it, for a later decision:
+Verified on this host:
 
-1. A `SecAccess` ACL naming the trusted application (the legacy file-keychain
-   mechanism; still functional, deprecated since macOS 12).
-2. The data-protection keychain, which needs a paid membership's
-   provisioning profile.
-3. Treat the rendezvous transport key as non-secret and require the daemon to
-   bind the session to something else as well.
+| Reader | Result |
+|---|---|
+| the signed bundle that wrote them | reads its own records |
+| the ad-hoc bundle (different identity) | sees no records at all |
+| `/usr/bin/security` (permits interaction) | authorization prompt, not bytes |
+| the signed bundle after a rebuild | still reads them — the ACL keys on the signing identity, not the binary hash |
+
+Defence in depth behind it: the daemon serves one agent session at a time,
+so a process that somehow held the transport key could not displace or race
+an established agent.
 
 ## Deviations from the plan, and why
 
@@ -204,13 +206,9 @@ Three ways to close it, for a later decision:
    imported with `pairing import-daemon-pin`.
 3. **The LaunchAgent has never been loaded.** `RunAtLoad` is false and the
    definition ships disabled; `launchctl bootstrap gui/$UID` has not run.
-4. **Phase-2J join gate remains formally unrun.** Six of its thirteen
-   scenarios now pass through the real broker ↔ real agent path here, but
-   Plan 2a's harness has not been re-pointed at this driver and the remaining
-   scenarios (challenge tamper, wrong `key_id`, wrong `challenge_sha256`,
-   duplicate approval, `runtime_id` mismatch, broker death, agent death,
-   daemon-key rotation, agent-key rotation, and the one interactive Touch ID
-   approval) are not yet driven.
+4. *(closed)* **The Phase-2J join gate now passes**, all thirteen scenarios
+   plus the interactive Touch ID one. See the phase-2a evidence for the
+   ledger.
 5. **Identity change forces re-pairing.** Keychain ACLs bind to the signing
    identity, so re-signing the bundle with a different certificate makes the
    existing records unreadable. This is the intended behaviour and is

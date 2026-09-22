@@ -214,7 +214,7 @@ fixed and pinned by tests:
 
 | Gate | Status | Evidence | Unresolved dependency |
 |---|---|---|---|
-| E (consent/user presence) | **PARTIAL** | Broker exact-once, tamper, replay, rate-limit and invalidation tests; frozen JCS vectors | No real Touch ID signature; Phase-2J join gate not run (Plan 2b Tasks 2–4) |
+| E (consent/user presence) | **PARTIAL** | Broker exact-once, tamper, replay, rate-limit and invalidation tests; frozen JCS vectors; **Phase-2J join gate passes** — thirteen scenarios against the real agent plus one real Touch ID approval | Still no disclosure accounting or receipts (Phase 3); no runtime has ever issued a challenge to a paired agent outside the gate |
 | H (authority/policy) | **PARTIAL** | Deny-precedence matrix, intersection, double evaluation, epoch and grant invalidation, cursor code matrix | Live Telegram identities and tool slices are Phase 4 |
 | M (storage integrity) | **PARTIAL** | 19 tables, C2/C4 direct-write proofs, §12.3 trigger proofs, index set, integrity/GC/permission tests | Phase-3 tables carry reserved schema only; no receipts or ledger rows exist to verify |
 | N (privilege separation) | **PARTIAL** | Socket modes 0770/0660, `getpeereid` authentication, key store `0700`/`0600`, install plans, doctor checks | Service accounts not created on this host; `sudo -n -u` and direct-secret probes are platform-gated and unrun |
@@ -225,10 +225,15 @@ No gate is claimed PASS. Every PARTIAL states what is missing.
 
 ## Unresolved items
 
-1. **Phase-2J join gate** — the whole gate is unrun. `tests/integration/test_join_gate.py`
-   names all 13 scenarios and takes the bundle from `TELEGRAM_MCP_AGENT_BUNDLE`;
-   the driver's prompt frames need Plan 2b Task 3 and the signed bundle needs
-   Plan 2b Task 4.
+1. *(closed)* **Phase-2J join gate passes.** `tests/integration/test_join_gate.py`
+   drives all thirteen scenarios against the real broker and the real
+   packaged agent: good approval, display tamper, challenge tamper, wrong
+   daemon key, wrong approval key, wrong `key_id`, wrong `challenge_sha256`,
+   duplicate approval, `runtime_id` mismatch, broker death mid-prompt, agent
+   death mid-prompt, daemon-key rotation and agent-key rotation. The
+   fourteenth, a real Touch ID approval through the production `run` path,
+   is platform-gated and has been run on this host; it imports a daemon pin
+   and removes it afterwards, so the keychain ends as it began.
 2. **SMAppService exact API** — still unverified against current Apple
    documentation. `LaunchctlJobControl` drives `launchctl kickstart/stop` with
    interactive escalation; whether the registration should move to

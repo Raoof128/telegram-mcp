@@ -827,6 +827,29 @@ func pairingImportDaemonPin(_ encoded: String?) -> Int32 {
     }
 }
 
+/// Remove the daemon pin. Rotating or re-pairing a daemon starts here, and
+/// so does undoing a temporary pin. Requires the same stable identity as
+/// importing one, so an ad-hoc build cannot disturb pairing state.
+func pairingForgetDaemonPin() -> Int32 {
+    do {
+        _ = try requireStableIdentity()
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: daemonPinAccount,
+        ]
+        let removed = SecItemDelete(query as CFDictionary)
+        guard removed == errSecSuccess || removed == errSecItemNotFound else {
+            throw PairingError.keychain(removed, "could not remove the daemon pin")
+        }
+        emitJSON(["name": "daemon-challenge-key", "removed": removed == errSecSuccess])
+        return 0
+    } catch {
+        eprint("pairing forget-daemon-pin: \(error)")
+        return 1
+    }
+}
+
 func pairingStatus() -> Int32 {
     let identity = currentCodeIdentity()
     var records: [String: Any] = [:]
@@ -1031,6 +1054,11 @@ func hexEncode(_ data: Data) -> String {
 struct RendezvousIdentity {
     let transportKey: Curve25519.Signing.PrivateKey
     let daemonPublic: Data
+    /// Pins the runtime this agent expects to meet. An agent left over from
+    /// a previous runtime carries the old id and is refused rather than
+    /// adopted. Nil means "whatever runtime answers", which is what a fresh
+    /// start does.
+    var expectedRuntimeID: String?
 
     var agentKeyID: String {
         "ed25519:sha256:" + hexEncode(Data(SHA256.hash(data: transportKey.publicKey.rawRepresentation)))
@@ -1048,12 +1076,16 @@ func rendezvousHandshake(client: UnixSocketClient, identity: RendezvousIdentity)
         throw WireError.handshakeFailed("no entropy for the agent nonce")
     }
     let agentNonce = base64URLEncode(nonceBytes)
-    try client.writeFrame(try jsonFrame([
+    var hello: [String: Any] = [
         "type": "HELLO",
         "version": rendezvousVersion,
         "agent_key_id": identity.agentKeyID,
         "agent_nonce": agentNonce,
-    ]))
+    ]
+    if let expected = identity.expectedRuntimeID {
+        hello["expected_runtime_id"] = expected
+    }
+    try client.writeFrame(try jsonFrame(hello))
     guard let raw = try client.readFrame(), !raw.isEmpty else {
         throw WireError.handshakeFailed("daemon closed before CHALLENGE")
     }
@@ -1500,7 +1532,11 @@ func selfTestRendezvous(socketPath: String?) -> Int32 {
     }
     return runAgent(
         socketPath: path,
-        identity: RendezvousIdentity(transportKey: transport, daemonPublic: daemonPublic),
+        identity: RendezvousIdentity(
+            transportKey: transport,
+            daemonPublic: daemonPublic,
+            expectedRuntimeID: environment["CONSENT_SELFTEST_EXPECT_RUNTIME"]
+        ),
         provider: EphemeralApprovalKeyProvider(),
         prompt: selfTestSilentPrompt
     )
@@ -1517,7 +1553,7 @@ func pairedIdentity() throws -> RendezvousIdentity {
     guard let pin = keychainRead(daemonPinAccount), pin.count == 32 else {
         throw PairingError.missingRecord("daemon pin: run `pairing import-daemon-pin`")
     }
-    return RendezvousIdentity(transportKey: transport, daemonPublic: pin)
+    return RendezvousIdentity(transportKey: transport, daemonPublic: pin, expectedRuntimeID: nil)
 }
 
 // MARK: - Production approval command
@@ -1585,6 +1621,7 @@ struct ConsentAgent {
       pairing generate                 create the Enclave and transport keys
       pairing export <approval|transport>
       pairing import-daemon-pin <b64url>
+      pairing forget-daemon-pin
       pairing-status                   signing identity and pairing records
       approve <vectors-file> [index]   verify, show and sign one challenge
       selftest-jcs <vectors-file>
@@ -1616,8 +1653,9 @@ struct ConsentAgent {
             case "generate": exit(pairingGenerate())
             case "export": exit(pairingExport(extra))
             case "import-daemon-pin": exit(pairingImportDaemonPin(extra))
+            case "forget-daemon-pin": exit(pairingForgetDaemonPin())
             default:
-                eprint("pairing: expected <generate|export|import-daemon-pin>")
+                eprint("pairing: expected <generate|export|import-daemon-pin|forget-daemon-pin>")
                 exit(2)
             }
         case "pairing-status":
