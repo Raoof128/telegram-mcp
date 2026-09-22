@@ -304,3 +304,48 @@ class BudgetLedger:
         """Release on cancellation, stale authority, failure — any non-commit path."""
         with self._lock:
             self._reservations.pop(reservation_ref, None)
+
+    def commit(
+        self,
+        reservation: Reservation,
+        *,
+        disclosure_ref: str,
+        actual: Mapping[BucketKey, Usage],
+        effective_egress_level: str,
+        ts: str,
+    ) -> None:
+        """Convert a reservation into ledger rows. The caller owns the transaction.
+
+        **Invariant: actual ≤ reserved.** If measurement exceeds the
+        reservation the worst-case estimator is wrong, and that is not a
+        licence to charge more — the caller must fail closed with
+        ``PROOF_GENERATION_FAILED`` and emit no payload. Otherwise an
+        attacker who found an estimator gap could exceed an approved
+        exposure.
+        """
+        reserved = dict(reservation.buckets)
+        for key, measured in actual.items():
+            limit = reserved.get(key)
+            if limit is None:
+                raise BudgetError("measured a bucket that was never reserved")
+            if measured.records > limit.records or measured.bytes > limit.bytes:
+                raise BudgetError("actual exposure exceeded the reservation")
+
+        for key, measured in actual.items():
+            self._conn.execute(
+                "INSERT INTO exposure_ledger (disclosure_ref, ts, client_id,"
+                " budget_subject_kind, budget_subject_digest, records_disclosed,"
+                " bytes_disclosed, effective_egress_level) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    disclosure_ref,
+                    ts,
+                    key.client_id,
+                    key.kind,
+                    key.subject_digest,
+                    measured.records,
+                    measured.bytes,
+                    effective_egress_level,
+                ),
+            )
+        with self._lock:
+            self._reservations.pop(reservation.reservation_ref, None)

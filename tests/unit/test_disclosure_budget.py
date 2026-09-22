@@ -261,3 +261,70 @@ def test_reserving_past_a_hard_ceiling_refuses(tmp_path):
             worst_case=_worst(records=2_000),  # global hard ceiling is 1500
             ttl_seconds=60,
         )
+
+
+from tests.authority_fixtures import insert_committed_receipt, seed_authority_rows
+
+
+def test_commit_writes_one_row_per_bucket_and_releases(tmp_path):
+    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, Usage, subject_digest
+
+    ledger = _ledger(tmp_path)
+    conn = ledger._conn
+    # seed_authority_rows lives in tests/authority_fixtures.py and inserts one account,
+    # principal, client and project. Use it rather than hand-written SQL:
+    # disclosure_receipts carries a tuple-consistency trigger
+    # (disclosure_receipts_tuple_consistency_insert) that rejects a receipt
+    # whose principal, client and account disagree, so an ad-hoc INSERT is
+    # a fixture that fails for reasons unrelated to what is under test.
+    seed_authority_rows(conn)
+    insert_committed_receipt(conn, disclosure_ref="tdr_a", records=3, size=30)
+
+    key = BucketKey(1, GLOBAL, subject_digest(GLOBAL))
+    reservation = ledger.reserve(
+        client_id=1,
+        security_epoch=1,
+        project_scope_digest="d",
+        consent_challenge_digest="c",
+        request_nonce="n",
+        worst_case={key: Usage(10, 1000)},
+        ttl_seconds=60,
+    )
+    ledger.commit(
+        reservation,
+        disclosure_ref="tdr_a",
+        actual={key: Usage(3, 30)},
+        effective_egress_level="metadata_only",
+        ts="2026-09-22T00:00:00Z",
+    )
+
+    rows = conn.execute("SELECT records_disclosed, bytes_disclosed FROM exposure_ledger").fetchall()
+    assert rows == [(3, 30)]
+    assert ledger.live_usage(key).records == 0
+
+
+def test_actual_exceeding_reserved_fails_closed(tmp_path):
+    import pytest
+
+    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, BudgetError, Usage, subject_digest
+
+    ledger = _ledger(tmp_path)
+    key = BucketKey(1, GLOBAL, subject_digest(GLOBAL))
+    reservation = ledger.reserve(
+        client_id=1,
+        security_epoch=1,
+        project_scope_digest="d",
+        consent_challenge_digest="c",
+        request_nonce="n",
+        worst_case={key: Usage(10, 1000)},
+        ttl_seconds=60,
+    )
+    # The estimator was wrong. That is not a licence to charge more.
+    with pytest.raises(BudgetError):
+        ledger.commit(
+            reservation,
+            disclosure_ref="tdr_a",
+            actual={key: Usage(11, 1000)},
+            effective_egress_level="metadata_only",
+            ts="2026-09-22T00:00:00Z",
+        )

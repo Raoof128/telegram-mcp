@@ -1,0 +1,65 @@
+"""Shared authority rows for tests that need a §12.3-valid receipt.
+
+Importable as ``tests.authority_fixtures`` because ``tests`` is a package;
+``conftest`` is not importable from a subdirectory, so the helpers live here.
+"""
+
+from __future__ import annotations
+
+PROJECT_REF = "tpr_" + "a" * 26
+
+
+def seed_authority_rows(conn) -> dict[str, int]:
+    """Insert one account, principal, client, policy row and project.
+
+    ``disclosure_receipts`` carries a §12.3 tuple-consistency trigger that
+    rejects a receipt whose client belongs to a different principal, or whose
+    (principal, account) pair has no ``policy_state`` row. Hand-written SQL in
+    each test would trip it for reasons unrelated to what is under test, so
+    the rows are built once here.
+    """
+    now = "2026-09-22T00:00:00Z"
+    conn.execute(
+        "INSERT INTO accounts (account_ref, telegram_user_id, created_at, updated_at)"
+        " VALUES (?, 1, ?, ?)",
+        ("tga_" + "a" * 26, now, now),
+    )
+    conn.execute(
+        "INSERT INTO principals (principal_ref, principal_key, auth_mode, created_at)"
+        " VALUES (?, 'key', 'bearer', ?)",
+        ("prn_" + "a" * 26, now),
+    )
+    conn.execute(
+        "INSERT INTO mcp_clients (principal_id, client_ref, auth_kind, auth_binding,"
+        " client_kind, created_at) VALUES (1, ?, 'bearer', 'binding', 'codex_local', ?)",
+        ("tcl_" + "a" * 26, now),
+    )
+    conn.execute(
+        "INSERT INTO policy_state (principal_id, account_id, mode, policy_epoch,"
+        " include_archived, include_private, include_groups, include_channels, updated_at)"
+        " VALUES (1, 1, 'allowlist', 1, 0, 1, 1, 1, ?)",
+        (now,),
+    )
+    conn.execute(
+        "INSERT INTO projects (account_id, project_ref, slug, display_name, enabled,"
+        " project_epoch, created_at, updated_at) VALUES (1, ?, 'alpha', 'Alpha', 1, 1, ?, ?)",
+        (PROJECT_REF, now, now),
+    )
+    conn.commit()
+    return {"account_id": 1, "principal_id": 1, "client_id": 1}
+
+
+def insert_committed_receipt(conn, *, disclosure_ref: str, records: int, size: int) -> None:
+    """Insert one committed receipt row that satisfies the §12.3 trigger."""
+    conn.execute(
+        "INSERT INTO disclosure_receipts (disclosure_ref, committed_at, principal_id,"
+        " client_id, account_id, tool_name, security_epoch, policy_epoch,"
+        " project_scope_digest, project_count, effective_egress_level, records_disclosed,"
+        " bytes_disclosed, partial, commit_status, consent_key_id, consent_challenge_digest,"
+        " canonical_result_provenance_digest, proof_payload_sha256, proof_key_id,"
+        " proof_signature) VALUES (?, '2026-09-22T00:00:00Z', 1, 1, 1,"
+        " 'telegram_get_messages', 1, 1, 'digest', 1, 'metadata_only', ?, ?, 0, 'committed',"
+        " 'consent-key', 'challenge', 'provenance', 'payload-sha', 'proof-key', 'signature')",
+        (disclosure_ref, records, size),
+    )
+    conn.commit()

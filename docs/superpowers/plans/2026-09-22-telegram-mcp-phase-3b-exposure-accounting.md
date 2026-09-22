@@ -807,8 +807,8 @@ def test_commit_writes_one_row_per_bucket_and_releases(tmp_path):
     from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, Usage, subject_digest
 
     ledger = _ledger(tmp_path)
-    conn = ledger._conn  # noqa: SLF001 -- test inspects the ledger it created
-    # seed_authority_rows lives in tests/conftest.py and inserts one account,
+    conn = ledger._conn
+    # seed_authority_rows lives in tests/authority_fixtures.py and inserts one account,
     # principal, client and project. Use it rather than hand-written SQL:
     # disclosure_receipts carries a tuple-consistency trigger
     # (disclosure_receipts_tuple_consistency_insert) that rejects a receipt
