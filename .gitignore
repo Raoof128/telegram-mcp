@@ -1,0 +1,27 @@
+# Appendix B baseline (spec §Appendix B) — Telegram credentials/session state
+*.session
+*.session-journal
+*.session-wal
+*.session-shm
+
+# Local configuration/secrets
+.env
+.env.*
+!.env.example
+secrets/
+
+# Runtime metadata
+runtime/
+*.log
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Phase-1 additions (plan Task 1 Step 4)
+dist/
+.superpowers/sdd/*/scratch/
+docs/verification/scratch/

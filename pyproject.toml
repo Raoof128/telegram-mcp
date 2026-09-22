@@ -1,0 +1,44 @@
+[project]
+name = "telegram-mcp"
+version = "0.1.10"
+description = "Read-only Telegram MCP gateway; development foundation"
+requires-python = ">=3.12"
+dependencies = [
+    "cryptography==50.0.1",
+    "jsonschema[format]==4.26.0",
+    "mcp==2.2.0",
+    "mcp-types==2.2.0",
+    "pydantic>=2.12,<3",
+    "starlette==1.6.0",
+    "telethon==1.45.0",
+    "uvicorn==0.53.0",
+]
+
+[project.scripts]
+telegram-mcp = "telegram_mcp.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/telegram_mcp"]
+
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "build==1.6.1",
+    "hatchling==1.32.4",
+    "httpx==0.28.1",
+    "mypy==2.3.1",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "ruff==0.16.8",
+]
