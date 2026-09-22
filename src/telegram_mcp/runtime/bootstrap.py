@@ -22,8 +22,11 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import socket
 import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -39,12 +42,14 @@ __all__ = [
     "FakeJobControl",
     "JobControl",
     "LaunchctlJobControl",
+    "ProcessEntry",
     "bootstrap_status",
     "ports_for_mode",
     "request_stop",
     "start_all",
     "status",
     "stop_all",
+    "sweep_strays",
 ]
 
 LOCK_FILENAME = "runtime.lock"
@@ -75,6 +80,7 @@ class JobControl(Protocol):
     def start_job(self, label: str) -> None: ...
     def stop_job(self, label: str) -> None: ...
     def job_state(self, label: str) -> str: ...
+    def terminate_stray(self, pid: int, label: str) -> None: ...
 
 
 class LaunchctlJobControl:
@@ -115,13 +121,23 @@ class LaunchctlJobControl:
             return "stopped"
         return "running" if "state = running" in out.stdout else "stopped"
 
+    def terminate_stray(self, pid: int, label: str) -> None:
+        """SIGTERM a stray with the job's own escalation (sudo for system jobs).
+
+        OPERATOR-PENDING: never run from automated tests.
+        """
+        if label == AGENT_LABEL:
+            subprocess.run(["kill", "-TERM", str(pid)], check=True)
+        else:
+            subprocess.run(["sudo", "kill", "-TERM", str(pid)], check=True)
+
 
 class FakeJobControl:
     """Headless test backend: in-memory job states + call ledger."""
 
     def __init__(self) -> None:
         self.states: dict[str, str] = {}
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[Any, ...]] = []
 
     def start_job(self, label: str) -> None:
         self.calls.append(("start", label))
@@ -133,6 +149,10 @@ class FakeJobControl:
 
     def job_state(self, label: str) -> str:
         return self.states.get(label, "stopped")
+
+    def terminate_stray(self, pid: int, label: str) -> None:
+        """Test seam: ledger the kill, never signal a real process."""
+        self.calls.append(("terminate", pid, label))
 
 
 def ports_for_mode(mode: str) -> tuple[int, ...]:
@@ -219,6 +239,108 @@ def status(
     return report
 
 
+@dataclass(frozen=True)
+class ProcessEntry:
+    """One row of the process table: pid, owner UID, and argv vector."""
+
+    pid: int
+    uid: int
+    argv: tuple[str, ...]
+
+
+# Stray-process markers per job: a process is a stray of a job only when
+# the marker is an *exact element* of its argv vector AND its UID matches
+# the job's UID exactly. Substring binary names never match. The agent and
+# tunnel exact argv vectors are pinned with the Task 8 / Plan 2b plists;
+# until then the label-named binary is the marker (fail closed on doubt).
+JOB_STRAY_MARKERS: dict[str, str] = {
+    RUNTIME_LABEL: "telegram-mcpd",
+    AGENT_LABEL: "telegram-mcp-agent",
+    TUNNEL_LABEL: "telegram-mcp-tunnel",
+}
+
+
+def _default_uid_of(label: str) -> int | None:
+    """Resolve the UID a job's strays must run as. None skips the sweep."""
+    if label == AGENT_LABEL:
+        return os.getuid()
+    try:
+        import pwd
+
+        return pwd.getpwnam(label).pw_uid
+    except KeyError:
+        return None
+
+
+def _list_processes_ps() -> list[ProcessEntry]:
+    """Read-only `ps` snapshot. OPERATOR-PENDING for live verification."""
+    try:
+        out = subprocess.run(
+            ["ps", "-ax", "-o", "pid=,uid=,command="],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    entries: list[ProcessEntry] = []
+    for line in out.stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) != 3:
+            continue
+        try:
+            pid, uid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        try:
+            argv = tuple(shlex.split(parts[2]))
+        except ValueError:
+            continue
+        entries.append(ProcessEntry(pid=pid, uid=uid, argv=argv))
+    return entries
+
+
+def sweep_strays(
+    mode: str,
+    *,
+    job_control: JobControl,
+    list_processes: Callable[[], list[ProcessEntry]] | None = None,
+    uid_of: Callable[[str], int | None] | None = None,
+) -> list[int]:
+    """SIGTERM stray processes holding ports/sockets outside launchd.
+
+    Match rule is exact argv element + exact UID only; our own PID is never
+    matched. Kills go through the job's own escalation (sudo for the system
+    jobs, plain kill for the GUI agent). Runtime + agent always swept; the
+    tunnel only in ChatGPT modes. Returns terminated PIDs.
+    """
+    ports_for_mode(mode)
+    table_fn = list_processes or _list_processes_ps
+    uid_fn = uid_of or _default_uid_of
+    labels = [RUNTIME_LABEL, AGENT_LABEL]
+    if mode in ("chatgpt", "all"):
+        labels.append(TUNNEL_LABEL)
+    try:
+        table = table_fn()
+    except OSError:
+        return []
+    self_pid = os.getpid()
+    killed: list[int] = []
+    for label in labels:
+        uid = uid_fn(label)
+        if uid is None:
+            continue
+        marker = JOB_STRAY_MARKERS[label]
+        for entry in table:
+            if entry.pid == self_pid or entry.uid != uid:
+                continue
+            if marker not in entry.argv:
+                continue
+            job_control.terminate_stray(entry.pid, label)
+            killed.append(entry.pid)
+    return killed
+
+
 def _wait_until_ready(
     runtime_dir: str | Path | None,
     *,
@@ -241,16 +363,20 @@ def start_all(
     job_control: JobControl,
     wait_ready: Any | None = None,
     runtime_dir: str | Path | None = None,
+    list_processes: Callable[[], list[ProcessEntry]] | None = None,
+    uid_of: Callable[[str], int | None] | None = None,
 ) -> dict[str, Any]:
     """Pre-start sweep, then kickstart runtime, agent, and tunnel (ChatGPT modes).
 
     Tunnel start happens strictly after READY is observed.
     """
     ports = ports_for_mode(mode)
-    # Pre-start sweep: unload dead jobs (anything not already stopped).
+    # Pre-start sweep: unload dead jobs (anything not already stopped),
+    # then terminate stray processes holding ports/sockets outside launchd.
     for label in (RUNTIME_LABEL, AGENT_LABEL, TUNNEL_LABEL):
         if job_control.job_state(label) != "stopped":
             job_control.stop_job(label)
+    sweep_strays(mode, job_control=job_control, list_processes=list_processes, uid_of=uid_of)
     job_control.start_job(RUNTIME_LABEL)
     ready = wait_ready() if wait_ready is not None else _wait_until_ready(runtime_dir)
     if not ready:
@@ -265,23 +391,32 @@ def stop_all(
     *,
     job_control: JobControl,
     runtime_dir: str | Path | None = None,
+    stop_timeout: float = 5.0,
 ) -> dict[str, Any]:
     """Stop order: tunnel intake off -> runtime drain -> agent bootout.
 
-    No-op success while OFF (every job already stopped).
+    No-op success while OFF, where OFF is lock authority
+    (``bootstrap_status``), never the job-state view.
     """
+    if bootstrap_status(runtime_dir=runtime_dir)["state"] == "OFF":
+        return {"state": "OFF", "stopped": []}
     states = {
         RUNTIME_LABEL: job_control.job_state(RUNTIME_LABEL),
         AGENT_LABEL: job_control.job_state(AGENT_LABEL),
         TUNNEL_LABEL: job_control.job_state(TUNNEL_LABEL),
     }
-    if all(state == "stopped" for state in states.values()):
-        return {"state": "OFF", "stopped": []}
     stopped: list[str] = []
     for label in (TUNNEL_LABEL, RUNTIME_LABEL, AGENT_LABEL):
-        if states[label] != "stopped":
-            job_control.stop_job(label)
-            stopped.append(label)
+        if states[label] == "stopped":
+            continue
+        if label == RUNTIME_LABEL:
+            # Graceful drain first; best-effort, socket errors ignored.
+            try:
+                request_stop(stop_timeout, runtime_dir=runtime_dir)
+            except OSError:
+                pass
+        job_control.stop_job(label)
+        stopped.append(label)
     directory = _runtime_dir(runtime_dir)
     for name in (ADMIN_SOCK_NAME, CONSENT_SOCK_NAME):
         try:

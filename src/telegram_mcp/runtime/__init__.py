@@ -4,12 +4,14 @@ from telegram_mcp.runtime.bootstrap import (
     FakeJobControl,
     JobControl,
     LaunchctlJobControl,
+    ProcessEntry,
     bootstrap_status,
     ports_for_mode,
     request_stop,
     start_all,
     status,
     stop_all,
+    sweep_strays,
 )
 from telegram_mcp.runtime.lifecycle import (
     RuntimeContext,
@@ -26,6 +28,7 @@ __all__ = [
     "JobControl",
     "LaunchctlJobControl",
     "LockHandle",
+    "ProcessEntry",
     "RuntimeActive",
     "RuntimeContext",
     "StartupFailed",
@@ -40,4 +43,5 @@ __all__ = [
     "startup",
     "status",
     "stop_all",
+    "sweep_strays",
 ]
