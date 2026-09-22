@@ -347,7 +347,9 @@ def phase2a_core(ledger: Ledger, sandbox: Path) -> dict[str, Any]:
     def keys():
         from telegram_mcp.keys.store import FILE_BACKED_KEYS, key_id, provision_missing
 
-        created = provision_missing(sandbox / "keys")
+        # Phases 2 and 3: FILE_BACKED_KEYS now covers the three signing rows,
+        # and doctor/CLI both report every row in it.
+        created = provision_missing(sandbox / "keys", phases=(2, 3))
         assert set(created) == set(FILE_BACKED_KEYS), created
         ids = {name: key_id(name) for name in sorted(FILE_BACKED_KEYS)}
         assert len(set(ids.values())) == len(ids), "key ids must differ per purpose"

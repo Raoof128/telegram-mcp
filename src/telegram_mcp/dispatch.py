@@ -6,8 +6,13 @@ from mcp import types
 
 from telegram_mcp.contract import EXPECTED_TOOLS, load_contracts
 from telegram_mcp.results import error_result, success_result, unknown_tool_result
-from telegram_mcp.tools.status import make_status
+from telegram_mcp.tools.status import ephemeral_disclosure_key, make_status
 from telegram_mcp.validation import ArgumentError, validate_arguments
+
+# One throwaway key per process. This build signs nothing, so the key is
+# advertised for shape only; a real deployment passes the provisioned
+# ``disclosure-key`` instead.
+_DEMO_DISCLOSURE_KEY = ephemeral_disclosure_key()
 
 
 def dispatch(
@@ -26,7 +31,7 @@ def dispatch(
         return error_result("INTERNAL_ERROR")
     try:
         if name == "telegram_status":
-            status = make_status()
+            status = make_status(disclosure_key=_DEMO_DISCLOSURE_KEY)
             return success_result(
                 name, status["data"], status["meta"], max_response_bytes=max_response_bytes
             )

@@ -34,30 +34,51 @@ def test_only_limited_profiles_exist():
     assert DemoConfig.model_fields["mode"].annotation is not None
 
 
-def test_synthetic_disclosure_key_is_marked_and_tripwired():
-    """The Phase-1 status key is a publicly known zero seed. Pin it.
+def test_status_never_advertises_a_publicly_known_key():
+    """The zero-seed key is gone. It must not come back.
 
-    Appendix K.2 step 4 tells a verifier to resolve ``proof_key_id`` against
-    the key ``telegram_status`` advertises. Phase 1 advertises a key derived
-    from 32 zero bytes, whose private half everyone has. That is honest only
-    while nothing signs anything. When Phase 3 lands a real disclosure
-    signer, this test MUST fail — that is its purpose. Replacing it means
-    retiring the factory, not relaxing the assertion.
+    Its private half is 32 zero bytes, which everybody has. Appendix K.2
+    step 4 points verifiers at whatever this tool advertises, so a build
+    that ships this key lets anyone forge a receipt that verifies.
     """
+    import base64
+
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from telegram_mcp.tools.status import ephemeral_disclosure_key, make_status
+
+    zero_raw = Ed25519PrivateKey.from_private_bytes(bytes(32)).public_key().public_bytes_raw()
+    zero_public = base64.urlsafe_b64encode(zero_raw).rstrip(b"=").decode("ascii")
+
+    data = make_status(disclosure_key=ephemeral_disclosure_key())["data"]
+    assert data["disclosure_proof_public_key"] != zero_public
+    assert data["disclosure_proof_key_id"] != "synthetic-test-key-v1"
+
+
+def test_status_requires_a_key_pair():
+    import pytest
 
     from telegram_mcp.tools.status import make_status
 
-    data = make_status()["data"]
-    zero_seed_public = (
-        Ed25519PrivateKey.from_private_bytes(bytes(32)).public_key().public_bytes_raw()
-    )
-    import base64
+    # The contract admits no null here, so there is no "no key" state to
+    # report. A build with no key cannot answer telegram_status at all.
+    with pytest.raises(TypeError):
+        make_status()
 
-    expected = base64.urlsafe_b64encode(zero_seed_public).rstrip(b"=").decode("ascii")
 
-    assert data["disclosure_proof_public_key"] == expected
-    # The id must stay visibly synthetic: it is deliberately NOT the frozen
-    # <kind>:sha256:<hex> shape, so no verifier can mistake it for a real key.
-    assert data["disclosure_proof_key_id"] == "synthetic-test-key-v1"
-    assert ":sha256:" not in data["disclosure_proof_key_id"]
+def test_ephemeral_keys_differ_between_processes():
+    from telegram_mcp.tools.status import ephemeral_disclosure_key
+
+    assert ephemeral_disclosure_key() != ephemeral_disclosure_key()
+
+
+def test_the_advertised_key_satisfies_the_frozen_contract(ephemeral_disclosure_key):
+    import json
+
+    import jsonschema
+
+    from telegram_mcp.tools.status import make_status
+
+    with open("src/telegram_mcp/contracts/telegram_status.data.json") as handle:
+        schema = json.load(handle)
+    jsonschema.validate(make_status(disclosure_key=ephemeral_disclosure_key)["data"], schema)

@@ -162,3 +162,19 @@ def paired_agent_binary(signed_agent_binary: Path) -> Path:
     )
     assert generated.returncode == 0, generated.stdout + generated.stderr
     return signed_agent_binary
+
+
+@pytest.fixture
+def ephemeral_disclosure_key() -> tuple[str, str]:
+    """A real Ed25519 key that exists only for this test and signs nothing."""
+    import base64
+    import hashlib
+    import secrets
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    seed = secrets.token_bytes(32)
+    raw = Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes_raw()
+    key_id = "ed25519:sha256:" + hashlib.sha256(raw).hexdigest()
+    public = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    return key_id, public
