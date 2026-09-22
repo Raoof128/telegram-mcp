@@ -444,10 +444,27 @@ only the global rule:
   reports.
 - **Per-project bytes** are the sum of canonical JSON bytes of the *result
   records attributed to that project*, conservatively including the complete
-  record when it has several origins. The record elements are the ones each tool
-  emits inside `data`: `results[]` for the search tools, `messages[]` for get
-  messages and get context, `chats[]`, `peers[]`, `projects[]` and `unread[]`
-  for the others.
+  record when it has several origins. The record element is fixed per tool,
+  read off the frozen contracts rather than guessed — `resolve_peer` and
+  `resolve_project` emit `matches[]`, not `peers[]`/`projects[]`, and
+  `get_unread` emits `chats[]`:
+
+```text
+telegram_list_projects          projects[]
+telegram_resolve_project        matches[]
+telegram_list_chats             chats[]
+telegram_resolve_peer           matches[]
+telegram_get_unread             chats[]
+telegram_get_messages           messages[]
+telegram_get_context            messages[]
+telegram_search_messages        results[]
+telegram_cross_project_search   results[]
+```
+
+  `telegram_cross_project_search.data` also carries a `projects` array; it is
+  scope metadata, not records, and a measurement keyed on "the projects array"
+  would silently count the wrong thing on exactly the tool where cross-project
+  accounting matters most.
 - **`data`-container overhead** — everything inside `data` that is not a record,
   such as `project` and `search_scope` on a search response — is charged to the
   client-global bucket **only**.
