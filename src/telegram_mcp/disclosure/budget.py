@@ -29,16 +29,20 @@ from telegram_mcp.disclosure.measure import (
     records_disclosed,
 )
 from telegram_mcp.keys.store import load_key
+from telegram_mcp.storage.settings import get_setting
 
 __all__ = [
     "GLOBAL",
     "PROJECT",
     "BucketKey",
     "BudgetError",
+    "Thresholds",
     "Usage",
     "buckets_for",
     "committed_usage",
     "subject_digest",
+    "thresholds_for",
+    "tier",
     "window_start",
 ]
 
@@ -134,3 +138,39 @@ def buckets_for(
         buckets[key] = Usage(per_project_records.get(project_ref, 0), size)
 
     return buckets
+
+
+@dataclass(frozen=True)
+class Thresholds:
+    """One dimension's soft and hard ceilings, in both quantities."""
+
+    soft_records: int
+    hard_records: int
+    soft_bytes: int
+    hard_bytes: int
+
+
+def thresholds_for(conn: sqlite3.Connection, kind: str) -> Thresholds:
+    """Read the §23C.1 baseline from the closed settings registry."""
+    if kind not in _KINDS:
+        raise ValueError("unknown budget subject kind")
+    suffix = "client_global" if kind == GLOBAL else "client_project"
+    return Thresholds(
+        soft_records=get_setting(conn, f"exposure_budget.soft_records_per_{suffix}"),
+        hard_records=get_setting(conn, f"exposure_budget.hard_records_per_{suffix}"),
+        soft_bytes=get_setting(conn, f"exposure_budget.soft_bytes_per_{suffix}"),
+        hard_bytes=get_setting(conn, f"exposure_budget.hard_bytes_per_{suffix}"),
+    )
+
+
+def tier(projected: Usage, limits: Thresholds) -> str:
+    """``normal`` | ``elevated`` | ``refuse`` for a projected figure.
+
+    "At or above" is the spec's wording for both thresholds, so equality
+    escalates rather than passing (spec §23C.3).
+    """
+    if projected.records >= limits.hard_records or projected.bytes >= limits.hard_bytes:
+        return "refuse"
+    if projected.records >= limits.soft_records or projected.bytes >= limits.soft_bytes:
+        return "elevated"
+    return "normal"

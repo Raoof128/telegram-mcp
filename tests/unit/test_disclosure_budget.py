@@ -105,3 +105,41 @@ def test_a_shared_record_is_charged_once_globally_and_once_per_project():
     assert [u.records for u in projects] == [1, 1]
     # Deduplication at the retrieval layer must never reach accounting.
     assert sum(u.records for u in projects) == 2
+
+
+def test_tiers_follow_the_frozen_baseline():
+    from telegram_mcp.disclosure.budget import Thresholds, Usage, tier
+
+    limits = Thresholds(
+        soft_records=100, hard_records=500, soft_bytes=500_000, hard_bytes=5_000_000
+    )
+
+    assert tier(Usage(99, 0), limits) == "normal"
+    assert tier(Usage(100, 0), limits) == "elevated"  # at the soft threshold
+    assert tier(Usage(499, 0), limits) == "elevated"
+    assert tier(Usage(500, 0), limits) == "refuse"  # at the hard threshold
+    assert tier(Usage(0, 500_000), limits) == "elevated"
+    assert tier(Usage(0, 5_000_000), limits) == "refuse"
+
+
+def test_either_quantity_alone_can_refuse():
+    from telegram_mcp.disclosure.budget import Thresholds, Usage, tier
+
+    limits = Thresholds(
+        soft_records=100, hard_records=500, soft_bytes=500_000, hard_bytes=5_000_000
+    )
+    assert tier(Usage(0, 5_000_001), limits) == "refuse"
+    assert tier(Usage(501, 0), limits) == "refuse"
+
+
+def test_thresholds_are_read_from_the_settings_registry(tmp_path):
+    from telegram_mcp.disclosure.budget import GLOBAL, PROJECT, thresholds_for
+    from telegram_mcp.storage.db import open_db
+    from telegram_mcp.storage.migrations import migrate
+
+    conn = open_db(tmp_path / "meta.db")
+    migrate(conn)
+
+    assert thresholds_for(conn, PROJECT).hard_records == 500
+    assert thresholds_for(conn, GLOBAL).hard_records == 1_500
+    assert thresholds_for(conn, GLOBAL).hard_bytes == 15_000_000
