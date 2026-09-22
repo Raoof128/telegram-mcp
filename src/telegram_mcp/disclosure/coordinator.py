@@ -376,8 +376,12 @@ class DisclosureCoordinator:
                     )
                 reservation = None  # the commit consumed it
 
-                self._checkpoint("refresh_anchor")
                 try:
+                    # The crash seam sits INSIDE the handler: an injected
+                    # failure at step 12 must take the same path as a real
+                    # anchor failure, or the test would prove nothing about
+                    # the degraded latch.
+                    self._checkpoint("refresh_anchor")
                     write_anchor(
                         self._anchor_path,
                         self._chain_key,
