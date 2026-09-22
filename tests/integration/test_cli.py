@@ -74,7 +74,15 @@ def test_keys_provision_then_list(monkeypatch, capsys, tmp_path):
     store = tmp_path / "keys"
     assert _run(["keys", "provision", "--store-dir", str(store)], monkeypatch) == 0
     provisioned = json.loads(capsys.readouterr().out)["provisioned"]
-    assert set(provisioned) == {"principal-key", "cursor-key", "privacy-key", "challenge-key"}
+    assert set(provisioned) == {
+        "principal-key",
+        "cursor-key",
+        "privacy-key",
+        "challenge-key",
+        "disclosure-key",
+        "audit-checkpoint-key",
+        "audit-chain-key",
+    }
     assert _run(["keys", "list", "--store-dir", str(store)], monkeypatch) == 0
     listed = json.loads(capsys.readouterr().out)
     assert set(listed) == set(provisioned)

@@ -210,7 +210,10 @@ def _cmd_keys(args: argparse.Namespace) -> int:
 
     try:
         if args.action == "provision":
-            created = provision_missing(args.store_dir)
+            # Phases 2 and 3: the runtime's own file-backed rows. `keys list`
+            # reports every FILE_BACKED_KEYS row, so provisioning a subset
+            # would leave the two verbs disagreeing.
+            created = provision_missing(args.store_dir, phases=(2, 3))
             _emit({"store_dir": args.store_dir, "provisioned": created})
             return EXIT_OK
         set_store_dir(args.store_dir)
