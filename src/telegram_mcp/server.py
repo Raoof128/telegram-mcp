@@ -18,10 +18,9 @@ INSTRUCTIONS = (
 
 def _descriptors() -> list[types.Tool]:
     contracts = load_contracts()
-    import json
     from importlib import resources
 
-    manifest = json.loads(
+    manifest = strict_json_loads(
         (resources.files("telegram_mcp") / "contracts" / "manifest.json").read_text(
             encoding="utf-8"
         )
@@ -61,7 +60,12 @@ def build_server(config: DemoConfig) -> Server:
         return types.ListToolsResult(tools=tools)
 
     async def on_call_tool(ctx, params) -> types.CallToolResult:
-        arguments = params.arguments if params.arguments is not None else {}
+        # Protocol omission (field absent) means {}; an explicitly supplied
+        # null is left for application validation to reject.
+        if "arguments" not in params.model_fields_set:
+            arguments = {}
+        else:
+            arguments = params.arguments
         return dispatch(params.name, arguments, max_response_bytes=config.max_response_bytes)
 
     server = Server(

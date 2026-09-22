@@ -1,3 +1,5 @@
+import pytest
+
 from telegram_mcp.config import DemoConfig
 from telegram_mcp.server import build_server
 
@@ -30,3 +32,24 @@ def test_ten_descriptors_no_oauth_nine_flags():
     flagged = [t.name for t in tools if (t.meta or {}).get("anthropic/requiresUserInteraction")]
     assert len(flagged) == 9
     assert "telegram_status" not in flagged
+
+
+def test_duplicate_manifest_keys_rejected(monkeypatch):
+    import importlib.resources as _resources
+
+    from telegram_mcp import server as server_module
+
+    class _DupFile:
+        def __truediv__(self, other):
+            return self
+
+        def read_text(self, encoding=None):
+            return '{"tools": ["a", "b"], "tools": ["c"]}'
+
+    class _Files:
+        def __truediv__(self, other):
+            return _DupFile()
+
+    monkeypatch.setattr(_resources, "files", lambda *a, **k: _Files())
+    with pytest.raises(ValueError, match="duplicate JSON key"):
+        server_module._descriptors()

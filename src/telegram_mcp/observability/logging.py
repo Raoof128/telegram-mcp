@@ -1,6 +1,7 @@
 """Fixed allowlisted application events; never logs objects, headers or exceptions."""
 
 import logging
+import re
 
 logger = logging.getLogger("telegram_mcp")
 
@@ -50,6 +51,11 @@ def emit_event(status: str, error_code: str | None) -> None:
 class _SdkHeaderRedactionFilter(logging.Filter):
     """Replace SDK transport-security warnings that echo Host/Origin values."""
 
+    _PATTERNS = (
+        (re.compile(r"Invalid Host header\s*:"), "Invalid Host header"),
+        (re.compile(r"Invalid Origin header\s*:"), "Invalid Origin header"),
+    )
+
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             message = record.getMessage()
@@ -57,12 +63,11 @@ class _SdkHeaderRedactionFilter(logging.Filter):
             record.msg = "transport security warning"
             record.args = ()
             return True
-        if message.startswith("Invalid Host header:"):
-            record.msg = "Invalid Host header"
-            record.args = ()
-        elif message.startswith("Invalid Origin header:"):
-            record.msg = "Invalid Origin header"
-            record.args = ()
+        for pattern, fixed in self._PATTERNS:
+            if pattern.search(message):
+                record.msg = fixed
+                record.args = ()
+                break
         return True
 
 

@@ -31,24 +31,15 @@ _CREDENTIAL_KEYS = {
     "TELEGRAM_SESSION_PATH",
 }
 
-_OTEL_KEYS = {
-    "OTEL_EXPORTER_OTLP_ENDPOINT",
-    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
-    "OTEL_TRACES_EXPORTER",
-    "OTEL_METRICS_EXPORTER",
-    "OTEL_LOGS_EXPORTER",
-    "OTEL_SDK_DISABLED",
-}
-
 
 def validate_environment(environ: Mapping[str, str]) -> None:
     if _CREDENTIAL_KEYS.intersection(environ):
         raise ValueError("safe_demo rejects Telegram credential configuration")
-    for key in sorted(_OTEL_KEYS.intersection(environ)):
+    for key in sorted(environ):
+        if not key.upper().startswith("OTEL_"):
+            continue
         value = environ[key]
-        if key == "OTEL_SDK_DISABLED":
+        if key.upper() == "OTEL_SDK_DISABLED":
             if value.lower() not in ("true", "1"):
                 raise ValueError("safe_demo requires telemetry export disabled")
             continue

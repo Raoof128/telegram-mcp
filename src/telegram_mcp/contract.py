@@ -119,7 +119,7 @@ def _load_and_check(name: str, schema: dict, *, is_output: bool) -> dict:
 def load_contracts() -> dict[str, ToolContract]:
     global _contracts_cache
     if _contracts_cache is not None:
-        return {name: c for name, c in _contracts_cache.items()}
+        return deepcopy(_contracts_cache)
     from importlib import resources
 
     base = resources.files("telegram_mcp") / "contracts"
@@ -146,7 +146,7 @@ def load_contracts() -> dict[str, ToolContract]:
             output_schema=deepcopy(output_schema),
         )
     _contracts_cache = contracts
-    return {name: c for name, c in contracts.items()}
+    return deepcopy(contracts)
 
 
 def validate_output(tool: str, value: dict) -> None:

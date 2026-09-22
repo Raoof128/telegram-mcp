@@ -167,3 +167,20 @@ def test_public_error_carries_code_only():
         assert exc.code == "INVALID_ARGUMENT"
     else:
         raise AssertionError("expected ArgumentError")
+
+
+def test_non_datetime_format_failure_is_invalid_argument():
+    from telegram_mcp.contract import ToolContract
+
+    contract = ToolContract(
+        name="synthetic",
+        input_schema={
+            "type": "object",
+            "properties": {"host": {"type": "string", "format": "hostname"}},
+            "additionalProperties": False,
+        },
+        output_schema={},
+    )
+    with pytest.raises(ArgumentError) as exc:
+        validate_arguments(contract, {"host": "not a host name!!"})
+    assert exc.value.code == "INVALID_ARGUMENT"

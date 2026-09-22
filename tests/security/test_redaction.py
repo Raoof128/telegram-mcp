@@ -64,8 +64,56 @@ def test_fixed_error_fits_smallest_cap():
 
 
 def test_status_fits_smallest_configured_cap():
+    # 989 B dispatch body + measured ~79 B SDK/JSON-RPC overhead exceeds a
+    # 1024 B cap, so the honest fail-closed answer is RESPONSE_LIMIT.
     result = dispatch("telegram_status", {}, max_response_bytes=1024)
-    assert result.is_error is False
+    assert result.is_error is True
+    assert result.structured_content["error"]["code"] == "RESPONSE_LIMIT"
+
+
+def test_full_envelope_never_exceeds_cap():
+    import json as _json
+
+    from starlette.testclient import TestClient
+
+    from telegram_mcp.config import DemoConfig
+    from telegram_mcp.server import create_app
+
+    meta = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    body = (
+        b'{"jsonrpc":"2.0","id":1,"method":"tools/call",'
+        b'"params":{"name":"telegram_status","arguments":{},"_meta":'
+        + _json.dumps(meta).encode()
+        + b"}}"
+    )
+    headers = {
+        "Mcp-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "telegram_status",
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+    with TestClient(
+        create_app(DemoConfig(max_response_bytes=1024)), base_url="http://127.0.0.1:8766"
+    ) as client:
+        response = client.post("/mcp", headers=headers, content=body)
+    assert len(response.content) <= 1024
+    assert response.json()["result"]["structuredContent"]["error"]["code"] == "RESPONSE_LIMIT"
+
+
+def test_sdk_warning_redaction_is_not_prefix_fragile(caplog):
+    import logging
+
+    from telegram_mcp.observability.logging import _SdkHeaderRedactionFilter
+
+    logger = logging.getLogger("telegram_mcp.test.filter.probe")
+    logger.addFilter(_SdkHeaderRedactionFilter())
+    with caplog.at_level(logging.WARNING, logger="telegram_mcp.test.filter.probe"):
+        logger.warning("Request had Invalid Host header: SYNTHETIC-CANARY-HOST-2")
+    assert "SYNTHETIC-CANARY-HOST-2" not in caplog.text
 
 
 def test_oversized_payload_becomes_response_limit():

@@ -54,3 +54,12 @@ def test_otel_exporter_must_be_disabled():
     # Explicitly disabled is accepted and never echoes values.
     validate_environment({"OTEL_TRACES_EXPORTER": "none", "OTEL_SDK_DISABLED": "true"})
     validate_environment({})
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["OTEL_PYTHON_TRACER_PROVIDER", "OTEL_AUTO_INSTRUMENT", "OTEL_PROPAGATORS", "OTEL_LOG_LEVEL"],
+)
+def test_otel_auto_instrumentation_keys_rejected(key):
+    with pytest.raises(ValueError, match="telemetry export disabled"):
+        validate_environment({key: "SYNTHETIC_CANARY"})

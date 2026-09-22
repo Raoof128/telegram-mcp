@@ -33,8 +33,9 @@ def validate_arguments(contract: ToolContract, arguments: object) -> dict[str, A
     try:
         validator.validate(arguments)
     except ValidationError as exc:
-        code = "INVALID_TIME" if exc.validator == "format" else "INVALID_ARGUMENT"
-        raise ArgumentError(code) from None
+        if exc.validator == "format" and exc.validator_value == "date-time":
+            raise ArgumentError("INVALID_TIME") from None
+        raise ArgumentError("INVALID_ARGUMENT") from None
     value = deepcopy(arguments)
     if not isinstance(value, dict):
         raise ArgumentError("INVALID_ARGUMENT")

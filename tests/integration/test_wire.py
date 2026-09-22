@@ -52,6 +52,33 @@ def test_modern_status_without_initialize():
     assert response.json()["result"]["structuredContent"]["data"]["connected"] is False
 
 
+def test_explicit_null_arguments_is_not_omission():
+    import json as _json
+
+    body = (
+        b'{"jsonrpc":"2.0","id":1,"method":"tools/call",'
+        b'"params":{"name":"telegram_status","arguments":null,"_meta":'
+        + _json.dumps(
+            {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }
+        ).encode()
+        + b"}}"
+    )
+    headers = {
+        "Mcp-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "telegram_status",
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+    }
+    with TestClient(create_app(DemoConfig()), base_url="http://127.0.0.1:8766") as client:
+        response = client.post("/mcp", headers=headers, content=body)
+    assert response.status_code == 200
+    assert response.json()["result"]["structuredContent"]["error"]["code"] == "INVALID_ARGUMENT"
+
+
 def test_discover_and_list_match_static_catalogue():
     with TestClient(create_app(DemoConfig()), base_url="http://127.0.0.1:8766") as client:
         listed = modern_request(client, "tools/list", {}).json()["result"]["tools"]

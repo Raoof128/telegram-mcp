@@ -305,3 +305,13 @@ def test_tool_not_found_not_in_error_enum():
             "TOOL_NOT_FOUND"
             not in error_branch["properties"]["error"]["properties"]["code"]["enum"]
         )
+
+
+def test_cached_contracts_are_copies():
+    first = load_contracts()
+    first["telegram_status"].input_schema["synthetic_poison"] = True
+    try:
+        second = load_contracts()
+        assert "synthetic_poison" not in second["telegram_status"].input_schema
+    finally:
+        del first["telegram_status"].input_schema["synthetic_poison"]
