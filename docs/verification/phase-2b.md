@@ -1,12 +1,12 @@
 # Phase 2b verification — Swift consent agent
 
-**Status:** Tasks 1–4 complete and qualified headlessly against the real
-Python broker. **NOT production.** No pairing record exists on this host, no
-Secure Enclave key has been generated, no Touch ID approval has been
-performed, the LaunchAgent has never been loaded, and the agent has never
-spoken to a privileged runtime — only to the test-driven broker. The two
-interactive legs (`pairing generate`, a real Touch ID approval) are
-implemented, gated and unrun.
+**Status:** Tasks 1–5 complete. The agent is qualified headlessly against the
+real Python broker, and both interactive legs have now been run on this host:
+a Secure Enclave approval key exists and a real Touch ID approval produced a
+signature the broker's verifier accepts. **NOT production.** The daemon pin
+is absent because no real runtime exists yet, the LaunchAgent has never been
+loaded, and the agent has never spoken to a privileged runtime — only to the
+test-driven broker.
 
 ## Reproducibility
 
@@ -83,7 +83,70 @@ against the packaged agent over a Unix socket.
 | identity reporting | matches `codesign -dv`, read from the signature |
 | signed bundle | `apple-development`, team present, `pairable: true` |
 | `run` without a record | `MISSING-RECORD`, tells the operator to re-pair |
-| real `pairing generate` | **not run** (platform-gated) |
+| real `pairing generate` | **run** — see the interactive legs below |
+
+### Interactive legs (run 2026-09-22, this host)
+
+Both ran behind `--run-platform-gated` against the certificate-signed bundle
+(`apple-development`, team `3L5A4R7JNY`).
+
+| Leg | Result |
+|---|---|
+| `pairing generate` | Secure Enclave approval key and software transport key created and stored in the login keychain |
+| live Touch ID `approve` | prompt shown, operator approved, envelope emitted and verified |
+
+Fingerprints as paired (public material):
+
+- approval `p256:sha256:fbd39bb34fb63d7d14fa614cf03b265ce6420fd9d6575c1e31f1e54da36f0e90`
+- transport `ed25519:sha256:6aed837fb11478eafc95fc2da0441361cba4cf1c9d4b24256889dcb0f5946b13`
+
+What the Touch ID leg proves, precisely: the approval key's access control is
+`.privateKeyUsage` plus `.biometryCurrentSet`, so the Enclave refuses to sign
+without a fresh biometric authentication on the presenting `LAContext`. The
+test verified the emitted DER ECDSA signature against the key's own public
+half with Python `cryptography`, and asserted the envelope's `key_id` equals
+the paired approval record. A valid signature under that ACL is therefore
+cryptographic evidence that a real biometric authentication happened — not an
+assertion that a prompt was seen.
+
+The daemon pin was deliberately **not** imported. That record holds a real
+runtime's challenge public key; pinning the test fixture's key
+(`b"\x01" * 32`) into the operator's keychain would misreport what is paired.
+`pairing-status` therefore reads `paired: false` with two of three records
+present, which is the honest state.
+
+Re-minting is a ceremony, not a side effect: the gated pairing test asserts
+the paired state instead of calling `pairing generate` again, because
+rotating the approval key would silently invalidate whatever the daemon has
+pinned. Rotation has its own test behind `TELEGRAM_MCP_ALLOW_REPAIR=1`.
+
+### Finding: keychain items are not scoped to the writing code identity
+
+Running the two legs exposed this, and it is a direct cost of the
+free-certificate path rather than a bug in the agent. The records are
+ordinary login-keychain generic passwords. Scoping them to the writing code
+identity needs the data-protection keychain, which needs an
+`application-identifier` / `keychain-access-groups` entitlement authorised by
+a provisioning profile — the thing this host does not have. Consequence: any
+process running as this operator can read the **transport private key**,
+which authenticates the agent to the daemon's rendezvous socket. A test
+asserts this current behaviour so a change to it is visible.
+
+What it does not reach: approvals. The approval key lives in the Secure
+Enclave under `.biometryCurrentSet`; the keychain holds only its encrypted,
+device-bound blob, which is useless to anything that cannot pass a biometric
+check on this Mac. So the exposure is impersonation of the agent's
+*transport* identity to the rendezvous socket, not the ability to approve a
+disclosure.
+
+Three ways to close it, for a later decision:
+
+1. A `SecAccess` ACL naming the trusted application (the legacy file-keychain
+   mechanism; still functional, deprecated since macOS 12).
+2. The data-protection keychain, which needs a paid membership's
+   provisioning profile.
+3. Treat the rendezvous transport key as non-secret and require the daemon to
+   bind the session to something else as well.
 
 ## Deviations from the plan, and why
 
@@ -134,14 +197,11 @@ against the packaged agent over a Unix socket.
 
 ## Unresolved items
 
-1. **No pairing record exists.** `pairing generate` has never been run, so no
-   Enclave key, no transport key and no daemon pin exist on this host. Until
-   it is run, `run` refuses with `MISSING-RECORD` and the production approval
-   path cannot sign anything.
-2. **No Touch ID approval has been performed.** The prompt path is
-   implemented (fresh `LAContext` per consent, biometrics only, key obtained
-   with that same context, context invalidated after) but has never faced a
-   real sensor.
+1. **Transport-key scoping** — see the finding above; undecided.
+2. **No daemon pin.** Two of three pairing records exist; the third is a real
+   runtime's challenge public key, so `run` still refuses with
+   `MISSING-RECORD` until a runtime is provisioned and its public key is
+   imported with `pairing import-daemon-pin`.
 3. **The LaunchAgent has never been loaded.** `RunAtLoad` is false and the
    definition ships disabled; `launchctl bootstrap gui/$UID` has not run.
 4. **Phase-2J join gate remains formally unrun.** Six of its thirteen

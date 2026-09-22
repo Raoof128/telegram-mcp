@@ -176,14 +176,18 @@ def test_no_ui_environment_makes_a_real_prompt_fatal():
 
 
 @pytest.mark.platform_gated
-def test_live_touch_id_approval_signs_with_the_enclave_key():
-    """Interactive: a Touch ID prompt appears and the operator approves once."""
+def test_live_touch_id_approval_signs_with_the_enclave_key(paired_agent_binary):
+    """Interactive: a Touch ID prompt appears and the operator approves once.
+
+    Runs against the paired, certificate-signed bundle: the keychain ACL
+    binds to that identity, so the ad-hoc bundle cannot read the records.
+    """
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
 
     case = _case()
     out = subprocess.run(
-        [AGENT_BIN, "approve", VECTORS, "0"],
+        [str(paired_agent_binary), "approve", VECTORS, "0"],
         capture_output=True,
         text=True,
         timeout=180,
@@ -196,6 +200,15 @@ def test_live_touch_id_approval_signs_with_the_enclave_key():
         payload["envelope"]["sig"] + "=" * (-len(payload["envelope"]["sig"]) % 4)
     )
     public.verify(signature, bytes.fromhex(case["jcs_hex"]), ec.ECDSA(hashes.SHA256()))
+    status = json.loads(
+        subprocess.run(
+            [str(paired_agent_binary), "pairing-status"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+    )
+    assert payload["envelope"]["key_id"] == status["records"]["approval"]
 
 
 # --- Task 3: rendezvous client against the broker ----------------------------
@@ -315,8 +328,54 @@ def test_signed_build_pairs(signed_agent_binary):
 
 
 @pytest.mark.platform_gated
-def test_pairing_generate_creates_the_enclave_and_transport_keys(signed_agent_binary):
-    """Host-mutating: writes real keychain records for this operator."""
+def test_pairing_generate_creates_the_enclave_and_transport_keys(paired_agent_binary):
+    """Host-mutating: the fixture generates the records when none exist.
+
+    This asserts the paired state rather than calling ``pairing generate``
+    again. Re-minting would rotate the operator's approval key on every
+    gated run and silently invalidate whatever the daemon has pinned; that
+    rotation is a deliberate ceremony, so it lives behind its own switch.
+    """
+    status = json.loads(
+        subprocess.run(
+            [str(paired_agent_binary), "pairing-status"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+    )
+    assert re.fullmatch(r"p256:sha256:[0-9a-f]{64}", status["records"]["approval"])
+    assert re.fullmatch(r"ed25519:sha256:[0-9a-f]{64}", status["records"]["transport"])
+    assert status["pairable"] is True
+
+    # the agent restarts onto the same public keys
+    for which, record in (("approval", "approval"), ("transport", "transport")):
+        exported = json.loads(
+            subprocess.run(
+                [str(paired_agent_binary), "pairing", "export", which],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            ).stdout
+        )
+        assert exported["fingerprint"] == status["records"][record]
+
+
+@pytest.mark.platform_gated
+@pytest.mark.skipif(
+    os.environ.get("TELEGRAM_MCP_ALLOW_REPAIR") != "1",
+    reason="rotating the approval key invalidates the daemon's pin; set TELEGRAM_MCP_ALLOW_REPAIR=1",
+)
+def test_pairing_generate_rotates_onto_a_fresh_enclave_key(signed_agent_binary):
+    """The rotation ceremony: a new key, and the old fingerprint is gone."""
+    before = json.loads(
+        subprocess.run(
+            [str(signed_agent_binary), "pairing-status"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+    )["records"]
     generated = subprocess.run(
         [str(signed_agent_binary), "pairing", "generate"],
         capture_output=True,
@@ -326,29 +385,8 @@ def test_pairing_generate_creates_the_enclave_and_transport_keys(signed_agent_bi
     assert generated.returncode == 0, generated.stderr
     report = json.loads(generated.stdout)
     assert re.fullmatch(r"p256:sha256:[0-9a-f]{64}", report["approval_fingerprint"])
-    assert re.fullmatch(r"ed25519:sha256:[0-9a-f]{64}", report["transport_fingerprint"])
-
-    status = json.loads(
-        subprocess.run(
-            [str(signed_agent_binary), "pairing-status"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        ).stdout
-    )
-    assert status["records"]["approval"] == report["approval_fingerprint"]
-    assert status["records"]["transport"] == report["transport_fingerprint"]
-
-    # the agent restarts onto the same public key
-    again = json.loads(
-        subprocess.run(
-            [str(signed_agent_binary), "pairing", "export", "approval"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        ).stdout
-    )
-    assert again["fingerprint"] == report["approval_fingerprint"]
+    if before.get("approval"):
+        assert report["approval_fingerprint"] != before["approval"]
 
 
 def test_launch_agent_definition_is_disabled_by_default():
@@ -412,14 +450,44 @@ def test_no_challenge_or_display_bytes_reach_any_agent_output_file(tmp_path):
     assert case["jcs_hex"] not in (result.get("agent_stdout", "") + result.get("agent_stderr", ""))
 
 
-def test_running_without_a_pairing_record_refuses_with_a_fixed_error():
-    """A deleted or absent keychain record means re-pair, never degrade."""
+def test_running_without_a_complete_pairing_record_refuses_with_a_fixed_error():
+    """A missing keychain record means re-pair, never degrade.
+
+    The message names the command that fixes it, whichever record is the
+    one missing.
+    """
     out = _pairing("run", "/tmp/telegram-mcp-absent.sock")
     assert out.returncode != 0
     combined = out.stdout + out.stderr
     assert "MISSING-RECORD" in combined
-    assert "pairing generate" in combined
-    assert "sock" not in out.stdout  # no socket work was attempted
+    assert "pairing generate" in combined or "pairing import-daemon-pin" in combined
+    assert out.stdout == ""  # no socket work was attempted
+
+
+def test_the_transport_key_is_readable_by_any_code_identity_of_this_user():
+    """Documents a real limit of the free-certificate path.
+
+    Keychain items written here are ordinary login-keychain generic
+    passwords. Without the data-protection keychain — which needs an
+    `application-identifier` entitlement authorised by a provisioning
+    profile — the file keychain does not scope them to the writing code
+    identity, so any process running as this operator can read the
+    *transport* private key. That key authenticates the agent to the
+    daemon's rendezvous socket; it cannot approve anything, because
+    approvals need the Secure Enclave key, which is biometry-bound and not
+    extractable.
+
+    This test asserts the current, understood behaviour so a future change
+    to it is a visible one. It skips when nothing is paired.
+    """
+    status = json.loads(_pairing("pairing-status").stdout)
+    if "transport" not in status.get("records", {}):
+        pytest.skip("nothing paired on this host")
+    # the ad-hoc bundle is a different code identity from the signed one
+    assert status["identity"]["kind"] == "adhoc"
+    exported = _pairing("pairing", "export", "transport")
+    assert exported.returncode == 0, exported.stderr
+    assert json.loads(exported.stdout)["fingerprint"] == status["records"]["transport"]
 
 
 def test_approval_without_a_paired_enclave_key_refuses(tmp_path):

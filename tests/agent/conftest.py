@@ -92,3 +92,34 @@ def signed_agent_binary(consent_agent_binary: Path) -> Path:
     )
     assert build.returncode == 0, build.stdout + build.stderr
     return SIGNED_BINARY
+
+
+@pytest.fixture(scope="session")
+def paired_agent_binary(signed_agent_binary: Path) -> Path:
+    """Ensure the signed bundle holds an Enclave approval key, once per run.
+
+    Pairing is host-mutating, so this fixture only ever runs behind
+    ``--run-platform-gated``. It generates nothing if the records already
+    exist, and it never imports a daemon pin: that public key belongs to a
+    real runtime, and pinning a test fixture's key into the operator's
+    keychain would be a lie about what is paired.
+    """
+    import json
+
+    status = subprocess.run(  # noqa: PLW1510 -- absence is handled below
+        [str(signed_agent_binary), "pairing-status"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    records = json.loads(status.stdout).get("records", {})
+    if "approval" in records and "transport" in records:
+        return signed_agent_binary
+    generated = subprocess.run(  # noqa: PLW1510 -- returncode is asserted below
+        [str(signed_agent_binary), "pairing", "generate"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+    return signed_agent_binary
