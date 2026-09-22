@@ -21,6 +21,12 @@ Both sides hold a 5-second deadline for the whole handshake, and either
 side closes on any violation. ``expected_runtime_id``, when the agent sends
 one, must equal this runtime's id: an agent left over from a previous
 runtime cannot be adopted.
+
+One agent session is live at a time. A second connection is closed before
+its handshake is read, so a process holding a copy of the transport key
+cannot displace or race an established agent — it can only wait for the
+real one to disconnect. Defence in depth behind the keychain ACL that
+scopes that key to the agent's code identity.
 """
 
 from __future__ import annotations
@@ -83,6 +89,22 @@ _logger = logging.getLogger("telegram_mcp.rendezvous")
 
 class RendezvousError(Exception):
     """Handshake refusal. Fixed reason; never carries key material."""
+
+
+class _LiveSession:
+    """One agent at a time. Single-threaded asyncio, so a flag suffices."""
+
+    def __init__(self) -> None:
+        self._taken = False
+
+    def claim(self) -> bool:
+        if self._taken:
+            return False
+        self._taken = True
+        return True
+
+    def release(self) -> None:
+        self._taken = False
 
 
 @dataclass(frozen=True)
@@ -273,7 +295,13 @@ async def serve_rendezvous(
     if target.exists() or target.is_symlink():
         target.unlink()
 
+    live = _LiveSession()
+
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if not live.claim():
+            _logger.warning("rendezvous refused: an agent session is already live")
+            writer.close()
+            return
         try:
             session = await asyncio.wait_for(
                 _handshake(
@@ -288,10 +316,12 @@ async def serve_rendezvous(
             )
         except (RendezvousError, FrameError) as exc:
             _logger.warning("rendezvous refused", extra={"reason": str(exc)})
+            live.release()
             writer.close()
             return
         except (TimeoutError, asyncio.CancelledError):
             _logger.warning("rendezvous handshake deadline exceeded")
+            live.release()
             writer.close()
             return
         try:
@@ -300,6 +330,7 @@ async def serve_rendezvous(
                 if asyncio.iscoroutine(result):
                     await result
         finally:
+            live.release()
             writer.close()
 
     server = await asyncio.start_unix_server(handle, path=str(target))

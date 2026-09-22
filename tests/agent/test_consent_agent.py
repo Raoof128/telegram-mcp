@@ -1,3 +1,40 @@
+def test_the_transport_key_is_scoped_to_the_agents_code_identity(signed_agent_binary):
+    """A foreign code identity must not be able to read the pairing records.
+
+    Login-keychain items are readable by anything running as this operator
+    unless the item carries an ACL, and scoping by access group instead
+    would need the data-protection keychain's entitlement — a paid
+    membership's provisioning profile. The agent therefore writes each
+    record with a `SecAccess` naming itself as the only trusted
+    application, and reads with interaction disabled so a foreign identity
+    fails closed instead of putting an authorization dialog in front of the
+    operator.
+
+    The transport key is what authenticates the agent to the daemon's
+    rendezvous socket, so leaving it readable would let any local process
+    impersonate the agent there.
+    """
+    paired = json.loads(
+        subprocess.run(
+            [str(signed_agent_binary), "pairing-status"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+    )
+    if "transport" not in paired.get("records", {}):
+        pytest.skip("nothing paired on this host")
+
+    # the ad-hoc bundle is a different code identity from the signed one
+    foreign = json.loads(_pairing("pairing-status").stdout)
+    assert foreign["identity"]["kind"] == "adhoc"
+    assert foreign["records"] == {}, foreign["records"]
+
+    exported = _pairing("pairing", "export", "transport")
+    assert exported.returncode != 0
+    assert "MISSING-RECORD" in (exported.stdout + exported.stderr)
+
+
 # ruff: noqa: SIM115, PLW1510 -- test bodies are brief-verbatim (plan pins
 # `open(...)`/`subprocess.run(...)` shapes; full output must be captured).
 """Phase-2b consent-agent shell tests (Task 1: JCS + challenge verification).

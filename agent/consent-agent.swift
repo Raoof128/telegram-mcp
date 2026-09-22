@@ -635,7 +635,45 @@ let approvalBlobAccount = "approval-key-blob"
 let transportKeyAccount = "transport-key"
 let daemonPinAccount = "daemon-challenge-pin"
 
+/// An ACL that names this binary as the only trusted application.
+///
+/// Without an access control, a login-keychain item is readable by anything
+/// running as this operator, which would leave the transport private key —
+/// the agent's identity to the daemon's rendezvous socket — lying in the
+/// clear for any local process. Scoping items by access group instead would
+/// need the data-protection keychain, whose entitlement requires a paid
+/// membership's provisioning profile.
+///
+/// `SecAccessCreate` and `SecTrustedApplicationCreateFromPath` are the
+/// file keychain's own mechanism for exactly this and remain functional;
+/// they are deprecated, which is why this one function is marked deprecated
+/// too rather than the deprecation being ignored. Verified on this host: a
+/// binary with a different code identity is refused `errSecAuthFailed`, and
+/// a tool that permits interaction gets an authorization prompt instead of
+/// the bytes.
+@available(macOS, deprecated: 12.0, message: "file-keychain ACLs are the free path to code-identity scoping")
+func selfOnlyAccess() throws -> SecAccess {
+    var trusted: SecTrustedApplication?
+    let madeTrusted = SecTrustedApplicationCreateFromPath(nil, &trusted)
+    guard madeTrusted == errSecSuccess, let me = trusted else {
+        throw PairingError.keychain(madeTrusted, "could not identify this application")
+    }
+    var access: SecAccess?
+    let madeAccess = SecAccessCreate(
+        "telegram-mcp consent agent" as CFString, [me] as CFArray, &access
+    )
+    guard madeAccess == errSecSuccess, let acl = access else {
+        throw PairingError.keychain(madeAccess, "could not build the keychain ACL")
+    }
+    return acl
+}
+
+/// Never prompt. An item this binary is not on the ACL of fails closed with
+/// a status instead of putting an authorization dialog in front of the
+/// operator, which is both better for a background agent and what keeps the
+/// refusal observable in tests.
 func keychainRead(_ account: String) -> Data? {
+    SecKeychainSetUserInteractionAllowed(false)
     let query: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: keychainService,
@@ -648,20 +686,24 @@ func keychainRead(_ account: String) -> Data? {
     return out as? Data
 }
 
+/// Replace rather than update: an update would inherit whatever ACL the
+/// existing item carries, so a record written before this binding existed
+/// would stay readable by everything.
 func keychainWrite(_ account: String, _ value: Data) throws {
-    let base: [String: Any] = [
+    let access = try selfOnlyAccess()
+    let identity: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,
         kSecAttrService as String: keychainService,
         kSecAttrAccount as String: account,
     ]
-    let update = SecItemUpdate(base as CFDictionary, [kSecValueData as String: value] as CFDictionary)
-    if update == errSecSuccess { return }
-    guard update == errSecItemNotFound else {
-        throw PairingError.keychain(update, "could not update \(account)")
+    let removed = SecItemDelete(identity as CFDictionary)
+    guard removed == errSecSuccess || removed == errSecItemNotFound else {
+        throw PairingError.keychain(removed, "could not replace \(account)")
     }
-    var insert = base
+    var insert = identity
     insert[kSecValueData as String] = value
     insert[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    insert[kSecAttrAccess as String] = access
     let added = SecItemAdd(insert as CFDictionary, nil)
     guard added == errSecSuccess else {
         throw PairingError.keychain(added, "could not store \(account)")

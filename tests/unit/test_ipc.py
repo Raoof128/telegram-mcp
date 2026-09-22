@@ -626,3 +626,50 @@ def test_frame_helpers_reject_oversized_and_non_object_payloads():
         decode_json_frame(b"[1,2,3]")
     with pytest.raises(FrameError):
         decode_json_frame(b"\xff")
+
+
+async def test_only_one_agent_session_is_live_at_a_time(run_dir):
+    """A copy of the transport key cannot displace an established agent."""
+    paired = Ed25519PrivateKey.from_private_bytes(b"\x05" * 32)
+    socket_path = run_dir / "consent.sock"
+    holding = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold(session, reader, writer):
+        holding.set()
+        await release.wait()
+
+    server = await serve_rendezvous(
+        socket_path,
+        challenge_key=CHALLENGE_KEY,
+        runtime_id=RUNTIME_ID,
+        daemon_key_id=DAEMON_KEY_ID,
+        agent_transport_public=paired.public_key().public_bytes_raw(),
+        on_session=hold,
+    )
+    try:
+        _challenge, first_reader, first_writer = await _handshake_client(
+            socket_path, transport_key=paired
+        )
+        await asyncio.wait_for(holding.wait(), timeout=5)
+
+        # a second connection, with the very same key, is closed unserved
+        with pytest.raises(RendezvousError):
+            await _handshake_client(socket_path, transport_key=paired)
+
+        release.set()
+        first_writer.close()
+        await asyncio.sleep(0.05)
+
+        # once the first agent is gone, the socket serves again
+        holding.clear()
+        release.clear()
+        _again, reader, writer = await _handshake_client(socket_path, transport_key=paired)
+        await asyncio.wait_for(holding.wait(), timeout=5)
+        release.set()
+        writer.close()
+        assert first_reader is not reader
+    finally:
+        release.set()
+        server.close()
+        await server.wait_closed()
