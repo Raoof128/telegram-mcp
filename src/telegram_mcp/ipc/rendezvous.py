@@ -74,7 +74,9 @@ SOCKET_DIR_MODE = 0o770
 _RV_DOMAIN = b"telegram-mcp-rendezvous/v1"
 _NONCE_BYTES = 16
 _NONCE_RE = re.compile(r"[A-Za-z0-9_-]{22}\Z")
-_KEY_ID_RE = re.compile(r"(ed25519|p256):[0-9a-f]{64}\Z")
+# Key ids are the key store's recomputed fingerprints (design §3):
+# "<kind>:sha256:<64 hex>". The agent presents its *transport* id here.
+_KEY_ID_RE = re.compile(r"(ed25519|p256|spki):sha256:[0-9a-f]{64}\Z")
 
 _logger = logging.getLogger("telegram_mcp.rendezvous")
 

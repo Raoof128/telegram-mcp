@@ -67,7 +67,7 @@ class JoinGate:
             socket_path,
             challenge_key=load_key("challenge-key"),
             runtime_id=os.urandom(16),
-            daemon_key_id="ed25519:" + "0" * 64,
+            daemon_key_id="ed25519:sha256:" + "0" * 64,
             agent_transport_public=b"\x00" * 32,
             on_session=lambda session, reader, writer: sessions.append(session),
         )

@@ -117,13 +117,13 @@ def test_selftest_approve_emits_a_verifiable_approval_envelope():
     public = serialization.load_der_public_key(der)
     assert isinstance(public, ec.EllipticCurvePublicKey)
     assert envelope["key_id"] == "p256:sha256:" + hashlib.sha256(der).hexdigest()
-    signature = base64.urlsafe_b64decode(
-        envelope["sig"] + "=" * (-len(envelope["sig"]) % 4)
-    )
+    signature = base64.urlsafe_b64decode(envelope["sig"] + "=" * (-len(envelope["sig"]) % 4))
     public.verify(signature, jcs, ec.ECDSA(hashes.SHA256()))
 
     # a one-bit change to the signed bytes must not verify
-    with pytest.raises(Exception):
+    from cryptography.exceptions import InvalidSignature
+
+    with pytest.raises(InvalidSignature):
         public.verify(signature, jcs[:-1] + bytes([jcs[-1] ^ 0x01]), ec.ECDSA(hashes.SHA256()))
 
 
@@ -147,7 +147,7 @@ def test_the_real_approval_path_has_no_test_key_branch():
         name = chunk.split("(")[0].split("{")[0].split(":")[0].strip()
         if "EphemeralApprovalKey" not in chunk:
             continue
-        assert name.startswith("selfTest") or name.startswith("EphemeralApprovalKey"), (
+        assert name.startswith(("selfTest", "EphemeralApprovalKey")), (
             f"ephemeral approval key referenced outside a selftest: {name!r}"
         )
 
@@ -196,3 +196,52 @@ def test_live_touch_id_approval_signs_with_the_enclave_key():
         payload["envelope"]["sig"] + "=" * (-len(payload["envelope"]["sig"]) % 4)
     )
     public.verify(signature, bytes.fromhex(case["jcs_hex"]), ec.ECDSA(hashes.SHA256()))
+
+
+# --- Task 3: rendezvous client against the broker ----------------------------
+
+
+def test_good_challenge_round_trip():
+    from tests.agent.stub_broker import run_scenario
+
+    result = run_scenario("good", timeout=60)
+    assert result["approved"] is True and result["signature_valid"] is True
+
+
+def test_replay_rejected():
+    from tests.agent.stub_broker import run_scenario
+
+    result = run_scenario("replay", timeout=60)
+    assert result["approved"] is True and result["second_consume"] == "rejected"
+
+
+def test_tampered_display_is_denied_over_the_wire():
+    from tests.agent.stub_broker import run_scenario
+
+    result = run_scenario("tamper-display", timeout=60)
+    assert result["approved"] is False
+    assert result["denial_reason"] == "DISPLAY-MISMATCH"
+
+
+def test_wrong_daemon_key_is_denied_over_the_wire():
+    from tests.agent.stub_broker import run_scenario
+
+    result = run_scenario("wrong-daemon-key", timeout=60)
+    assert result["approved"] is False
+    assert result["denial_reason"] == "CHALLENGE-SIGNATURE-INVALID"
+
+
+def test_kill_mid_prompt_leaves_no_orphan_agent():
+    from tests.agent.stub_broker import run_scenario
+
+    result = run_scenario("kill-mid-prompt", timeout=60)
+    assert result["agent_exited"] is True
+    assert result["exit_seconds"] < 5.0
+
+
+def test_handshake_refuses_an_agent_with_the_wrong_transport_key():
+    from tests.agent.stub_broker import run_scenario
+
+    result = run_scenario("wrong-transport-key", timeout=60)
+    assert result["handshake_completed"] is False
+    assert result["agent_exited"] is True

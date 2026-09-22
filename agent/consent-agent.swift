@@ -3,6 +3,11 @@
 // Task 1: TG-JCS-v1 canonical encoder + Ed25519 challenge verification, with
 // `selftest-jcs` / `selftest-verify` subcommands — pure computation, headless.
 //
+// Task 3: the RV-1 rendezvous client — connect, authenticate both ways with
+// the *transport* key (never the biometric approval key, so starting MCP
+// costs no prompt), then serve prompts until the broker disconnects and
+// auto-exit after a short grace, leaving no orphan UI.
+//
 // Task 2: the display gate and the approval flow. Order is fixed and no step
 // may be skipped: verify the daemon Ed25519 signature over the exact
 // challenge bytes -> recompute SHA256("telegram-mcp-display-v1" || JCS(display))
@@ -27,6 +32,7 @@
 import CryptoKit
 import Foundation
 import LocalAuthentication
+import Security
 
 // MARK: - Errors
 
@@ -380,6 +386,11 @@ enum ApprovalError: Error, CustomStringConvertible {
     case biometryFailed(String)
     case providerUnavailable(String)
 
+    /// Stable refusal code sent on the wire (the description may add detail).
+    var code: String {
+        String(description.split(separator: ":", maxSplits: 1)[0])
+    }
+
     var description: String {
         switch self {
         case .challengeSignatureInvalid: return "CHALLENGE-SIGNATURE-INVALID"
@@ -492,6 +503,315 @@ func emitApproval(_ envelope: ApprovalEnvelope, publicKeyDER: Data) {
         exit(1)
     }
     print(text)
+}
+
+// MARK: - Unix socket client and framing
+
+enum WireError: Error, CustomStringConvertible {
+    case connectFailed(String)
+    case ioFailed(String)
+    case oversizedFrame(Int)
+    case malformedFrame(String)
+    case handshakeFailed(String)
+
+    var description: String {
+        switch self {
+        case let .connectFailed(m): return "CONNECT-FAILED: \(m)"
+        case let .ioFailed(m): return "IO-FAILED: \(m)"
+        case let .oversizedFrame(n): return "OVERSIZED-FRAME: \(n)"
+        case let .malformedFrame(m): return "MALFORMED-FRAME: \(m)"
+        case let .handshakeFailed(m): return "HANDSHAKE-FAILED: \(m)"
+        }
+    }
+}
+
+let maxFrameBytes = 64 * 1024
+let handshakeDeadlineSeconds = 5.0
+let disconnectGraceSeconds = 2.0
+
+/// Minimal blocking AF_UNIX client: uint32 big-endian length + payload,
+/// 64 KiB ceiling checked before the payload is read.
+final class UnixSocketClient {
+    private let fd: Int32
+
+    init(path: String) throws {
+        let handle = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard handle >= 0 else {
+            throw WireError.connectFailed("socket(): errno \(errno)")
+        }
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(path.utf8)
+        let capacity = MemoryLayout.size(ofValue: address.sun_path)
+        guard pathBytes.count < capacity else {
+            close(handle)
+            throw WireError.connectFailed("socket path exceeds \(capacity) bytes")
+        }
+        withUnsafeMutablePointer(to: &address.sun_path) { raw in
+            raw.withMemoryRebound(to: CChar.self, capacity: capacity) { dst in
+                for (index, byte) in pathBytes.enumerated() { dst[index] = CChar(bitPattern: byte) }
+                dst[pathBytes.count] = 0
+            }
+        }
+        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+        let connected = withUnsafePointer(to: &address) { raw in
+            raw.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                connect(handle, sa, size)
+            }
+        }
+        guard connected == 0 else {
+            close(handle)
+            throw WireError.connectFailed("connect(): errno \(errno)")
+        }
+        fd = handle
+    }
+
+    deinit { close(fd) }
+
+    func setTimeout(_ seconds: Double) {
+        var tv = timeval(
+            tv_sec: Int(seconds),
+            tv_usec: Int32((seconds - Double(Int(seconds))) * 1_000_000)
+        )
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+    }
+
+    /// Read exactly `count` bytes; nil means the peer closed cleanly.
+    private func readExactly(_ count: Int) throws -> Data? {
+        var out = Data()
+        out.reserveCapacity(count)
+        var buffer = [UInt8](repeating: 0, count: count)
+        while out.count < count {
+            let got = buffer.withUnsafeMutableBytes { raw -> Int in
+                read(fd, raw.baseAddress, count - out.count)
+            }
+            if got == 0 { return out.isEmpty ? nil : nil }
+            if got < 0 { throw WireError.ioFailed("read(): errno \(errno)") }
+            out.append(contentsOf: buffer[0 ..< got])
+        }
+        return out
+    }
+
+    func readFrame() throws -> Data? {
+        guard let header = try readExactly(4) else { return nil }
+        let length = header.reduce(0) { ($0 << 8) | Int($1) }
+        guard length <= maxFrameBytes else { throw WireError.oversizedFrame(length) }
+        if length == 0 { return Data() }
+        guard let body = try readExactly(length) else {
+            throw WireError.malformedFrame("frame ended early")
+        }
+        return body
+    }
+
+    func writeFrame(_ payload: Data) throws {
+        guard payload.count <= maxFrameBytes else {
+            throw WireError.oversizedFrame(payload.count)
+        }
+        var out = Data()
+        let length = UInt32(payload.count).bigEndian
+        withUnsafeBytes(of: length) { out.append(contentsOf: $0) }
+        out.append(payload)
+        try out.withUnsafeBytes { raw in
+            var sent = 0
+            while sent < raw.count {
+                let wrote = write(fd, raw.baseAddress!.advanced(by: sent), raw.count - sent)
+                if wrote <= 0 { throw WireError.ioFailed("write(): errno \(errno)") }
+                sent += wrote
+            }
+        }
+    }
+}
+
+// MARK: - RV-1 handshake
+
+let rendezvousVersion = "rv-1"
+let rendezvousDomain = Data("telegram-mcp-rendezvous/v1".utf8)
+
+/// `SHA256(domain || JCS(transcript))` — the bytes both sides sign.
+func rendezvousTranscriptDigest(
+    runtimeID: String, agentKeyID: String, agentNonce: String,
+    daemonNonce: String, daemonKeyID: String
+) throws -> Data {
+    let transcript = JCSValue.object([
+        (key: "agent_key_id", value: .string(agentKeyID)),
+        (key: "agent_nonce", value: .string(agentNonce)),
+        (key: "daemon_key_id", value: .string(daemonKeyID)),
+        (key: "daemon_nonce", value: .string(daemonNonce)),
+        (key: "runtime_id", value: .string(runtimeID)),
+        (key: "version", value: .string(rendezvousVersion)),
+    ])
+    var hasher = SHA256()
+    hasher.update(data: rendezvousDomain)
+    hasher.update(data: try jcsEncode(transcript))
+    return Data(hasher.finalize())
+}
+
+func jsonObject(_ data: Data) throws -> [String: Any] {
+    guard let any = try? JSONSerialization.jsonObject(with: data, options: []),
+        let dict = any as? [String: Any]
+    else {
+        throw WireError.malformedFrame("frame is not a JSON object")
+    }
+    return dict
+}
+
+func jsonFrame(_ object: [String: Any]) throws -> Data {
+    guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    else {
+        throw WireError.malformedFrame("cannot encode frame")
+    }
+    return data
+}
+
+func hexEncode(_ data: Data) -> String {
+    data.map { String(format: "%02x", $0) }.joined()
+}
+
+struct RendezvousIdentity {
+    let transportKey: Curve25519.Signing.PrivateKey
+    let daemonPublic: Data
+
+    var agentKeyID: String {
+        "ed25519:sha256:" + hexEncode(Data(SHA256.hash(data: transportKey.publicKey.rawRepresentation)))
+    }
+}
+
+/// HELLO -> CHALLENGE -> READY, inside one 5-second deadline.
+func rendezvousHandshake(client: UnixSocketClient, identity: RendezvousIdentity) throws -> String {
+    client.setTimeout(handshakeDeadlineSeconds)
+    var nonceBytes = Data(count: 16)
+    let generated = nonceBytes.withUnsafeMutableBytes { raw in
+        SecRandomCopyBytes(kSecRandomDefault, 16, raw.baseAddress!)
+    }
+    guard generated == errSecSuccess else {
+        throw WireError.handshakeFailed("no entropy for the agent nonce")
+    }
+    let agentNonce = base64URLEncode(nonceBytes)
+    try client.writeFrame(try jsonFrame([
+        "type": "HELLO",
+        "version": rendezvousVersion,
+        "agent_key_id": identity.agentKeyID,
+        "agent_nonce": agentNonce,
+    ]))
+    guard let raw = try client.readFrame(), !raw.isEmpty else {
+        throw WireError.handshakeFailed("daemon closed before CHALLENGE")
+    }
+    let challenge = try jsonObject(raw)
+    guard challenge["type"] as? String == "CHALLENGE",
+        challenge["version"] as? String == rendezvousVersion,
+        let runtimeID = challenge["runtime_id"] as? String,
+        let echoedNonce = challenge["agent_nonce"] as? String,
+        let daemonNonce = challenge["daemon_nonce"] as? String,
+        let daemonKeyID = challenge["daemon_key_id"] as? String,
+        let sigText = challenge["sig"] as? String,
+        let signature = base64URLDecode(sigText)
+    else {
+        throw WireError.handshakeFailed("malformed CHALLENGE")
+    }
+    guard echoedNonce == agentNonce else {
+        throw WireError.handshakeFailed("agent nonce not echoed")
+    }
+    let digest = try rendezvousTranscriptDigest(
+        runtimeID: runtimeID, agentKeyID: identity.agentKeyID, agentNonce: agentNonce,
+        daemonNonce: daemonNonce, daemonKeyID: daemonKeyID
+    )
+    guard let daemonPub = try? Curve25519.Signing.PublicKey(rawRepresentation: identity.daemonPublic),
+        daemonPub.isValidSignature(signature, for: digest)
+    else {
+        throw WireError.handshakeFailed("daemon signature does not match the pinned key")
+    }
+    let ready = try identity.transportKey.signature(for: digest)
+    try client.writeFrame(try jsonFrame([
+        "type": "READY",
+        "agent_nonce": agentNonce,
+        "daemon_nonce": daemonNonce,
+        "sig": base64URLEncode(ready),
+    ]))
+    return runtimeID
+}
+
+// MARK: - Prompt loop
+
+/// Connect, authenticate, then answer prompts until the broker disconnects.
+/// Every prompt goes through `approveFlow`, so the display gate and the
+/// challenge signature are checked before any key is touched.
+func runAgent(
+    socketPath: String,
+    identity: RendezvousIdentity,
+    provider: KeyProvider,
+    prompt: @escaping ([String]) throws -> LAContext?
+) -> Int32 {
+    let client: UnixSocketClient
+    do {
+        client = try UnixSocketClient(path: socketPath)
+    } catch {
+        eprint("rendezvous: \(error)")
+        return 4
+    }
+    do {
+        _ = try rendezvousHandshake(client: client, identity: identity)
+    } catch {
+        eprint("rendezvous: \(error)")
+        return 5
+    }
+    client.setTimeout(0)  // prompts arrive on the broker's schedule
+    while true {
+        let raw: Data?
+        do {
+            raw = try client.readFrame()
+        } catch {
+            eprint("rendezvous: \(error)")
+            return 6
+        }
+        guard let frame = raw, !frame.isEmpty else {
+            // Broker disconnect: leave no orphan UI.
+            Thread.sleep(forTimeInterval: disconnectGraceSeconds)
+            return 0
+        }
+        do {
+            let message = try jsonObject(frame)
+            guard message["type"] as? String == "PROMPT" else {
+                eprint("rendezvous: unexpected frame type")
+                return 7
+            }
+            guard let handle = message["handle"] as? String,
+                let challengeText = message["challenge"] as? String,
+                let challengeJCS = base64URLDecode(challengeText),
+                let sigText = message["sig"] as? String,
+                let daemonSig = base64URLDecode(sigText),
+                let displayRaw = message["display"]
+            else {
+                throw WireError.malformedFrame("PROMPT fields")
+            }
+            let display = try jcsFromFoundation(displayRaw)
+            do {
+                let result = try approveFlow(
+                    challengeJCS: challengeJCS,
+                    daemonSig: daemonSig,
+                    daemonPub: identity.daemonPublic,
+                    displayPayload: display,
+                    provider: provider,
+                    prompt: prompt
+                )
+                try client.writeFrame(try jsonFrame([
+                    "type": "APPROVAL",
+                    "handle": handle,
+                    "envelope": result.envelope.json,
+                ]))
+            } catch let refusal as ApprovalError {
+                eprint("rendezvous: denied: \(refusal)")
+                try client.writeFrame(try jsonFrame([
+                    "type": "DENIAL",
+                    "handle": handle,
+                    "reason": refusal.code,
+                ]))
+            }
+        } catch {
+            eprint("rendezvous: \(error)")
+            return 8
+        }
+    }
 }
 
 // MARK: - Selftests
@@ -804,6 +1124,44 @@ struct EnclaveKeyProvider: KeyProvider {
     }
 }
 
+/// Headless rendezvous run: the same protocol code as production, with the
+/// key material injected through selftest-only environment variables. The
+/// production `run` path reads none of them.
+func selfTestRendezvous(socketPath: String?) -> Int32 {
+    guard let path = socketPath else {
+        eprint("selftest-rendezvous: missing <socket-path> argument")
+        return 2
+    }
+    let environment = ProcessInfo.processInfo.environment
+    guard let seedHex = environment["CONSENT_SELFTEST_TRANSPORT_SEED"],
+        let seed = hexDecode(seedHex),
+        let transport = try? Curve25519.Signing.PrivateKey(rawRepresentation: seed)
+    else {
+        eprint("selftest-rendezvous: CONSENT_SELFTEST_TRANSPORT_SEED must be 32 hex-encoded bytes")
+        return 2
+    }
+    guard let daemonHex = environment["CONSENT_SELFTEST_DAEMON_PUB"],
+        let daemonPublic = hexDecode(daemonHex), daemonPublic.count == 32
+    else {
+        eprint("selftest-rendezvous: CONSENT_SELFTEST_DAEMON_PUB must be 32 hex-encoded bytes")
+        return 2
+    }
+    return runAgent(
+        socketPath: path,
+        identity: RendezvousIdentity(transportKey: transport, daemonPublic: daemonPublic),
+        provider: EphemeralApprovalKeyProvider(),
+        prompt: selfTestSilentPrompt
+    )
+}
+
+/// The paired transport key and the pinned daemon challenge key, both from
+/// the operator keychain. Bound by Plan 2b Task 4.
+func pairedIdentity() throws -> RendezvousIdentity {
+    throw ApprovalError.providerUnavailable(
+        "no keychain pairing record (Plan 2b Task 4)"
+    )
+}
+
 // MARK: - Production approval command
 
 /// The operator-facing approval path: real pin, real prompt, real key.
@@ -831,6 +1189,29 @@ func approveCommand(vectorsPath: String?, indexText: String?) -> Int32 {
     }
 }
 
+/// The operator-facing rendezvous run: keychain pairing record, Secure
+/// Enclave key, real Touch ID prompt per consent. Plan 2b Task 4 provisions
+/// both halves; until then this refuses rather than degrading.
+func runCommand(socketPath: String?) -> Int32 {
+    guard let path = socketPath else {
+        eprint("run: missing <socket-path> argument")
+        return 2
+    }
+    let identity: RendezvousIdentity
+    do {
+        identity = try pairedIdentity()
+    } catch {
+        eprint("run: \\(error)")
+        return 3
+    }
+    return runAgent(
+        socketPath: path,
+        identity: identity,
+        provider: productionKeyProvider(),
+        prompt: touchIDPrompt
+    )
+}
+
 // MARK: - Entry point
 //
 // NOTE: written as top-level dispatch into `ConsentAgent.main()` rather than
@@ -842,6 +1223,7 @@ struct ConsentAgent {
     static let usage = """
     usage: telegram-mcp-consent <command> [arguments]
 
+      run <socket-path>               serve prompts from the daemon
       approve <vectors-file> [index]   verify, show and sign one challenge
       selftest-jcs <vectors-file>
       selftest-verify <vectors-file>
@@ -849,6 +1231,7 @@ struct ConsentAgent {
       selftest-display-tamper <vectors-file>
       selftest-approve <vectors-file> [index]
       selftest-approve-wrong-daemon-key <vectors-file>
+      selftest-rendezvous <socket-path>
     """
 
     static func main() {
@@ -862,6 +1245,10 @@ struct ConsentAgent {
         switch args[1] {
         case "approve":
             exit(approveCommand(vectorsPath: path, indexText: extra))
+        case "run":
+            exit(runCommand(socketPath: path))
+        case "selftest-rendezvous":
+            exit(selfTestRendezvous(socketPath: path))
         case "selftest-jcs":
             exit(selfTestJCS(vectorsPath: path))
         case "selftest-verify":

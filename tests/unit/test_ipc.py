@@ -245,8 +245,8 @@ def run_dir(tmp_path, monkeypatch):
 
 CHALLENGE_KEY = b"\x01" * 32
 RUNTIME_ID = b"\x02" * 16
-DAEMON_KEY_ID = "ed25519:" + "a" * 64
-AGENT_KEY_ID = "ed25519:" + "b" * 64
+DAEMON_KEY_ID = "ed25519:sha256:" + "a" * 64
+AGENT_KEY_ID = "ed25519:sha256:" + "b" * 64
 
 
 def _router(**over):
@@ -529,7 +529,7 @@ async def test_rendezvous_refuses_unknown_hello_fields_and_bad_versions(run_dir)
     try:
         for over in (
             {"version": "rv-2"},
-            {"agent_key_id": "not-a-key-id"},
+            {"agent_key_id": "ed25519:" + "b" * 64},  # missing the sha256 segment
             {"agent_nonce": "short"},
             {"unexpected": 1},
             {"type": "READY"},
@@ -567,7 +567,7 @@ def test_daemon_challenge_signature_covers_the_whole_transcript():
         agent_key_id=AGENT_KEY_ID,
         agent_nonce=challenge["agent_nonce"],
         daemon_nonce=challenge["daemon_nonce"],
-        daemon_key_id="ed25519:" + "c" * 64,
+        daemon_key_id="ed25519:sha256:" + "c" * 64,
     )
     assert other != digest
 
