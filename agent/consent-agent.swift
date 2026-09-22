@@ -1,8 +1,20 @@
-// agent/consent-agent.swift — Phase-2b Swift consent agent (Task 1).
+// agent/consent-agent.swift — Phase-2b Swift consent agent (Tasks 1-2).
 //
-// Task 1 scope: TG-JCS-v1 canonical encoder + Ed25519 challenge verification
-// + `selftest-jcs` / `selftest-verify` subcommands. No keychain, no codesign,
-// no Touch ID here — pure computation, fully headless.
+// Task 1: TG-JCS-v1 canonical encoder + Ed25519 challenge verification, with
+// `selftest-jcs` / `selftest-verify` subcommands — pure computation, headless.
+//
+// Task 2: the display gate and the approval flow. Order is fixed and no step
+// may be skipped: verify the daemon Ed25519 signature over the exact
+// challenge bytes -> recompute SHA256("telegram-mcp-display-v1" || JCS(display))
+// and compare it in constant time against the challenge's own
+// `display_digest` -> render -> Touch ID on a fresh LAContext -> obtain the
+// approval key with that same context -> sign the exact challenge bytes ->
+// emit the ApprovalEnvelope. A display payload that does not hash to the
+// digest inside the signed challenge never reaches LocalAuthentication, so
+// what the operator reads and what the daemon receives cannot diverge.
+//
+// The agent decides nothing. It verifies, shows and signs; every policy
+// question belongs to the daemon.
 //
 // TG-JCS-v1 (frozen wire contract): ASCII property names only, keys sorted
 // (byte-wise UTF-8 order), `,`/`:` separators, literal UTF-8, escaping that
@@ -14,6 +26,7 @@
 
 import CryptoKit
 import Foundation
+import LocalAuthentication
 
 // MARK: - Errors
 
@@ -266,6 +279,221 @@ func loadVectors(at path: String) throws -> (daemonPub: Data, cases: [VectorCase
     return (daemonPub, cases)
 }
 
+// MARK: - Display gate
+
+let displayDomain = Data("telegram-mcp-display-v1".utf8)
+
+/// `SHA256("telegram-mcp-display-v1" || JCS(payload))`.
+func displayDigest(of payload: JCSValue) throws -> Data {
+    var hasher = SHA256()
+    hasher.update(data: displayDomain)
+    hasher.update(data: try jcsEncode(payload))
+    return Data(hasher.finalize())
+}
+
+/// Constant-time equality. Length is not secret; content comparison is.
+func constantTimeEqual(_ a: Data, _ b: Data) -> Bool {
+    guard a.count == b.count else { return false }
+    var difference: UInt8 = 0
+    for (x, y) in zip(a, b) { difference |= x ^ y }
+    return difference == 0
+}
+
+/// Look up a top-level string field in a decoded challenge object.
+func challengeField(_ challenge: JCSValue, _ key: String) -> String? {
+    guard case let .object(pairs) = challenge else { return nil }
+    for pair in pairs where pair.key == key {
+        if case let .string(value) = pair.value { return value }
+    }
+    return nil
+}
+
+/// Presentation-only sanitation: strip C0/C1 and bidi/invisible formatting
+/// controls and cap at 160 codepoints. The digest covers the original bytes,
+/// so this changes what is shown and never what is signed.
+func renderableText(_ text: String, limit: Int = 160) -> String {
+    var out = String.UnicodeScalarView()
+    for scalar in text.unicodeScalars {
+        let v = scalar.value
+        let isControl = v < 0x20 || (0x7F ... 0x9F).contains(v)
+        let isBidi = (0x20_2A ... 0x20_2E).contains(v) || (0x20_66 ... 0x20_69).contains(v)
+        let isInvisible = v == 0x20_0B || v == 0x20_0C || v == 0x20_0D || v == 0xFE_FF
+        if isControl || isBidi || isInvisible { continue }
+        out.append(scalar)
+        if out.count >= limit { break }
+    }
+    return String(out)
+}
+
+/// One line per display field, in the frozen field order.
+func renderedLines(from payload: JCSValue) -> [String] {
+    guard case let .object(pairs) = payload else { return [] }
+    var byKey: [String: JCSValue] = [:]
+    for pair in pairs { byKey[pair.key] = pair.value }
+    func text(_ key: String) -> String? {
+        if case let .string(value)? = byKey[key] { return renderableText(value) }
+        return nil
+    }
+    var lines: [String] = []
+    if let client = text("client_display") { lines.append("client:  \(client)") }
+    if let action = text("action_display") { lines.append("action:  \(action)") }
+    if case let .array(projects)? = byKey["project_display"] {
+        let names = projects.compactMap { item -> String? in
+            if case let .string(value) = item { return renderableText(value) }
+            return nil
+        }
+        if !names.isEmpty { lines.append("project: \(names.joined(separator: ", "))") }
+    }
+    if let peer = text("peer_display") { lines.append("peer:    \(peer)") }
+    if let risk = text("risk_class") { lines.append("risk:    \(risk)") }
+    return lines
+}
+
+// MARK: - Approval keys
+
+/// The approval signer. Production is a Secure Enclave P-256 key obtained
+/// with the same `LAContext` the biometric prompt ran on; the selftest
+/// double is an in-memory key of the same shape.
+protocol ApprovalKey {
+    var publicKeyDER: Data { get }
+    func signature(over data: Data) throws -> Data
+}
+
+extension ApprovalKey {
+    /// `p256:sha256:<hex of SHA256 over the DER SubjectPublicKeyInfo>`.
+    var keyID: String {
+        "p256:sha256:" + Data(SHA256.hash(data: publicKeyDER)).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+/// Supplies the approval key for exactly one consent.
+protocol KeyProvider {
+    func keyForApproval(context: LAContext?) throws -> ApprovalKey
+}
+
+enum ApprovalError: Error, CustomStringConvertible {
+    case challengeSignatureInvalid
+    case displayMismatch
+    case malformedChallenge(String)
+    case uiSuppressed
+    case biometryUnavailable(String)
+    case biometryFailed(String)
+    case providerUnavailable(String)
+
+    var description: String {
+        switch self {
+        case .challengeSignatureInvalid: return "CHALLENGE-SIGNATURE-INVALID"
+        case .displayMismatch: return "DISPLAY-MISMATCH"
+        case let .malformedChallenge(m): return "MALFORMED-CHALLENGE: \(m)"
+        case .uiSuppressed: return "NO-UI: interactive approval is disabled in this environment"
+        case let .biometryUnavailable(m): return "BIOMETRY-UNAVAILABLE: \(m)"
+        case let .biometryFailed(m): return "BIOMETRY-FAILED: \(m)"
+        case let .providerUnavailable(m): return "PROVIDER-UNAVAILABLE: \(m)"
+        }
+    }
+}
+
+struct ApprovalEnvelope {
+    let challengeSHA256: String
+    let sig: String
+    let keyID: String
+
+    /// The frozen wire struct, verified whole by the broker.
+    var json: [String: String] {
+        ["challenge_sha256": challengeSHA256, "sig": sig, "key_id": keyID]
+    }
+}
+
+/// True when this environment forbids any interactive prompt. The production
+/// path treats it as a refusal and never substitutes a key; only `selftest-`
+/// subcommands take a non-prompting path, with their own key.
+func uiSuppressed() -> Bool {
+    ProcessInfo.processInfo.environment["CONSENT_NO_UI"] == "1"
+}
+
+/// Verify, gate on the display digest, then sign. `prompt` is the only step
+/// that may interact with the operator; it runs strictly after the gate.
+func approveFlow(
+    challengeJCS: Data,
+    daemonSig: Data,
+    daemonPub: Data,
+    displayPayload: JCSValue,
+    provider: KeyProvider,
+    prompt: (([String]) throws -> LAContext?)
+) throws -> (envelope: ApprovalEnvelope, publicKeyDER: Data) {
+    guard verifyChallenge(jcs: challengeJCS, sig: daemonSig, daemonPub: daemonPub) else {
+        throw ApprovalError.challengeSignatureInvalid
+    }
+    let challenge = try jcsDecode(challengeJCS)
+    guard let digestHex = challengeField(challenge, "display_digest"),
+        let expected = hexDecode(digestHex), expected.count == 32
+    else {
+        throw ApprovalError.malformedChallenge("display_digest")
+    }
+    guard constantTimeEqual(try displayDigest(of: displayPayload), expected) else {
+        throw ApprovalError.displayMismatch
+    }
+    let context = try prompt(renderedLines(from: displayPayload))
+    defer { context?.invalidate() }
+    let key = try provider.keyForApproval(context: context)
+    let signature = try key.signature(over: challengeJCS)
+    let envelope = ApprovalEnvelope(
+        challengeSHA256: Data(SHA256.hash(data: challengeJCS)).map { String(format: "%02x", $0) }.joined(),
+        sig: base64URLEncode(signature),
+        keyID: key.keyID
+    )
+    return (envelope, key.publicKeyDER)
+}
+
+/// Fresh `LAContext` per consent, biometrics only, never reused across
+/// prompts. Returns the context the key must be obtained with.
+func touchIDPrompt(_ lines: [String]) throws -> LAContext? {
+    if uiSuppressed() { throw ApprovalError.uiSuppressed }
+    let context = LAContext()
+    context.localizedCancelTitle = "Deny"
+    var probe: NSError?
+    guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &probe) else {
+        throw ApprovalError.biometryUnavailable(probe?.localizedDescription ?? "unavailable")
+    }
+    for line in lines { eprint(line) }
+    let reason = "Approve this Telegram disclosure:\n" + lines.joined(separator: "\n")
+    let gate = DispatchSemaphore(value: 0)
+    var approved = false
+    var failure: String?
+    context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { ok, error in
+        approved = ok
+        failure = error?.localizedDescription
+        gate.signal()
+    }
+    gate.wait()
+    guard approved else {
+        context.invalidate()
+        throw ApprovalError.biometryFailed(failure ?? "denied")
+    }
+    return context
+}
+
+func base64URLEncode(_ data: Data) -> String {
+    data.base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+}
+
+func emitApproval(_ envelope: ApprovalEnvelope, publicKeyDER: Data) {
+    let payload: [String: Any] = [
+        "envelope": envelope.json,
+        "public_key_der_b64url": base64URLEncode(publicKeyDER),
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+        let text = String(data: data, encoding: .utf8)
+    else {
+        eprint("approval: could not encode output")
+        exit(1)
+    }
+    print(text)
+}
+
 // MARK: - Selftests
 
 func selfTestJCS(vectorsPath: String?) -> Int32 {
@@ -391,6 +619,218 @@ func selfTestJCSRejectsNonASCIIKey() -> Int32 {
     return 1
 }
 
+/// In-memory approval key of the production shape. Selftests only: the
+/// production path can only reach a Secure Enclave key.
+struct EphemeralApprovalKey: ApprovalKey {
+    private let key: P256.Signing.PrivateKey
+
+    /// Deterministic when `CONSENT_SELFTEST_APPROVAL_SEED` (64 hex) is set,
+    /// so a stub broker can pin the public key in advance.
+    init() throws {
+        if let hex = ProcessInfo.processInfo.environment["CONSENT_SELFTEST_APPROVAL_SEED"],
+            let seed = hexDecode(hex), seed.count == 32,
+            let derived = try? P256.Signing.PrivateKey(rawRepresentation: seed)
+        {
+            key = derived
+        } else {
+            key = P256.Signing.PrivateKey()
+        }
+    }
+
+    var publicKeyDER: Data { key.publicKey.derRepresentation }
+
+    func signature(over data: Data) throws -> Data {
+        try key.signature(for: data).derRepresentation
+    }
+}
+
+struct EphemeralApprovalKeyProvider: KeyProvider {
+    func keyForApproval(context: LAContext?) throws -> ApprovalKey {
+        guard context == nil else {
+            throw ApprovalError.providerUnavailable("selftest key must not be used with a prompt")
+        }
+        return try EphemeralApprovalKey()
+    }
+}
+
+/// Selftest prompt: proves the gate ran before any UI could. Reaching it in a
+/// selftest is itself the failure signal the tests grep for.
+func selfTestNoPrompt(_ lines: [String]) throws -> LAContext? {
+    eprint("PROMPT-ATTEMPTED")
+    throw ApprovalError.uiSuppressed
+}
+
+func selfTestSilentPrompt(_ lines: [String]) throws -> LAContext? {
+    for line in lines { eprint("render: " + line) }
+    return nil
+}
+
+/// Append one codepoint to the first display string, leaving the signed
+/// challenge (and therefore its `display_digest`) untouched.
+func mutateFirstString(_ value: JCSValue) -> JCSValue {
+    guard case let .object(pairs) = value else { return value }
+    var mutated = pairs
+    for (index, pair) in pairs.enumerated() where pair.key == "action_display" {
+        if case let .string(text) = pair.value {
+            mutated[index] = (key: pair.key, value: .string(text + "x"))
+            return .object(mutated)
+        }
+    }
+    for (index, pair) in pairs.enumerated() {
+        if case let .string(text) = pair.value {
+            mutated[index] = (key: pair.key, value: .string(text + "x"))
+            return .object(mutated)
+        }
+    }
+    return value
+}
+
+func loadCase(_ vectorsPath: String?, _ indexText: String?, subcommand: String)
+    -> (daemonPub: Data, vectorCase: VectorCase)?
+{
+    guard let path = vectorsPath else {
+        eprint("\(subcommand): missing <vectors-file> argument")
+        return nil
+    }
+    let vectors: (daemonPub: Data, cases: [VectorCase])
+    do {
+        vectors = try loadVectors(at: path)
+    } catch {
+        eprint("\(subcommand): \(error)")
+        return nil
+    }
+    let index = Int(indexText ?? "0") ?? 0
+    guard index >= 0, index < vectors.cases.count else {
+        eprint("\(subcommand): case index out of range")
+        return nil
+    }
+    let chosen = vectors.cases[index]
+    guard chosen.displayInput != nil else {
+        eprint("\(subcommand): case '\(chosen.name)' carries no display payload")
+        return nil
+    }
+    return (vectors.daemonPub, chosen)
+}
+
+func selfTestDisplayTamper(vectorsPath: String?) -> Int32 {
+    guard let loaded = loadCase(vectorsPath, "0", subcommand: "selftest-display-tamper") else {
+        return 2
+    }
+    let tampered = mutateFirstString(loaded.vectorCase.displayInput!)
+    do {
+        _ = try approveFlow(
+            challengeJCS: loaded.vectorCase.jcsBytes,
+            daemonSig: loaded.vectorCase.sig,
+            daemonPub: loaded.daemonPub,
+            displayPayload: tampered,
+            provider: EphemeralApprovalKeyProvider(),
+            prompt: selfTestNoPrompt
+        )
+    } catch let error as ApprovalError {
+        eprint("selftest-display-tamper: \(error)")
+        return error.description.hasPrefix("DISPLAY-MISMATCH") ? 1 : 3
+    } catch {
+        eprint("selftest-display-tamper: unexpected error: \(error)")
+        return 3
+    }
+    eprint("selftest-display-tamper: tampered display was approved")
+    return 4
+}
+
+func selfTestApprove(vectorsPath: String?, indexText: String?) -> Int32 {
+    guard let loaded = loadCase(vectorsPath, indexText, subcommand: "selftest-approve") else {
+        return 2
+    }
+    do {
+        let result = try approveFlow(
+            challengeJCS: loaded.vectorCase.jcsBytes,
+            daemonSig: loaded.vectorCase.sig,
+            daemonPub: loaded.daemonPub,
+            displayPayload: loaded.vectorCase.displayInput!,
+            provider: EphemeralApprovalKeyProvider(),
+            prompt: selfTestSilentPrompt
+        )
+        emitApproval(result.envelope, publicKeyDER: result.publicKeyDER)
+        return 0
+    } catch {
+        eprint("selftest-approve: \(error)")
+        return 1
+    }
+}
+
+func selfTestApproveWrongDaemonKey(vectorsPath: String?) -> Int32 {
+    guard let loaded = loadCase(vectorsPath, "0", subcommand: "selftest-approve-wrong-daemon-key")
+    else {
+        return 2
+    }
+    // A syntactically valid Ed25519 public key that did not sign this challenge.
+    guard let impostor = try? Curve25519.Signing.PrivateKey(
+        rawRepresentation: Data(repeating: 0x02, count: 32)
+    ) else {
+        eprint("selftest-approve-wrong-daemon-key: cannot derive impostor key")
+        return 2
+    }
+    do {
+        _ = try approveFlow(
+            challengeJCS: loaded.vectorCase.jcsBytes,
+            daemonSig: loaded.vectorCase.sig,
+            daemonPub: impostor.publicKey.rawRepresentation,
+            displayPayload: loaded.vectorCase.displayInput!,
+            provider: EphemeralApprovalKeyProvider(),
+            prompt: selfTestNoPrompt
+        )
+    } catch let error as ApprovalError {
+        eprint("selftest-approve-wrong-daemon-key: \(error)")
+        return error.description.hasPrefix("CHALLENGE-SIGNATURE-INVALID") ? 1 : 3
+    } catch {
+        eprint("selftest-approve-wrong-daemon-key: unexpected error: \(error)")
+        return 3
+    }
+    eprint("selftest-approve-wrong-daemon-key: forged challenge was approved")
+    return 4
+}
+
+// MARK: - Production key provider
+
+/// Bound by Plan 2b Task 4 to the Secure Enclave key in the operator
+/// keychain. Anything else is a refusal.
+func productionKeyProvider() -> KeyProvider { EnclaveKeyProvider() }
+
+struct EnclaveKeyProvider: KeyProvider {
+    func keyForApproval(context: LAContext?) throws -> ApprovalKey {
+        throw ApprovalError.providerUnavailable(
+            "no paired Secure Enclave approval key (Plan 2b Task 4)"
+        )
+    }
+}
+
+// MARK: - Production approval command
+
+/// The operator-facing approval path: real pin, real prompt, real key.
+/// Until Plan 2b Task 4 provisions the Secure Enclave key and the keychain
+/// pairing record, the provider refuses with a fixed message rather than
+/// falling back to anything weaker.
+func approveCommand(vectorsPath: String?, indexText: String?) -> Int32 {
+    guard let loaded = loadCase(vectorsPath, indexText, subcommand: "approve") else {
+        return 2
+    }
+    do {
+        let result = try approveFlow(
+            challengeJCS: loaded.vectorCase.jcsBytes,
+            daemonSig: loaded.vectorCase.sig,
+            daemonPub: loaded.daemonPub,
+            displayPayload: loaded.vectorCase.displayInput!,
+            provider: productionKeyProvider(),
+            prompt: touchIDPrompt
+        )
+        emitApproval(result.envelope, publicKeyDER: result.publicKeyDER)
+        return 0
+    } catch {
+        eprint("approve: \(error)")
+        return 1
+    }
+}
+
 // MARK: - Entry point
 //
 // NOTE: written as top-level dispatch into `ConsentAgent.main()` rather than
@@ -399,20 +839,41 @@ func selfTestJCSRejectsNonASCIIKey() -> Int32 {
 // line (`swiftc -O agent/consent-agent.swift -o ...`) carries no such flag.
 
 struct ConsentAgent {
+    static let usage = """
+    usage: telegram-mcp-consent <command> [arguments]
+
+      approve <vectors-file> [index]   verify, show and sign one challenge
+      selftest-jcs <vectors-file>
+      selftest-verify <vectors-file>
+      selftest-jcs-rejects-nonascii-key
+      selftest-display-tamper <vectors-file>
+      selftest-approve <vectors-file> [index]
+      selftest-approve-wrong-daemon-key <vectors-file>
+    """
+
     static func main() {
         let args = CommandLine.arguments
         guard args.count >= 2 else {
-            eprint("usage: telegram-mcp-consent <selftest-jcs|selftest-verify|selftest-jcs-rejects-nonascii-key> [vectors-file]")
+            eprint(usage)
             exit(2)
         }
         let path = args.count >= 3 ? args[2] : nil
+        let extra = args.count >= 4 ? args[3] : nil
         switch args[1] {
+        case "approve":
+            exit(approveCommand(vectorsPath: path, indexText: extra))
         case "selftest-jcs":
             exit(selfTestJCS(vectorsPath: path))
         case "selftest-verify":
             exit(selfTestVerify(vectorsPath: path))
         case "selftest-jcs-rejects-nonascii-key":
             exit(selfTestJCSRejectsNonASCIIKey())
+        case "selftest-display-tamper":
+            exit(selfTestDisplayTamper(vectorsPath: path))
+        case "selftest-approve":
+            exit(selfTestApprove(vectorsPath: path, indexText: extra))
+        case "selftest-approve-wrong-daemon-key":
+            exit(selfTestApproveWrongDaemonKey(vectorsPath: path))
         default:
             eprint("unknown subcommand: \(args[1])")
             exit(2)
