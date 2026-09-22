@@ -29,6 +29,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from telegram_mcp.keys.registry import KEY_REGISTRY, KeySpec
 
 __all__ = [
+    "FILE_BACKED_KEYS",
     "KeyStoreError",
     "cached_fingerprint",
     "fingerprint_for",
@@ -56,6 +57,8 @@ ERR_CLIENT = "invalid client reference"
 # agent keys live in the keychain/Enclave (daemon keeps pins only), and
 # per-client lease seeds are minted on demand via ``provision_lease_seed``.
 _FILE_BACKED_ROWS = frozenset({"principal-key", "cursor-key", "privacy-key", "challenge-key"})
+# Public alias: doctor checks exactly these rows as runtime-owned files.
+FILE_BACKED_KEYS = _FILE_BACKED_ROWS
 
 _SEED_LEN = 32
 _CLIENT_REF_RE = re.compile(r"[A-Za-z0-9_\-]{1,128}\Z")

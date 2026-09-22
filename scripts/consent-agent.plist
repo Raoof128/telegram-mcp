@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Per-user LaunchAgent definition for the consent agent.
+
+  Content is owned by Plan 2b (agent/ConsentAgent-Info.plist); this is the
+  installable copy the Plan-2a launcher loads at `start` and unloads at
+  `stop` (launchctl bootstrap gui/$UID / bootout). RunAtLoad is false and the
+  definition ships disabled, so nothing Telegram-related runs until the
+  operator starts the runtime.
+
+  StandardOutPath and StandardErrorPath are /dev/null on purpose: challenge
+  and display payloads must never reach ordinary user logs. The agent's
+  diagnostics flag emits redacted lifecycle lines only.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.telegram-mcp.consent-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Application Support/telegram-mcp/TelegramMCPConsent.app/Contents/MacOS/telegram-mcp-consent</string>
+        <string>run</string>
+        <string>--socket</string>
+        <string>/private/var/run/telegram-mcp/consent.sock</string>
+    </array>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+    <key>StandardErrorPath</key>
+    <string>/dev/null</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TELEGRAM_MCP_CONSENT_SOCKET</key>
+        <string>/private/var/run/telegram-mcp/consent.sock</string>
+    </dict>
+</dict>
+</plist>
