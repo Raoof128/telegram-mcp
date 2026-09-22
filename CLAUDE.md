@@ -8,9 +8,11 @@ it controls wherever anything else is silent.
 
 **Where the work stands:** Phase 1 (synthetic protocol foundation) and Phase 2
 (privileged runtime, identity, consent, authority, storage, IPC, and the Swift
-consent agent) are complete and qualified. Phase 3 (disclosure receipts,
-exposure budgets, proofs, audit chain) has not started. Nothing here has ever
-touched Telegram.
+consent agent) are complete and qualified. Phase 3 is under way: Plan
+3a (measurement, egress, provenance, coverage, receipts, verification keys) is
+complete; Plans 3b (exposure accounting) and 3c (audit chain, anchor,
+coordinator) have not started, so nothing is wired into a tool and no
+disclosure has ever been committed. Nothing here has ever touched Telegram.
 
 ## Non-negotiables
 
@@ -37,7 +39,7 @@ touched Telegram.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 484 passed, 7 skipped
+uv run pytest -q                                  # 536 passed, 7 skipped
 uv run python scripts/e2e_smoke.py                # 41 checks, end to end
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
@@ -69,6 +71,7 @@ broker — and prints one ledger. Both must pass before any claim of done.
 | Authority, refs, cursors, epochs | `authority/` |
 | Schema, migrations, settings | `storage/` |
 | Admin socket, leases, RV-1, tunnel pins | `ipc/` |
+| Disclosure machinery (Phase 3) | `disclosure/` |
 | Health checks | `doctor.py` |
 | Swift consent agent | `agent/consent-agent.swift` |
 | Plans and design | `docs/superpowers/` |
