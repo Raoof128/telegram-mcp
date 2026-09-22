@@ -32,7 +32,7 @@ uv pip install --python /tmp/phase1-wheeltest/venv/bin/python \
 - `uv sync --locked`: 67 packages. `importlib.metadata`: `mcp==2.2.0`, `telethon==1.45.0`.
 - Runtime: `uv run python` 3.12.2 (conda-forge); `uv` 0.11.29; `hatchling==1.32.4`.
 - `extract --check`: 23 files OK. Wheel: 39 files, 23 contract JSON, no session/secret artifacts.
-- Full suite: **158 passed** (`tests/unit` + `tests/contract` + `tests/integration` + `tests/security`).
+- Full suite: **168 passed** (`tests/unit` + `tests/contract` + `tests/integration` + `tests/security`).
 - `ruff check`: clean. `ruff format --check`: clean. `mypy src/telegram_mcp`: clean (12 files).
 - Raw wire (installed `mcp==2.2.0`, modern `2026-07-28`): `server/discover`,
   `tools/list` (exact 10 names), status success, domain error, unknown-tool
@@ -50,7 +50,17 @@ uv pip install --python /tmp/phase1-wheeltest/venv/bin/python \
 
 - Spec: `36b67f488415f2ab1c44b8d906de7f192fbe0dc562a2aeac76938b24c4a61b0a`
 - `uv.lock`: `01a2a106e3ad8e63cf0f9d2cba9feec2da6e4227be958777e151051f5d6204f4`
-- Wheel (`telegram_mcp-0.1.10`): `a50ae97c328142ba8073e1db45349cec2c4b75b90ff7d2e438cdea5f8d6da434`
+- Wheel (`telegram_mcp-0.1.10`): `5b600b55282ab823de57c2c760c79ff644789fc2a9510df654886e0cdc1be850`
+
+## Final review fix pass (2026-09-22)
+
+Fresh-reviewer findings closed with RED→GREEN tests each: 512 B envelope
+reserve (measured 79 B overhead; a 1024 B cap now honestly yields
+`RESPONSE_LIMIT` for status), deepcopy contract cache, explicit-null vs
+omission via `model_fields_set`, union error-code set, `INVALID_TIME` only
+for `date-time`, `OTEL_`-prefix guard, regex Host/Origin redaction, strict
+manifest decoding. Suite 158 → 168. Five style-only minors deferred in the
+plan ledger.
 
 ## Correction ledger (roadmap C1–C7)
 
