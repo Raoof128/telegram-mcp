@@ -1,6 +1,6 @@
 # Telegram MCP Phase 2 Design — On-Demand Privileged Runtime, Identity, Consent, Authority
 
-**Status:** Revised for the on-demand requirement (no always-on daemon); pending re-review before the implementation plan.
+**Status:** Revised for the on-demand requirement plus gauntlet fixes; pending re-review before the implementation plan.
 **Date:** 2026-09-22 (Australia/Sydney)
 **Spec:** `telegram-mcp-v0.1.10-final-engineering-spec.md` (SHA-256 `36b67f488415f2ab1c44b8d906de7f192fbe0dc562a2aeac76938b24c4a61b0a`)
 **Roadmap:** `docs/superpowers/plans/2026-09-22-telegram-mcp-release-roadmap.md` (Phase 2)
@@ -42,44 +42,55 @@ polling before READY):
 
 ```text
 1. generate runtime_id (128 random bits, memory only)
-2. acquire single-runtime lock (second start fails closed)
+2. acquire single-runtime lock (second start fails closed; PID-bearing
+lockfile with liveness check — a stale lock from a crashed runtime is
+reclaimed, a live owner fails the start)
 3. load secrets; 4. verify secret permissions
 5. open SQLite; 6. foreign_keys=ON; 7. quick_check
 8. run/verify migrations; 9. startup GC
 10. load authority state; 11. verify security lock state
 12. start consent channel; 13. consent-agent mutual-auth handshake
+(pinned-key challenge-response at connect on `consent.sock`)
 14. initialise fake/real Telegram adapter; 15. open MCP listeners
 16. advertise READY; 17. optional tunnel-client starts
 ```
 
-Shutdown: stop accepting requests → invalidate pending consent → stop tunnel
+Shutdown: stop accepting requests (new sensitive calls during DRAINING are
+rejected with `INTERNAL_ERROR` — fail-closed; the runtime is not locked, so
+`SECURITY_LOCKED` would be wrong) → invalidate pending consent → stop tunnel
 intake → cancel queued work → bounded 5-second grace for active calls, then
 cancel the remainder and discard un-serialised payloads → close Telegram
 (disconnect only; stopping MUST NOT call `log_out()`) → close SQLite → remove
 Unix sockets → release process lock → stop consent UI. Then OFF.
 
-`runtime_id` is bound into bearer leases, consent challenges, `tgl_` discovery
-handles, admin challenge nonces, and cursors. Restart mints a new `runtime_id`,
-annihilating every ephemeral capability without database mutation.
+`runtime_id` is bound into bearer leases, consent challenges, admin challenge
+nonces, and cursors. Restart mints a new `runtime_id`,
+annihilating every ephemeral capability without database mutation. (`tgl_`
+handles are memory-only and die with the process, so they need no binding.)
 
 ## 2. Bootstrap control vs runtime admin IPC (normative split)
 
 Two distinct control layers. Bootstrap control — `start`, `stop`, `status` —
-works while OFF and never needs the runtime socket. Runtime admin IPC (scope,
+works while OFF and never needs the runtime socket; `stop` while OFF is a
+no-op success. Runtime admin IPC (scope,
 project, policy, client, lock, auth, rotate, doctor) exists only when READY.
 
 One-time install registers the privileged service definition (SMAppService /
-launchd; exact API verified at implementation time). `start` triggers the
+launchd; exact API verified at implementation time) and requires one
+interactive admin authentication; `start`/`stop` never do. `start` triggers the
 approved service manager to launch the runtime as the service account. No shell
 `sudo -u`, no passwordless sudo rule, no setuid wrapper. The installed helper
-definition is persistent; the running process is not.
+definition is persistent; the running process is not. Child processes
+(tunnel-client, consent UI) are tracked in a runtime-owned PID file; at start,
+a live PID with an exact cmdline-plus-UID match is terminated and started
+fresh — deterministic clean slate, never silent adoption of a stranger.
 
 Socket layout:
 
 ```text
-/private/var/run/telegram-mcp/   owner _telegram-mcp:telegram-mcp-admin  0770
-  consent.sock                    owner _telegram-mcp:telegram-mcp-admin  0660
-  admin.sock                      owner _telegram-mcp:telegram-mcp-admin  0660
+/private/var/run/telegram-mcp/   owner telegram-mcpd:telegram-mcp-admin  0770
+  consent.sock                    owner telegram-mcpd:telegram-mcp-admin  0660
+  admin.sock                      owner telegram-mcpd:telegram-mcp-admin  0660
 ```
 
 Filesystem permissions grant reachability; cryptographic identity grants trust.
@@ -119,7 +130,8 @@ Signed challenge (canonical JCS) contains: `canonical_request_hmac`,
 `display_digest`, principal, client, account, tool, both epochs,
 `project_scope_digest`, `runtime_id`, nonce, expiry. The display payload
 (client/action/project/peer display strings, risk class) is hashed as
-`display_digest = H("telegram-mcp-display-v1" || JCS(display_payload))`; the
+`display_digest = SHA256("telegram-mcp-display-v1" || JCS(display_payload))`,
+lowercase hex; the
 agent recomputes it with a constant-time compare and renders only on equality.
 This closes UI substitution: the approved bytes and the seen description
 cannot diverge.
@@ -151,7 +163,7 @@ implementations. Effective access = owner allowlist ∩ project membership ∩
 client grant, evaluated before retrieval and again before serialisation. Owner
 policy: allowlist default, archived chats excluded, deny wins, canonical
 `(account, peer-type, peer-id)` identity, `tgl_` snapshot handles for discovery
-(5-minute, memory-only, `runtime_id`-bound). Projects: explicit refs, enabled
+(5-minute, memory-only). Projects: explicit refs, enabled
 checks, `can_read` plus `can_cross_search` grants, most-restrictive egress wins
 for shared peers, no implicit all-projects mode.
 
@@ -164,8 +176,9 @@ needs presence and starts a new epoch.
 Refs: all ten prefixes, 130-bit CSPRNG, SQLite-mapped, re-authorised on every
 use, non-enumerating `REF_NOT_FOUND`/`NOT_ACCESSIBLE`. Cursors: keyed-HMAC
 query digests (never plain SHA-256 of text), 15-minute TTL, `runtime_id`-bound
-(restart invalidates), GC at startup plus opportunistically at most hourly
-while running plus best-effort at clean shutdown. Seven invalidation triggers
+(restart invalidates — a fail-closed extension beyond §23, stated here), GC at
+startup plus opportunistically at most hourly while running plus best-effort
+at clean shutdown. Seven invalidation triggers
 map to `INVALID_CURSOR`, `CURSOR_POLICY_CHANGED`, `CURSOR_PROJECT_CHANGED`,
 `CURSOR_EXPIRED`.
 
@@ -177,7 +190,10 @@ Ruling (stale-policy codes): cursor context returns `CURSOR_POLICY_CHANGED`;
 One metadata SQLite database owned by the service account (directory `0700`,
 files `0600`): all 19 tables, transactional migrations with `schema_version`.
 At startup, before READY: integrity (`quick_check`) → migrations → GC →
-exclusive session lock. `PRAGMA foreign_keys=ON` verified per connection.
+exclusive session lock. (Two different locks: the §1 single-runtime process
+lock is enforced in Phase 2; this session-file lock protocol is defined here
+and enforced when the real adapter lands in Phase 4.)
+`PRAGMA foreign_keys=ON` verified per connection.
 
 Excerpt-width integrity rule (roadmap C2): the excerpt branch gains `IS NOT
 NULL` with the 64–4000 range preserved. Shared-membership integrity rule
