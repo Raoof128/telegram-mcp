@@ -695,6 +695,14 @@ from telegram_mcp.storage.migrations import migrate
 
 _KEY = bytes(range(32))
 
+def _append(conn, event):
+    """Every append runs inside a caller-owned transaction (design §6.5)."""
+    from telegram_mcp.disclosure.audit.chain import immediate_transaction
+
+    with immediate_transaction(conn):
+        return append_event(conn, _KEY, event)
+
+
 
 @pytest.fixture
 def anchor_dir(tmp_path):
