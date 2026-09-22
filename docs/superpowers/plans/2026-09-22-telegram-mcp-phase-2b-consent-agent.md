@@ -10,7 +10,7 @@
 
 **Spec:** [Phase-2 design](../specs/2026-09-22-telegram-mcp-phase-2-design.md) §4; wire vectors from Plan 2a ([phase-2a authority plan](2026-09-22-telegram-mcp-phase-2a-authority.md) Task 3).
 
-**Status:** Task 1 executed (Swift JCS encoder and challenge verification, merged to `main` and byte-equal against Plan 2a's frozen `jcs_vectors.json`). Tasks 2-5 are open, and Plan 2a's Phase-2J join gate stays unrun until Tasks 3-4 land.
+**Status:** Executed. Tasks 1-5 complete; evidence, deviations (including the deliberate relaxation of the Developer-ID rule) and unresolved items in [phase-2b verification](../../verification/phase-2b.md). The interactive pairing and Touch ID legs are implemented and unrun; Plan 2a's Phase-2J join gate is six scenarios short of complete.
 
 ## Global Constraints
 
