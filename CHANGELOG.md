@@ -63,3 +63,11 @@
 - **Files changed:** `agent/consent-agent.swift`, `src/telegram_mcp/ipc/rendezvous.py`, `src/telegram_mcp/doctor.py`, `tests/conftest.py`, `tests/agent/conftest.py`, `tests/agent/stub_broker.py`, `tests/agent/test_consent_agent.py`, `tests/integration/test_join_gate.py`, `tests/unit/test_ipc.py`, `tests/unit/test_doctor.py`, `tests/security/test_install.py`, `scripts/e2e_smoke.py`, `docs/verification/phase-2a.md`, `docs/verification/phase-2b.md`, this file, `CHANGELOG.md`.
 - **Verification:** 484 passed, 7 skipped by default; 487 passed, 4 skipped with `--run-platform-gated` (the four remaining skips are the rotation ceremony behind its flag, two install-dependent probes, and the vector generator); smoke 41/41; ruff, format and `mypy src/telegram_mcp` clean.
 - **Follow-ups:** Phase 3 (disclosure, budgets, proofs, audit chain). Service accounts and paths are still not installed on this host, and no runtime has ever issued a challenge to the paired agent outside the join gate. No Telegram access, no production claim.
+
+### 2026-09-22 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Project memory and cross-project knowledge capture.
+- **Summary:** Added `CLAUDE.md` as the repository's working agreement — non-negotiables, the verification commands, the module map, the frozen wire contracts and the current host state — so a fresh session starts from the same rules rather than rediscovering them. Recorded the session's durable knowledge in Zurvan: four accepted decisions (pairing on a stable code identity rather than Developer ID, SecAccess scoping for the keychain records, the corrected startup ordering, and driving the real broker instead of a stub), four findings (the free-certificate Secure Enclave path, the keychain ACL behaviour matrix, SQLite admitting a row whose CHECK evaluates to NULL, and macOS LibreSSL rejecting `-noenc`), and one open question about what `doctor --production` will still refuse once the installers have run. Zurvan's search index was rebuilt.
+- **Files changed:** `CLAUDE.md`, this file, `CHANGELOG.md`; Zurvan wiki entries outside this repository.
+- **Verification:** Full suite 484 passed, 7 skipped; `zurvan index search` rebuilt 185,480 chunks; decisions and question accepted by the Zurvan write tools.
+- **Follow-ups:** No Git remote is configured, so nothing has been pushed. Phase 3 next.
