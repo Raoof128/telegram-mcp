@@ -76,6 +76,17 @@ def test_registry_rows_match_design_section_3():
     assert impl.persistent is True
 
 
+def test_phase3_rows_pin_algorithms_per_spec_9_6_1():
+    from telegram_mcp.keys.registry import KEY_REGISTRY
+
+    assert KEY_REGISTRY["disclosure-key"].algorithm == "Ed25519"
+    assert KEY_REGISTRY["audit-checkpoint-key"].algorithm == "Ed25519"
+    assert KEY_REGISTRY["audit-chain-key"].algorithm == "HMAC-SHA-256"
+    # Controller ruling (spec §9.6.1): backup-key is the Ed25519
+    # policy-backup signing key, a distinct purpose — not HMAC.
+    assert KEY_REGISTRY["backup-key"].algorithm == "Ed25519"
+
+
 def test_keyspec_is_frozen():
     from telegram_mcp.keys.registry import KeySpec
 

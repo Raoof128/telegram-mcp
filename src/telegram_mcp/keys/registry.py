@@ -53,5 +53,5 @@ KEY_REGISTRY: dict[str, KeySpec] = {
     "disclosure-key": KeySpec("Ed25519", "runtime account", False, 3, "spec"),
     "audit-checkpoint-key": KeySpec("Ed25519", "runtime account", False, 3, "spec"),
     "audit-chain-key": KeySpec("HMAC-SHA-256", "runtime account", False, 3, "spec"),
-    "backup-key": KeySpec("HMAC-SHA-256", "runtime account", False, 3, "spec"),
+    "backup-key": KeySpec("Ed25519", "runtime account", False, 3, "spec"),
 }
