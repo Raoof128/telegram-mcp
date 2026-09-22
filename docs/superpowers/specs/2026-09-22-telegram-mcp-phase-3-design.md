@@ -1,8 +1,11 @@
 # Telegram MCP Phase 3 Design — Disclosure, Budgets, Proofs and Audit Integrity
 
-**Status:** Revision 2. Three gauntlet passes; the third checked every claim against
-the frozen specification and the shipped code and found eighteen defects, all folded
-in below. Ready for the three implementation plans.
+**Status:** Revision 3. Four review passes. The third checked every claim against
+the frozen specification and the shipped code and found eighteen defects; the
+fourth was an external implementation-readiness review that found nine more
+ambiguities, each of which could have produced two different "correct"
+implementations. All folded in below. Ready to freeze; the next review belongs at
+the 3a/3b/3c plan level.
 **Date:** 2026-09-22 (Australia/Sydney)
 **Spec:** `telegram-mcp-v0.1.10-final-engineering-spec.md` (SHA-256 `36b67f488415f2ab1c44b8d906de7f192fbe0dc562a2aeac76938b24c4a61b0a`, verified)
 **Roadmap:** [release roadmap](../plans/2026-09-22-telegram-mcp-release-roadmap.md), Phase 3 row
@@ -60,6 +63,34 @@ frozen text and every architectural claim against the shipped code.
 | 16 | re-prompt timing exceeds the recommended client timeout | §5.5 — **refined, not adopted**: §23C.3 mandates the re-prompt, so the bound stays and the timing is documented |
 | 17 | per-tool record rules, the zero-project case and `project_count` semantics absent | §5.2 |
 | 18 | Phase-5 purge constraints and receipt purge ordering unrecorded | §9.3 |
+
+## 0A. What revision 3 changed
+
+An external review read revision 2 against the frozen contract looking for
+implementation ambiguity rather than architectural error. It raised ten points.
+Eight were real and are adopted; one was already present and is now explicit
+rather than implied; and one claim about revision 2 was stale. Two further
+defects surfaced while applying them, found here rather than reported.
+
+| Point | Status | Resolution |
+|---|---|---|
+| budget decisions must compare the **projected** figure, not current totals | adopted | §5.3 — projection defined as committed + live reservations + this call's worst case |
+| the append barrier needs a real lock held across steps 11 and 12 | adopted | §6.5 — `audit_append_guard`, acquired before the commit, released on every path |
+| the fallback anchor's format and durability were unspecified | adopted | §6.3 — frozen JSON shape, domain-separated `anchor_mac`, write→fsync→rename→fsync, symlink/owner/mode rejection |
+| the formal model asserts over anchor and payload state it never declared | adopted | §10.3 — five added variables, `audit_integrity_state` over the five integrity states |
+| "ordered set" is ambiguous for a canonical digest | adopted | §3.2 — an ordered vector in emitted-record order with four frozen fields |
+| revision 2 promised `payload_unreconstructable` with no mechanism to support it | adopted | §4.3 — **claim withdrawn**; the distinction needs restore lineage Phase 3 does not persist |
+| `meta.coverage` is outside `data` and so outside `bytes_disclosed` | adopted | §5.2 — verified against the frozen search contract; container overhead is global, `meta` is uncharged |
+| a successful repair should itself be a chained, anchored event | adopted | §6.8 — six-step ordering; the latch clears only after the repair event is anchored |
+| the extraction benchmark's framing was over-broad | adopted | §10.2 — benchmark-observed under a named synthetic configuration, stated as a lower bound |
+| repairable versus fatal integrity failures "now explicitly fatal" | **already present** | §6.7 carried all four FAIL CLOSED rows in revision 2. What was genuinely missing is that `repair-anchor` must *refuse* in those states rather than merely being unable to help; that is now stated, with the reason |
+| `event_id` enters the MAC, so its format must be frozen | **found here** | §6.1 — `evt_` plus a 26-character Crockford base32 ULID, per Appendix C |
+| `audit_events.tool_name` is `NOT NULL`, and §6.5 requires administrative events to append | **found here** | §6.5 — a closed dotted vocabulary that no MCP tool name can collide with |
+
+The revision-3 document was written here, against the repository. The reviewer's
+own file lives in a sandbox this machine cannot reach, so it was neither read
+nor merged; its ten points were verified against the frozen specification and
+revision 2 directly, and adopted on that evidence.
 
 ## 1. Architecture
 
@@ -218,9 +249,23 @@ excerpt truncation. Determinism is tested against a Unicode/RTL corpus.
 ### 3.2 Provenance
 
 Provenance binds **what leaves**, not what Telegram returned:
-`canonical_result_provenance_digest` commits to the ordered set of privacy-safe
-record identities, `origin_project_refs`, effective egress level and truncation
-state, computed after transformation. For `excerpt` it proves the excerpt; for
+`canonical_result_provenance_digest` commits to the privacy-safe provenance
+vector, computed after transformation. §23A.2A calls this "the ordered set of
+privacy-safe record identities", which is a contradiction in terms — a set has
+no order — and two implementers would canonicalise it differently. This design
+reads the frozen wording as an **ordered vector in emitted-record order**, one
+entry per record actually present in `data`, each entry carrying exactly:
+
+```text
+record_ref            message_ref or peer_ref, as the tool emits
+origin_project_refs   sorted ascending, the frozen tpr_ form
+egress_level          the class actually present on this record
+text_truncated        boolean
+```
+
+The digest is `SHA-256(JCS(vector))`. Emitted order is the order the client
+receives, so reordering the response changes the digest — which is the point:
+ordering is part of what the gateway attests. For `excerpt` it proves the excerpt; for
 `metadata_only` it proves that no body was emitted. It never hashes message or
 search text.
 
@@ -318,11 +363,16 @@ Phase 3 states the invariant and tests it:
   the receipt retention window**. `client rotate` rotates credentials and
   `auth_binding`; it must not re-mint `client_ref`.
 - Where a restore does regenerate refs (a Phase-5 path), it MUST bump
-  `chain_epoch` and record that pre-restore receipts are no longer
-  reconstructable; `disclosure show` reports `payload_unreconstructable` rather
-  than a verification failure, because the distinction between "tampered" and
-  "identity regenerated by an authorised restore" is exactly what an operator
-  needs.
+  `chain_epoch`. Revision 2 went further and promised that `disclosure show`
+  would then report `payload_unreconstructable` rather than a verification
+  failure. **Phase 3 cannot keep that promise and the claim is withdrawn.**
+  Distinguishing "an authorised restore regenerated this identity" from "someone
+  tampered with this row" requires durable restore-lineage metadata that Phase 3
+  does not persist and cannot invent without the schema change this design
+  forbids. Without it, a post-restore verification failure is indistinguishable
+  from tampering, and a design that claims otherwise is telling an operator a
+  comforting story. Phase 5 owns the lineage record if it wants the distinction;
+  Phase 3 owns the invariant and the test that protects it.
 - **Test:** rotate a client's credentials, then re-verify a receipt minted
   before the rotation. Revision 1's proposed test ("a historical key verifies an
   old receipt") would have stayed green through this entire hole, because it
@@ -394,24 +444,52 @@ only the global rule:
   reports.
 - **Per-project bytes** are the sum of canonical JSON bytes of the *result
   records attributed to that project*, conservatively including the complete
-  record when it has several origins. Envelope and coverage overhead are charged
-  **globally only**.
+  record when it has several origins. The record elements are the ones each tool
+  emits inside `data`: `results[]` for the search tools, `messages[]` for get
+  messages and get context, `chats[]`, `peers[]`, `projects[]` and `unread[]`
+  for the others.
+- **`data`-container overhead** — everything inside `data` that is not a record,
+  such as `project` and `search_scope` on a search response — is charged to the
+  client-global bucket **only**.
+- **`meta` is not charged at all.** Revision 2 said "envelope and coverage
+  overhead are charged globally only", which implied coverage bytes land in the
+  global bucket. They do not. §23C.2 measures the canonical `data` object before
+  the `meta`/proof envelope, and `coverage` lives in `meta` — verified against
+  `telegram_search_messages.data.json`, whose top-level members are `project`,
+  `results` and `search_scope`, with no `coverage`. Coverage and the proof
+  envelope are outside the measurement entirely.
 
 Charging the global figure to every project bucket is over-counting, so no naive
 test catches it, and it makes project budgets fire early and unpredictably. The
-suite asserts that the sum of per-project record bytes plus envelope overhead
-equals the global figure for a single-project call, and that envelope overhead
-appears in no project bucket.
+suite asserts that per-project record bytes plus `data`-container overhead equal
+the global figure for a single-project call, that container overhead appears in
+no project bucket, and that changing the size of `meta.coverage` moves no
+number in either dimension.
 
 ### 5.3 The budget is consulted twice, and both are normative
 
 §23C.3 requires a pre-consent evaluation and a post-consent reservation. Both
 are load-bearing and neither replaces the other.
 
-| Where | Reads | Effect |
+Both compare against the **projected** figure, not the current one:
+
+```text
+projected = committed ledger rows in the window
+          + live in-memory reservations
+          + this call's conservative worst-case estimate
+```
+
+| Where | Compares | Effect |
 |---|---|---|
-| step 3, before any prompt | committed ledger rows plus live reservations | below soft: ordinary prompt. At or above soft: elevated warning showing cumulative quantities. At or above hard: **refuse with `EXPOSURE_BUDGET_EXCEEDED` without prompting** |
-| step 6, under the reservation lock | the same, recomputed | authoritative; refuses or reserves |
+| step 3, before any prompt | projected | below soft: ordinary prompt. At or above soft: elevated warning showing current **and** projected quantities. At or above hard: **refuse with `EXPOSURE_BUDGET_EXCEEDED` without prompting** |
+| step 6, under the reservation lock | projected, recomputed | authoritative; refuses or reserves the worst case |
+
+Projection is what §23C.3 means by "current/projected budget state", and it is
+what makes the reservation coherent: the reservation *is* this call's worst
+case, so a reservation that would push a bucket past its hard ceiling must be
+refused before it is taken, not discovered afterwards. Comparing only current
+totals would admit a single call that lands far beyond the hard limit — the
+ceiling would bound where a call starts rather than where it ends.
 
 Revision 1 checked only at step 6, which meant prompting a human for a call the
 gateway was about to refuse. Asking for consent to something that cannot happen
@@ -526,7 +604,14 @@ event_mac = HMAC-SHA-256(
 ```
 
 Hex-encoded columns are decoded to raw bytes before entering the MAC input;
-`JCS` is the same TG-JCS-v1 encoder the rest of the system uses. Appends run
+`JCS` is the same TG-JCS-v1 encoder the rest of the system uses.
+
+`event_id` is inside `JCS(event_without_event_mac)`, so its format is part of
+the MAC and must be frozen or the chain is not reproducible. Appendix C
+illustrates `evt_01J...`; this design freezes that as **`evt_` followed by a
+26-character uppercase Crockford base32 ULID**. It is not one of the ten §11.1
+opaque-ref prefixes because it is never exposed through MCP; it appears only in
+the chain, the anchor and operator output. Appends run
 under a single writer or a `BEGIN IMMEDIATE` transaction that reads the head and
 inserts the next sequence atomically, so concurrent completions cannot fork the
 chain.
@@ -553,8 +638,42 @@ The anchor is a daemon-owned `0600` file in a `0700` non-database directory —
 the spec's reviewed fallback, chosen over the System Keychain baseline because
 the runtime is a non-login service account, the keychain path would make every
 anchor test platform-gated, and the file is fully under the account that owns the
-chain. It holds at least `(chain_epoch, chain_seq, event_id, event_mac)` and is
-authenticated by daemon-held key material.
+chain.
+
+Its format is frozen, because a file two implementations write differently is
+not an anchor:
+
+```json
+{
+  "version": 1,
+  "chain_epoch": 3,
+  "chain_seq": 4127,
+  "event_id": "evt_01J8Z3QK7M4N2P6R9T5V8W1X0Y",
+  "event_mac": "<64 lowercase hex>",
+  "updated_at": "2026-09-22T06:11:04Z",
+  "anchor_mac": "<64 lowercase hex>"
+}
+```
+
+`anchor_mac` is `HMAC-SHA-256(audit_chain_key, "telegram-mcp-anchor-v1" ||
+JCS(object_without_anchor_mac))`. The domain string differs from the event MAC's
+`telegram-mcp-audit-v1`, so an event MAC can never be replayed as an anchor MAC.
+
+The refresh is durable or it did not happen:
+
+```text
+write   <anchor>.tmp.<nonce>   mode 0600, in the same directory
+fsync   the temp file
+rename  onto the anchor path   atomic within the directory
+fsync   the directory
+```
+
+A refresh that cannot complete every step reports failure and latches DEGRADED;
+it never reports success. On read, the daemon rejects the anchor unless the path
+is a regular file — **not a symlink** — owned by the current euid, mode exactly
+`0600`, in a directory that is `0700` and owned by the same euid, with a valid
+`anchor_mac` and `version` it understands. Each of those is a fail-closed check,
+not a warning, and each has a test.
 
 The spec's reference configuration declares `external_anchor_provider:
 macos_system_keychain`. Choosing the fallback means the declaration must change
@@ -594,10 +713,36 @@ reads 99. Every chain appender obeys the barrier, including administrative and
 security events — an exemption for "just an admin event" would silently break the
 theorem.
 
-The barrier window is one file write and fsync. A second call that arrives inside
-it waits up to a bounded interval and then fails with
+**The barrier is a lock, not an observation.** Revision 2 described the
+invariant without naming the mechanism, which leaves a window: if a caller
+commits at step 11 and only then marks the chain `ANCHOR_PENDING`, a second
+caller can commit in between and the chain is two ahead with no way back. So a
+single process-wide `audit_append_guard` is acquired **before** step 11 and held
+across step 12, covering the DB commit and the anchor refresh as one critical
+section. Nothing can append between them because nothing else holds the guard.
+
+```text
+acquire audit_append_guard
+  step 11  commit: ledger rows + receipt + exactly one audit append
+  step 12  refresh the anchor (write, fsync, rename, fsync)
+release audit_append_guard      <- on success or failure, always
+```
+
+The guard is held for one transaction plus one fsync'd rename. A second call
+arriving inside that window waits up to a bounded interval and then fails with
 `AUDIT_INTEGRITY_UNAVAILABLE` rather than queueing indefinitely; its reservation
-is released and nothing is emitted.
+is released and nothing is emitted. Releasing the guard on the failure path
+matters as much as taking it: a guard leaked by an exception would convert one
+anchor failure into a permanently frozen daemon.
+
+**Non-tool chain events.** `audit_events.tool_name` is `NOT NULL`, and §6.5
+requires administrative and security events to append through the same barrier,
+so they need a value. This design freezes a closed vocabulary for them —
+`admin.lock`, `admin.unlock`, `admin.key_rotation`, `admin.repair_anchor`,
+`admin.policy_import` — distinguishable from the ten tool names by their dotted
+prefix, which no MCP tool name can have. Without a fixed vocabulary two builds
+would write different strings and chain verification across an upgrade would
+have to guess.
 
 ### 6.6 Degraded means unauditable, and that is stated
 
@@ -629,6 +774,19 @@ a persisted bit:
 | anchor ahead of the head | FAIL CLOSED — the database was truncated |
 | head more than one ahead | FAIL CLOSED |
 | any MAC or signature mismatch | FAIL CLOSED |
+| chain discontinuity with no signed checkpoint explaining it | FAIL CLOSED |
+
+**Only RECOVERY_REQUIRED is repairable.** Revision 2 left this implied by saying
+repair "may advance the anchor only when the retained chain cryptographically
+extends from the previously trusted anchor"; implication is not good enough for
+the one command that exists to leave a fail-closed state. `audit repair-anchor`
+verifies the precondition itself and **refuses** in every FAIL CLOSED row. An
+anchor ahead of the head means the database lost committed history; a head more
+than one ahead means the barrier was bypassed or the anchor stopped being
+written; a MAC mismatch means the chain or the anchor is not what it claims.
+None of those is a stale pointer, and none is fixed by moving the pointer — the
+repair command would be laundering the evidence. Those states need an operator
+with the database, the checkpoints and a decision to make, not a command.
 
 Equality alone never proclaims integrity. If the persisted flag is cleared by
 accident or by hand, the anchor still catches the inconsistency.
@@ -674,6 +832,26 @@ ordinary delivery. There is no automatic reset. Recovery is successful
 `audit verify` followed by user-presence-approved `audit repair-anchor`, which
 may advance the anchor only when the retained chain cryptographically extends
 from the previously trusted anchor.
+
+**The repair audits itself, and the order is load-bearing.** §6.6 forbids
+appends while degraded, so the repair event cannot be written first; and a latch
+cleared before the event is written would leave the gap unexplained in the one
+record built to explain gaps. So:
+
+```text
+1  audit verify succeeds
+2  user presence approves repair-anchor
+3  the anchor is advanced to the verified head     <- chain and anchor agree
+4  append admin.repair_anchor, normally chained    <- appends are legal again
+5  refresh the anchor over that event, under the append guard
+6  clear audit.integrity_degraded and its two companion rows
+```
+
+Only after step 5 is the chain provably consistent again, so only then may the
+latch clear. The repair event carries the `tdr_` reference and reason code from
+the degraded rows before they are cleared, which is what lets a later reader
+reconstruct the whole episode from the chain alone: what was charged, what was
+withheld, why, and who approved the repair.
 
 ## 7. Error mapping
 
@@ -830,9 +1008,17 @@ every gate line names the command that proves it.
   twenty-four hours. Whatever total it achieves is recorded in the Phase-3
   evidence, first run sealed, never re-run until the number looks better. Either
   the budgets hold it to the expected ceiling, or the run has found a gap — both
-  outcomes are results. The published figure is the one number this project can
-  offer that nobody else publishes: how much private content a *compliant*
-  assistant can see.
+  outcomes are results.
+
+  **The figure is benchmark-observed, not a property of the world.** It is what
+  one scripted client extracted from the fake adapter under a named synthetic
+  corpus and a named budget configuration, with all three recorded beside the
+  number. It is not a measurement of real private content, because Phase 3 never
+  touches any, and it is a lower bound on what a cleverer client might achieve
+  even in that configuration. Revision 2 called it "how much private content a
+  compliant assistant can see", which is exactly the adjective inflation this
+  project refuses elsewhere: a number from a synthetic harness described as a
+  fact about reality.
 
 ### 10.3 Formal model (Appendix L is normative)
 
@@ -858,8 +1044,21 @@ NoReceiptWithoutVerifiedConsent   DisclosureCommitIsAtomic
 AuditSequenceNeverForks
 ```
 
-This design adds four of its own, which the appendix permits and this
-architecture requires:
+Appendix L requires "at least" those fifteen variables, and this architecture
+needs five more, because an assertion cannot quantify over state the model does
+not carry. Revision 2 added assertions about the anchor and about payload
+release to a model with neither, which would have produced a checker that passes
+because it cannot express the property:
+
+```text
+anchor_epoch          anchor_seq          audit_integrity_state
+append_guard_held     payload_released
+```
+
+`audit_integrity_state` ranges over CLEAN, ANCHOR_PENDING, RECOVERY_REQUIRED,
+DEGRADED and FAIL_CLOSED, so the transitions in §6.5 and §6.7 are checkable
+rather than prose. With those present, the four added assertions have something
+to say:
 
 ```text
 NoPayloadBeforeAnchorRefresh      ChainNeverMoreThanOneAheadOfAnchor
