@@ -1,7 +1,6 @@
 # Telegram MCP Gateway (development foundation)
 
-Read-only Telegram MCP gateway — **Phase-1 synthetic foundation plus the
-Phase-2a authority foundation**. This build serves a disconnected synthetic
+Read-only Telegram MCP gateway — **Phases 1, 2 and 3 complete**. This build serves a disconnected synthetic
 `telegram_status`, advertises the exact ten-tool contracts, and refuses all
 nine sensitive calls. Phase 2a adds the privileged-runtime machinery behind
 that surface — lifecycle and lock, key store and pairing pins, the consent
