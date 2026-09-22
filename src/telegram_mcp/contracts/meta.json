@@ -1,0 +1,90 @@
+{
+  "type": "object",
+  "required": ["source", "content_trust", "truncated", "partial", "next_cursor", "disclosure", "coverage"],
+  "properties": {
+    "source": {"enum": ["gateway", "telegram"]},
+    "content_trust": {"enum": ["non_instructional_gateway_metadata", "untrusted_external_content"]},
+    "truncated": {"type": "boolean"},
+    "partial": {"type": "boolean"},
+    "next_cursor": {"type": ["string", "null"], "pattern": "^tgc_[a-z2-7]{26}$"},
+    "disclosure": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["receipt_ref", "proof_key_id", "proof_signature", "proof_payload_sha256", "proof_payload"],
+          "properties": {
+            "receipt_ref": {"type": "string", "pattern": "^tdr_[a-z2-7]{26}$"},
+            "proof_key_id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "proof_signature": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+            "proof_payload_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "proof_payload": {
+              "type": "object",
+              "required": ["schema", "disclosure_ref", "principal_ref", "client_ref", "account_ref", "tool_name", "security_epoch", "policy_epoch", "project_scope_digest", "project_count", "effective_egress_level", "records_disclosed", "bytes_disclosed", "partial", "commit_status", "committed_at", "consent_verified", "consent_key_id", "consent_challenge_digest", "canonical_result_provenance_digest", "canonical_coverage_digest"],
+              "properties": {
+                "schema": {"const": "tg-mcp-disclosure/v1"},
+                "disclosure_ref": {"type": "string", "pattern": "^tdr_[a-z2-7]{26}$"},
+                "principal_ref": {"type": "string", "pattern": "^prn_[a-z2-7]{26}$"},
+                "client_ref": {"type": "string", "pattern": "^tcl_[a-z2-7]{26}$"},
+                "account_ref": {"type": "string", "pattern": "^tga_[a-z2-7]{26}$"},
+                "tool_name": {"type": "string", "minLength": 1, "maxLength": 128},
+                "security_epoch": {"type": "integer", "minimum": 1},
+                "policy_epoch": {"type": "integer", "minimum": 1},
+                "project_scope_digest": {"type": "string", "minLength": 1, "maxLength": 160},
+                "project_count": {"type": "integer", "minimum": 0, "maximum": 8},
+                "effective_egress_level": {"enum": ["metadata_only", "excerpt", "full_text"]},
+                "records_disclosed": {"type": "integer", "minimum": 0},
+                "bytes_disclosed": {"type": "integer", "minimum": 0},
+                "partial": {"type": "boolean"},
+                "commit_status": {"const": "committed"},
+                "committed_at": {"type": "string", "format": "date-time"},
+                "consent_verified": {"const": true},
+                "consent_key_id": {"type": "string", "minLength": 1, "maxLength": 160},
+                "consent_challenge_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "canonical_result_provenance_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "canonical_coverage_digest": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "coverage": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["complete", "eligible_peers", "peers_scanned", "telegram_rpcs", "hits_examined", "hits_returned", "partial_reasons", "project_coverage"],
+          "properties": {
+            "complete": {"type": "boolean"},
+            "eligible_peers": {"type": "integer", "minimum": 0},
+            "peers_scanned": {"type": "integer", "minimum": 0},
+            "telegram_rpcs": {"type": "integer", "minimum": 0},
+            "hits_examined": {"type": "integer", "minimum": 0},
+            "hits_returned": {"type": "integer", "minimum": 0},
+            "partial_reasons": {"type": "array", "uniqueItems": true, "items": {"enum": ["deadline", "rpc_budget", "hit_budget", "peer_budget", "response_limit", "telegram_partial"]}},
+            "project_coverage": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "required": ["project_ref", "eligible_peers", "peers_scanned"],
+                "properties": {
+                  "project_ref": {"type": "string", "pattern": "^tpr_[a-z2-7]{26}$"},
+                  "eligible_peers": {"type": "integer", "minimum": 0},
+                  "peers_scanned": {"type": "integer", "minimum": 0}
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

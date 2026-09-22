@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+    "cursor": {"type": ["string", "null"], "pattern": "^tgc_[a-z2-7]{26}$"}
+  },
+  "additionalProperties": false
+}

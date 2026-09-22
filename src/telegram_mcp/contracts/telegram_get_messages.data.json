@@ -1,0 +1,52 @@
+{
+  "$defs": {
+    "message": {
+      "type": "object",
+      "required": ["message_ref", "origin_project_refs", "sender_kind", "sender_display_name", "sender_peer_ref", "post_author", "forum_topic", "topic_title", "sent_at", "outgoing", "text", "text_truncated", "reply_to_message_ref", "has_media", "media_kind", "edited"],
+      "properties": {
+        "message_ref": {"type": "string", "pattern": "^tgm_[a-z2-7]{26}$"},
+        "origin_project_refs": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "pattern": "^tpr_[a-z2-7]{26}$"}},
+        "sender_kind": {"enum": ["user", "channel", "chat", "anonymous_admin", "service", "unknown"]},
+        "sender_display_name": {"type": ["string", "null"]},
+        "sender_peer_ref": {"type": ["string", "null"], "pattern": "^tgp_[a-z2-7]{26}$"},
+        "post_author": {"type": ["string", "null"]},
+        "forum_topic": {"type": "boolean"},
+        "topic_title": {"type": ["string", "null"]},
+        "sent_at": {"type": "string", "format": "date-time"},
+        "outgoing": {"type": "boolean"},
+        "text": {"type": ["string", "null"]},
+        "text_truncated": {"type": "boolean"},
+        "reply_to_message_ref": {"type": ["string", "null"], "pattern": "^tgm_[a-z2-7]{26}$"},
+        "has_media": {"type": "boolean"},
+        "media_kind": {"type": ["string", "null"]},
+        "edited": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": ["project", "peer", "messages"],
+  "properties": {
+    "project": {
+      "type": "object",
+      "required": ["project_ref", "display_name"],
+      "properties": {
+        "project_ref": {"type": "string", "pattern": "^tpr_[a-z2-7]{26}$"},
+        "display_name": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "peer": {
+      "type": "object",
+      "required": ["peer_ref", "display_name", "chat_type"],
+      "properties": {
+        "peer_ref": {"type": "string", "pattern": "^tgp_[a-z2-7]{26}$"},
+        "display_name": {"type": "string"},
+        "chat_type": {"enum": ["private", "group", "supergroup", "channel"]}
+      },
+      "additionalProperties": false
+    },
+    "messages": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/message"}}
+  },
+  "additionalProperties": false
+}

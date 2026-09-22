@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "required": ["project_refs", "query"],
+  "properties": {
+    "project_refs": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^tpr_[a-z2-7]{26}$"}
+    },
+    "query": {"type": "string", "minLength": 1, "maxLength": 512},
+    "since": {"type": ["string", "null"], "format": "date-time"},
+    "until": {"type": ["string", "null"], "format": "date-time"},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+    "cursor": {"type": ["string", "null"], "pattern": "^tgc_[a-z2-7]{26}$"}
+  },
+  "additionalProperties": false
+}

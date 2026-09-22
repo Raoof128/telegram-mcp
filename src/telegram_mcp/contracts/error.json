@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "required": ["ok", "error"],
+  "properties": {
+    "ok": {"const": false},
+    "error": {
+      "type": "object",
+      "required": ["code", "message", "retryable", "retry_after_seconds"],
+      "properties": {
+        "code": {"type": "string", "enum": ["AUTH_REQUIRED","SESSION_REVOKED","ACCOUNT_UNAVAILABLE","POLICY_UNCONFIGURED","REF_NOT_FOUND","NOT_ACCESSIBLE","MESSAGE_NOT_FOUND","AMBIGUOUS_PEER","INVALID_CURSOR","CURSOR_EXPIRED","CURSOR_POLICY_CHANGED","CURSOR_PROJECT_CHANGED","INVALID_TIME","INVALID_ARGUMENT","RESPONSE_LIMIT","EXPOSURE_BUDGET_EXCEEDED","SECURITY_LOCKED","PROOF_GENERATION_FAILED","AUDIT_INTEGRITY_UNAVAILABLE","WORK_BUDGET_EXCEEDED","FLOOD_WAIT","TELEGRAM_UNAVAILABLE","CLIENT_REVOKED","CONSENT_DENIED","CONSENT_UNAVAILABLE","POLICY_CHANGED","DEADLINE_EXCEEDED","UNSUPPORTED_RELEASE_PROFILE","INTERNAL_ERROR"]},
+        "message": {"type": "string"},
+        "retryable": {"type": "boolean"},
+        "retry_after_seconds": {"type": ["integer", "null"], "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

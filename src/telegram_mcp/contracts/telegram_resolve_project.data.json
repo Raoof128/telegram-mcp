@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "required": ["matches", "ambiguous"],
+  "properties": {
+    "matches": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["project_ref", "display_name", "egress_level", "can_cross_search", "excerpt_max_codepoints", "match_kind"],
+        "properties": {
+          "project_ref": {"type": "string", "pattern": "^tpr_[a-z2-7]{26}$"},
+          "display_name": {"type": "string"},
+          "egress_level": {"enum": ["metadata_only", "excerpt", "full_text"]},
+          "can_cross_search": {"type": "boolean"},
+          "excerpt_max_codepoints": {"type": ["integer", "null"], "minimum": 64, "maximum": 4000},
+          "match_kind": {"enum": ["exact_display_name", "exact_slug", "prefix_display_name", "substring_display_name"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "ambiguous": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

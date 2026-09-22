@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "required": ["project_ref", "message_ref"],
+  "properties": {
+    "project_ref": {"type": "string", "pattern": "^tpr_[a-z2-7]{26}$"},
+    "message_ref": {"type": "string", "pattern": "^tgm_[a-z2-7]{26}$"},
+    "before": {"type": "integer", "minimum": 0, "maximum": 50, "default": 10},
+    "after": {"type": "integer", "minimum": 0, "maximum": 50, "default": 10}
+  },
+  "additionalProperties": false
+}

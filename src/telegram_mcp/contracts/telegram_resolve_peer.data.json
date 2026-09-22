@@ -1,0 +1,33 @@
+{
+  "type": "object",
+  "required": ["project", "matches", "ambiguous"],
+  "properties": {
+    "project": {
+      "type": "object",
+      "required": ["project_ref", "display_name"],
+      "properties": {
+        "project_ref": {"type": "string", "pattern": "^tpr_[a-z2-7]{26}$"},
+        "display_name": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "matches": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["peer_ref", "display_name", "username", "chat_type", "match_kind"],
+        "properties": {
+          "peer_ref": {"type": "string", "pattern": "^tgp_[a-z2-7]{26}$"},
+          "display_name": {"type": "string"},
+          "username": {"type": ["string", "null"]},
+          "chat_type": {"enum": ["private", "group", "supergroup", "channel"]},
+          "match_kind": {"enum": ["exact_display_name", "exact_username", "prefix_display_name", "substring_display_name"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "ambiguous": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

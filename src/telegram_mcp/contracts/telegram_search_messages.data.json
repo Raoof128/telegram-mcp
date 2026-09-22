@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "required": ["project", "results", "search_scope"],
+  "properties": {
+    "project": {
+      "type": "object",
+      "required": ["project_ref", "display_name"],
+      "properties": {
+        "project_ref": {"type": "string", "pattern": "^tpr_[a-z2-7]{26}$"},
+        "display_name": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "results": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": ["origin_project_refs", "peer_ref", "peer_display_name", "message_ref", "sender_kind", "sender_display_name", "sent_at", "text", "text_truncated", "has_context"],
+        "properties": {
+          "origin_project_refs": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^tpr_[a-z2-7]{26}$"}},
+          "peer_ref": {"type": "string", "pattern": "^tgp_[a-z2-7]{26}$"},
+          "peer_display_name": {"type": "string"},
+          "message_ref": {"type": "string", "pattern": "^tgm_[a-z2-7]{26}$"},
+          "sender_kind": {"enum": ["user", "channel", "chat", "anonymous_admin", "service", "unknown"]},
+          "sender_display_name": {"type": ["string", "null"]},
+          "sent_at": {"type": "string", "format": "date-time"},
+          "text": {"type": ["string", "null"]},
+          "text_truncated": {"type": "boolean"},
+          "has_context": {"type": "boolean"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "search_scope": {"enum": ["peer", "project"]}
+  },
+  "additionalProperties": false
+}

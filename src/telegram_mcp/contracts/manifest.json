@@ -1,0 +1,124 @@
+{
+  "annotations": {
+    "telegram_cross_project_search": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "requiresUserInteraction": true
+    },
+    "telegram_get_context": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "requiresUserInteraction": true
+    },
+    "telegram_get_messages": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "requiresUserInteraction": true
+    },
+    "telegram_get_unread": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "requiresUserInteraction": true
+    },
+    "telegram_list_chats": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "requiresUserInteraction": true
+    },
+    "telegram_list_projects": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "requiresUserInteraction": true
+    },
+    "telegram_resolve_peer": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "requiresUserInteraction": true
+    },
+    "telegram_resolve_project": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "requiresUserInteraction": true
+    },
+    "telegram_search_messages": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "requiresUserInteraction": true
+    },
+    "telegram_status": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "requiresUserInteraction": false
+    }
+  },
+  "descriptions": {
+    "telegram_cross_project_search": "Search explicitly across two to eight gateway projects.",
+    "telegram_get_context": "Retrieve messages around an anchor message in one peer.",
+    "telegram_get_messages": "Retrieve bounded messages from one peer in one project.",
+    "telegram_get_unread": "List unread conversations in one explicit gateway project.",
+    "telegram_list_chats": "List chats in one explicit gateway project.",
+    "telegram_list_projects": "List enabled gateway project namespaces the client may read.",
+    "telegram_resolve_peer": "Resolve a chat peer within one explicit gateway project.",
+    "telegram_resolve_project": "Resolve an authorised gateway project by text without auto-choosing.",
+    "telegram_search_messages": "Search messages within one project or peer.",
+    "telegram_status": "Report gateway Telegram access and non-sensitive capability information."
+  },
+  "files": [
+    "error.json",
+    "meta.json",
+    "telegram_cross_project_search.data.json",
+    "telegram_cross_project_search.input.json",
+    "telegram_get_context.data.json",
+    "telegram_get_context.input.json",
+    "telegram_get_messages.data.json",
+    "telegram_get_messages.input.json",
+    "telegram_get_unread.data.json",
+    "telegram_get_unread.input.json",
+    "telegram_list_chats.data.json",
+    "telegram_list_chats.input.json",
+    "telegram_list_projects.data.json",
+    "telegram_list_projects.input.json",
+    "telegram_resolve_peer.data.json",
+    "telegram_resolve_peer.input.json",
+    "telegram_resolve_project.data.json",
+    "telegram_resolve_project.input.json",
+    "telegram_search_messages.data.json",
+    "telegram_search_messages.input.json",
+    "telegram_status.data.json",
+    "telegram_status.input.json"
+  ],
+  "source": "telegram-mcp-v0.1.10-final-engineering-spec.md",
+  "source_sha256": "36b67f488415f2ab1c44b8d906de7f192fbe0dc562a2aeac76938b24c4a61b0a",
+  "tools": [
+    "telegram_cross_project_search",
+    "telegram_get_context",
+    "telegram_get_messages",
+    "telegram_get_unread",
+    "telegram_list_chats",
+    "telegram_list_projects",
+    "telegram_resolve_peer",
+    "telegram_resolve_project",
+    "telegram_search_messages",
+    "telegram_status"
+  ]
+}

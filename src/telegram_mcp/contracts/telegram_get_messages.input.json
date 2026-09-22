@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "required": ["project_ref", "peer_ref"],
+  "properties": {
+    "project_ref": {"type": "string", "pattern": "^tpr_[a-z2-7]{26}$"},
+    "peer_ref": {"type": "string", "pattern": "^tgp_[a-z2-7]{26}$"},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
+    "cursor": {"type": ["string", "null"], "pattern": "^tgc_[a-z2-7]{26}$"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "required": ["connected", "authorised", "account_ref", "account_label", "read_scope_mode", "policy_epoch", "security_epoch", "security_locked", "disclosure_proof_key_id", "disclosure_proof_public_key", "capabilities"],
+  "properties": {
+    "connected": {"type": "boolean"},
+    "authorised": {"type": "boolean"},
+    "account_ref": {"type": ["string", "null"], "pattern": "^tga_[a-z2-7]{26}$"},
+    "account_label": {"type": ["string", "null"]},
+    "read_scope_mode": {"type": ["string", "null"], "enum": ["allowlist", "all_cloud_chats", null]},
+    "policy_epoch": {"type": ["integer", "null"], "minimum": 0},
+    "security_epoch": {"type": "integer", "minimum": 1},
+    "security_locked": {"type": "boolean"},
+    "disclosure_proof_key_id": {"type": "string", "minLength": 1, "maxLength": 160},
+    "disclosure_proof_public_key": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
+    "capabilities": {
+      "type": "object",
+      "required": ["read_chats", "search_messages", "project_namespaces", "cross_project_search", "project_selection_required", "proof_carrying_retrieval", "egress_profiles", "exposure_budgets", "tamper_evident_audit", "emergency_lock", "write_messages", "attachments", "secret_chats"],
+      "properties": {
+        "read_chats": {"type": "boolean"},
+        "search_messages": {"type": "boolean"},
+        "project_namespaces": {"const": true},
+        "cross_project_search": {"const": true},
+        "project_selection_required": {"const": true},
+        "proof_carrying_retrieval": {"const": true},
+        "egress_profiles": {"const": true},
+        "exposure_budgets": {"const": true},
+        "tamper_evident_audit": {"const": true},
+        "emergency_lock": {"const": true},
+        "write_messages": {"const": false},
+        "attachments": {"const": false},
+        "secret_chats": {"const": false}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
