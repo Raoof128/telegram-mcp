@@ -35,6 +35,12 @@ __all__ = [
     "validate_setting",
 ]
 
+_DEGRADED_REASONS = ("anchor_refresh_failure", "chain_verify_failure", "anchor_read_failure")
+_ANCHOR_PROVIDERS = ("file_0600", "macos_system_keychain")
+# A bare filename under the daemon's own anchor directory: no separators, no
+# traversal, and nothing that could carry prose.
+_ANCHOR_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
+_TDR_OR_EMPTY = re.compile(r"(tdr_[a-z2-7]{26})?\Z")
 _VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
 _RELEASE_PROFILES = ("safe_demo", "local_dev", "production")
 
@@ -48,6 +54,7 @@ class SettingSpec:
     minimum: int | None = None
     maximum: int | None = None
     choices: tuple[str, ...] | None = None
+    pattern: re.Pattern[str] | None = None
     origin: str = "spec"  # "spec" | "impl"
     phase: int = 2
 
@@ -86,6 +93,37 @@ SETTINGS_REGISTRY: dict[str, SettingSpec] = {
     "audit.checkpoint_cadence_seconds": SettingSpec(
         "int", 3_600, minimum=60, maximum=3_600, phase=3
     ),
+    # --- Phase 3: audit integrity (design §6.3, §6.8) ----------------------
+    # A tdr_ ref and a fixed reason code are not content, so the registry's
+    # prohibition is respected: neither can carry a message body or a query.
+    "audit.integrity_degraded": SettingSpec("int", 0, minimum=0, maximum=1, origin="spec", phase=3),
+    "audit.degraded_disclosure_ref": SettingSpec(
+        "str", "", pattern=_TDR_OR_EMPTY, origin="spec", phase=3
+    ),
+    "audit.degraded_reason": SettingSpec(
+        "str", "", choices=("", *_DEGRADED_REASONS), origin="spec", phase=3
+    ),
+    # The spec's reference config declares macos_system_keychain; this build
+    # uses the reviewed 0600-file fallback, so the declaration follows it.
+    # A manifest that claims a provider the build does not use is a lie in
+    # the artifact that exists to prevent lies.
+    "audit.external_anchor_provider": SettingSpec(
+        "str", "file_0600", choices=_ANCHOR_PROVIDERS, origin="impl", phase=3
+    ),
+    "audit.external_anchor_ref": SettingSpec(
+        "str", "audit-head-anchor.json", pattern=_ANCHOR_REF_RE, origin="impl", phase=3
+    ),
+    # --- Phase 3: retention (spec §32 privacy block) -----------------------
+    # Phase 3 sets the values; Phase 5 enforces the purge schedules and must
+    # not be handed values it cannot satisfy.
+    "retention.disclosure_receipt_days": SettingSpec("int", 180, minimum=1, maximum=3_650, phase=3),
+    "retention.exposure_ledger_days": SettingSpec("int", 30, minimum=1, maximum=3_650, phase=3),
+    "retention.audit_events_days": SettingSpec("int", 30, minimum=1, maximum=3_650, phase=3),
+    "retention.audit_checkpoint_days": SettingSpec("int", 180, minimum=1, maximum=3_650, phase=3),
+    "retention.verification_key_grace_days": SettingSpec(
+        "int", 30, minimum=1, maximum=3_650, phase=3
+    ),
+    "retention.message_ref_days": SettingSpec("int", 180, minimum=1, maximum=3_650, phase=3),
     # non-secret release metadata.
     "release.profile": SettingSpec("str", "safe_demo", choices=_RELEASE_PROFILES),
     "release.version": SettingSpec("str", "0.1.10", origin="impl"),
@@ -113,6 +151,8 @@ def validate_setting(key: str, value: Any) -> Any:
         raise ValueError(f"setting {key} must be a string")  # noqa: TRY004 -- uniform ValueError on settings validation
     if spec.choices is not None and value not in spec.choices:
         raise ValueError(f"setting {key} is not an allowed value")
+    if spec.pattern is not None and spec.pattern.fullmatch(value) is None:
+        raise ValueError(f"setting {key} does not match its allowed shape")
     if key == "release.version" and _VERSION_RE.fullmatch(value) is None:
         raise ValueError("setting release.version must be semantic")
     if len(value) > 128:

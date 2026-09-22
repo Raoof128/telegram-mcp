@@ -242,9 +242,29 @@ def test_typed_validators_reject_bad_values(key, value):
 
 
 def test_no_registry_key_can_carry_telegram_content():
+    """Tie the guarantee to the type, not the spelling.
+
+    An ``int`` row cannot hold prose whatever it is called, which is why
+    ``retention.message_ref_days`` is safe. Every ``str`` row must be closed
+    by ``choices`` or a ``pattern``, so no free-text value can be written
+    through this module at all — a stronger claim than the name heuristic,
+    which only ever caught careless naming.
+    """
     forbidden = ("query", "message", "body", "caption", "username", "phone", "url", "text")
-    for key in SETTINGS_REGISTRY:
-        assert not any(word in key.lower() for word in forbidden)
+    for key, spec in SETTINGS_REGISTRY.items():
+        if spec.kind == "str":
+            assert not any(word in key.lower() for word in forbidden), key
+            closed = spec.choices is not None or spec.pattern is not None
+            assert closed or key == "release.version", key
+
+
+def test_no_free_text_string_can_be_written(conn):
+    prose = "the invoice thread with Dana"
+    for key, spec in SETTINGS_REGISTRY.items():
+        if spec.kind != "str":
+            continue
+        with pytest.raises(ValueError):
+            set_setting(conn, key, prose)
 
 
 def test_checkpoint_cadence_cannot_exceed_the_spec_26_5_bound():
@@ -260,3 +280,38 @@ def test_checkpoint_cadence_cannot_exceed_the_spec_26_5_bound():
         validate_setting("audit.checkpoint_cadence_events", 501)
     with pytest.raises(ValueError):
         validate_setting("audit.checkpoint_cadence_seconds", 3_601)
+
+
+def test_phase_three_settings_rows_exist_with_the_spec_defaults(conn):
+    assert get_setting(conn, "audit.integrity_degraded") == 0
+    assert get_setting(conn, "audit.external_anchor_provider") == "file_0600"
+    assert get_setting(conn, "retention.disclosure_receipt_days") == 180
+    assert get_setting(conn, "retention.exposure_ledger_days") == 30
+    assert get_setting(conn, "retention.audit_events_days") == 30
+    assert get_setting(conn, "retention.audit_checkpoint_days") == 180
+    assert get_setting(conn, "retention.verification_key_grace_days") == 30
+    assert get_setting(conn, "retention.message_ref_days") == 180
+
+
+def test_exposure_ledger_retention_cannot_be_shorter_than_the_window():
+    # Spec §23C.1: retention MUST be at least the longest rolling window.
+    # The window is capped at 1440 minutes, which is one day.
+    with pytest.raises(ValueError):
+        validate_setting("retention.exposure_ledger_days", 0)
+
+
+def test_degraded_reason_is_a_closed_set():
+    assert validate_setting("audit.degraded_reason", "anchor_refresh_failure")
+    with pytest.raises(ValueError):
+        validate_setting("audit.degraded_reason", "something happened")
+
+
+def test_degraded_disclosure_ref_accepts_only_a_tdr_ref():
+    assert validate_setting("audit.degraded_disclosure_ref", "tdr_" + "a" * 26)
+    with pytest.raises(ValueError):
+        validate_setting("audit.degraded_disclosure_ref", "the invoice thread")
+
+
+def test_anchor_provider_is_a_closed_set():
+    with pytest.raises(ValueError):
+        validate_setting("audit.external_anchor_provider", "dropbox")
