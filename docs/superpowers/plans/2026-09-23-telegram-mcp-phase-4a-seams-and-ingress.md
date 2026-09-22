@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Revision:** 2. Revision 1 was executed task by task in a throwaway worktree (699 passed with minimal fixes). Every defect that run found is fixed in place, along with three the static review found; they are listed at the end under "What revision 2 changed".
+
 **Goal:** `telegram_list_projects` and `telegram_resolve_project` succeed through an authenticated loopback MCP ingress, a real consent prompt and the Phase-3 coordinator, producing a real receipt, ledger rows, one audit event and a refreshed anchor. No Telegram network code exists yet.
 
 **Architecture:** The ingress authenticates a `tgml1` bearer before parsing the body and resolves a `PrincipalContext` (identity only). `SensitiveDispatcher` hands validated arguments to the coordinator. `CoordinatorAuthority` reads live SQLite authority. `CoordinatorConsent` drives the Phase-2 broker through a new daemon-side prompter over the live RV-1 session. `MetadataReadAdapter` produces the two catalogue payloads. `runtime/composition.py` is the only place these are wired together.
@@ -22,6 +24,8 @@
 - §27.1 error enum only. Consent timeout, denial, cancellation and agent loss are `CONSENT_DENIED`; no agent connected and the consent rate limit are `CONSENT_UNAVAILABLE`.
 - Bad bearers → HTTP 401, rate limit → HTTP 429 + `Retry-After`, both with fixed bodies and before the body is parsed.
 - Every mutating admin command is presence-gated (§33).
+- **Plan code is not guaranteed formatter-clean.** Before each commit gate, run `uv run ruff format <touched files>` and `uv run ruff check --fix <touched files>`, then read the diff: formatting and import order only, never logic. Executing revision 1 showed every task's gate failing on formatting alone.
+- **One disclosure in flight per client.** Budget buckets are keyed by client, and the exposure digest must match exactly (§9.8, §23C.3), so a sibling call from the same client moves the snapshot. §28 sets `max_concurrent_per_client` as a ceiling the implementation MAY lower; 4a uses 1 (Task 9).
 - Commit only on a green gate. Never mask a pipeline's exit status (no `| tail` on the command whose status decides a commit).
 - Every commit message ends with `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`.
 
@@ -36,9 +40,10 @@
 ## Review Focus
 
 1. **A revoke that lands while the prompt is open.** The operator revokes the client's grant (or disables the project) during the 45-second prompt. Expected: step 8 refuses with `POLICY_CHANGED`/`CLIENT_REVOKED`, no receipt, reservation released. Owned by Task 11 (`test_grant_revoked_during_prompt_refuses`).
-2. **Two clients at once.** Codex and Claude Code call at the same moment with different bearers. Expected: each sees only its own grants, and each gets its own prompt; neither approval can satisfy the other. Owned by Task 9 (`test_concurrent_bearers_resolve_to_their_own_principal`) and Task 6 (`test_two_prompts_never_share_an_approval`).
+2. **Two clients at once.** Codex and Claude Code call at the same moment with different bearers. Expected: each sees only its own grants, and each gets its own prompt; neither approval can satisfy the other. Owned by Task 11 (`test_concurrent_bearers_resolve_to_their_own_principal`) and Task 6 (`test_two_prompts_never_share_an_approval`).
 3. **A late approval after a timeout.** The operator taps approve at second 46. Expected: the call has already returned `CONSENT_DENIED`, and the late frame is discarded instead of being matched to the next prompt. Owned by Task 6 (`test_a_late_answer_is_never_matched_to_the_next_prompt`).
 4. **Unicode project names.** Persian and mixed-direction display names, and look-alike names that differ only by case or composition. Expected: NFC + casefold matching, deterministic order, `ambiguous=true` whenever more than one candidate survives. Owned by Task 7 (`test_resolve_matches_persian_and_composed_forms`).
+6. **Three calls at once from the same client.** Executing revision 1 produced four prompts for three calls, every one approved, and one call still refused. Expected: exactly three prompts, three successes. Owned by Task 9 (per-client serialisation) and Task 11 (`test_same_client_concurrency_prompts_once_per_call`).
 5. **A disabled client holding a still-valid lease.** Expected: HTTP 401 on the next request, even inside the lease's 60 seconds. Owned by Task 9 (`test_disabled_client_is_refused_inside_lease_lifetime`).
 
 ---
@@ -694,6 +699,16 @@ async def test_side_keys_reach_meta_and_are_never_measured(tmp_path):
     assert receipt_bytes == bytes_disclosed(outcome.data)
 
 
+async def test_meta_partial_is_the_signed_partial(tmp_path):
+    coordinator, _conn, _adapter = build_coordinator(tmp_path)
+    outcome = await coordinator.disclose(
+        tool_name="telegram_get_messages",
+        arguments={},
+        adapter=_SidecarAdapter({"_next_cursor": "tgc_" + "b" * 26}),
+    )
+    assert outcome.meta["partial"] is outcome.meta["disclosure"]["proof_payload"]["partial"] is False
+
+
 async def test_an_unknown_side_key_fails_closed(tmp_path):
     coordinator, conn, _adapter = build_coordinator(tmp_path)
     outcome = await coordinator.disclose(
@@ -778,7 +793,7 @@ class RetrievalAdapter(Protocol):
         ...  # pragma: no cover - protocol shape only
 ```
 
-(c) `_prepare_proof` takes coverage as a parameter. Change its signature to `def _prepare_proof(self, tool_name, data, snapshot, approval, coverage)` and delete its line `coverage = data.get("_coverage") if tool_name in _SEARCH_TOOLS else None`.
+(c) `_prepare_proof` takes coverage as a parameter. Change its signature to `def _prepare_proof(self, tool_name: str, data: Mapping[str, Any], snapshot: Any, approval: Any, coverage: Mapping[str, Any] | None) -> dict[str, Any]` (keep the annotations, or mypy stops checking the body) and delete its line `coverage = data.get("_coverage") if tool_name in _SEARCH_TOOLS else None`.
 
 (d) Replace `_build_meta` with:
 
@@ -793,7 +808,7 @@ class RetrievalAdapter(Protocol):
                 "non_instructional_gateway_metadata" if catalogue else "untrusted_external_content"
             ),
             "truncated": False,
-            "partial": bool(prepared["partial"]) or next_cursor is not None,
+            "partial": bool(prepared["partial"]),
             "next_cursor": next_cursor,
             "disclosure": {
                 "receipt_ref": prepared["disclosure_ref"],
@@ -806,7 +821,7 @@ class RetrievalAdapter(Protocol):
         }
 ```
 
-`partial` is true when more pages remain. That matches §23D's "a non-null `next_cursor` implies an incomplete result", and the receipt's own `partial` field still comes from the snapshot.
+`meta.partial` is the signed receipt's `partial`, never recomputed here. A next page is not a partial result: the spec ties `partial=true` to bounded work that stopped early (§21.5, §22.4) and to search cursors specifically (§23D, CT-148), and the 4c search engine sets it through its own snapshot and coverage path. Deriving it from `next_cursor` would make a paginated `list_projects` claim to be partial while its signed proof says it is not.
 
 (e) Replace the signature of `disclose` and steps 1–9 up to `measure_and_prepare_proof` with:
 
@@ -1207,7 +1222,9 @@ def load_view(conn: sqlite3.Connection, *, principal_id: int, account_id: int) -
         clients=clients,
         projects=projects,
         grants=grants,
-        memberships=memberships,
+        # A comprehension, not the variable: dict is invariant, and make_view
+        # expects dict[str, set[str] | frozenset[str]].
+        memberships={ref: peers for ref, peers in memberships.items()},
         owner_allows=allows,
         owner_denies=denies,
         policy_epoch=int(policy[0]) if policy else 0,
@@ -2226,6 +2243,7 @@ async def _world(answer="approve"):
     d_reader, d_writer = await asyncio.open_connection(sock=left)
     a_reader, a_writer = await asyncio.open_connection(sock=right)
     session = asyncio.create_task(prompter.attach(d_reader, d_writer))
+    await asyncio.sleep(0)  # let attach() register the session before anyone prompts
 
     async def agent():
         while True:
@@ -2298,6 +2316,20 @@ async def test_denial_and_timeout_are_denials_and_leave_nothing_pending():
         session.cancel(), helper.cancel()
 
 
+async def test_cancellation_mid_prompt_propagates_and_leaves_nothing_pending():
+    broker, prompter, session, helper = await _world(answer="silent")
+    consent = CoordinatorConsent(broker, prompter, wait_s=30)
+    task = asyncio.create_task(_ask(consent))
+    while broker.pending_count() == 0:
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)  # the PROMPT frame is on the wire
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert broker.pending_count() == 0
+    session.cancel(), helper.cancel()
+
+
 async def test_no_agent_is_unavailable_and_leaves_nothing_pending():
     stub = StubSigner(seed=0x07)
     broker = ConsentBroker(challenge_key=b"\x01" * 32, agent_verify=stub.verify, runtime_id=b"\x02" * 16)
@@ -2323,7 +2355,7 @@ import asyncio
 from telegram_mcp.consent.broker import ConsentBroker, ConsentError, ConsumedChallenge
 from telegram_mcp.consent.challenge import display_digest
 from telegram_mcp.consent.display import build_display
-from telegram_mcp.consent.prompter import Prompter, PromptDenied, PromptUnavailable
+from telegram_mcp.consent.prompter import PromptDenied, Prompter, PromptUnavailable
 from telegram_mcp.disclosure.coordinator import ConsentRefusal
 from telegram_mcp.disclosure.exposure import exposure_digest
 ```
@@ -2431,7 +2463,7 @@ The display test expects `"2->3 records"` because it projects 3 records with a w
 - [ ] **Step 9: Run them and watch them pass**
 
 Run: `uv run pytest tests/unit/test_prompter.py tests/integration/test_coordinator_consent.py -q`
-Expected: 10 passed.
+Expected: 11 passed.
 
 - [ ] **Step 10: Commit**
 
@@ -2687,6 +2719,8 @@ class MetadataReadAdapter:
         return {"matches": matches, "ambiguous": len(survivors) > 1}
 ```
 
+`list_projects` mints its next-page cursor during retrieval, before the disclosure commits. If the commit is then refused, the row outlives its call until its 15-minute TTL. That is harmless and deliberate: the row holds a page number and binding digests, no content, and resuming it is a new sensitive call with its own consent, reservation and receipt. Minting after the commit would put a SQLite write between the anchor and the payload leaving, which is exactly the window the disclosure barrier exists to keep empty.
+
 - [ ] **Step 4: Run the tests and watch them pass**
 
 Run: `uv run pytest tests/unit/test_metadata_adapter.py -q`
@@ -2781,7 +2815,7 @@ def test_every_handler_that_writes_refuses_without_presence(router):
 
 
 def test_create_grant_and_list(router):
-    conn, admin = router
+    _conn, admin = router
     created = _call(admin, "project create", slug="ops", display_name="Ops")
     ref = created["data"]["project_ref"]
     granted = _call(admin, "project grant-client", project_ref=ref, client_ref=CLIENT, egress_level="excerpt", excerpt_max_codepoints=200)
@@ -2839,7 +2873,7 @@ Expected: `ModuleNotFoundError: No module named 'telegram_mcp.ipc.handlers'`.
 
 - [ ] **Step 3: Implement the presence set**
 
-In `src/telegram_mcp/ipc/admin.py`, replace line 130 with:
+In `src/telegram_mcp/ipc/admin.py`, replace line 130 **and the comment directly above it** (which says only lock/unlock are gated) with:
 
 ```python
 # §33: "mutations remain separate user-presence-gated commands". Two reads are
@@ -2942,7 +2976,7 @@ def _args(args: dict[str, Any], allowed: set[str]) -> dict[str, Any]:
 
 def _display_name(value: Any) -> str:
     if not isinstance(value, str) or not 1 <= len(value) <= 80:
-        raise ValueError("display_name must be 1-80 characters")  # noqa: TRY004 -- uniform ValueError on admin validation
+        raise ValueError("display_name must be 1-80 characters")
     if any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in value):
         raise ValueError("display_name must not contain control characters")
     return value
@@ -3284,7 +3318,7 @@ from __future__ import annotations
 import ipaddress
 import math
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from typing import Any
 
@@ -3322,7 +3356,9 @@ DEFAULT_LIMITS: dict[str, int] = {
 _HEADERS = [(b"content-type", b"application/json"), (b"cache-control", b"private, no-store")]
 
 
-async def _refuse(send: Any, status: int, body: bytes, extra: list[tuple[bytes, bytes]] = ()) -> None:  # type: ignore[assignment]
+async def _refuse(
+    send: Any, status: int, body: bytes, extra: Sequence[tuple[bytes, bytes]] = ()
+) -> None:
     headers = [*_HEADERS, (b"content-length", str(len(body)).encode()), *extra]
     await send({"type": "http.response.start", "status": status, "headers": headers})
     await send({"type": "http.response.body", "body": body})
@@ -3521,20 +3557,38 @@ _logger = logging.getLogger("telegram_mcp.sensitive")
 
 
 class SensitiveDispatcher:
+    """One disclosure in flight per client (spec §28 ceiling, lowered to 1).
+
+    Budget buckets are per client and the approved exposure digest must match
+    exactly at step 6 (§9.8, §23C.3). A sibling call from the same client moves
+    that snapshot twice, once when it reserves and again when it commits, so
+    concurrent same-client calls would re-prompt and then refuse by
+    construction: executing revision 1 of this plan produced four prompts
+    for three calls, all approved, and one refusal. Serialising per client
+    removes the collision. Prompts are serial anyway, so the only overlap
+    lost is one call's retrieval against the next call's prompt. Different
+    clients never share a bucket and are not serialised against each other.
+    """
+
     def __init__(
         self, disclose: Callable[..., Awaitable[Any]], *, max_response_bytes: int = 65536
     ) -> None:
         self._disclose = disclose
         self._max = max_response_bytes
+        self._per_client: dict[int, asyncio.Lock] = {}
 
     async def call(
         self, name: str, validated: Mapping[str, Any], principal: Any
     ) -> types.CallToolResult:
+        lock = self._per_client.setdefault(principal.client_id, asyncio.Lock())
         try:
-            outcome = await self._disclose(tool_name=name, arguments=validated, principal=principal)
+            async with lock:
+                outcome = await self._disclose(
+                    tool_name=name, arguments=validated, principal=principal
+                )
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
-        except Exception:  # noqa: BLE001 -- unexpected failures are bounded INTERNAL_ERROR
+        except Exception:
             _logger.exception("sensitive dispatch failed", extra={"tool": name})
             return error_result("INTERNAL_ERROR")
         if outcome.released:
@@ -3850,7 +3904,7 @@ async def serve_consent(
     )
 ```
 
-`verify_lease` takes `seeds: Mapping[str, bytes]` and only calls `.get`. `_Seeds` satisfies that use. If mypy objects to the type, annotate the `seeds` argument with `# type: ignore[arg-type]  -- read-only lookup, see _Seeds`. Do not widen `verify_lease`.
+`verify_lease` takes `seeds: Mapping[str, bytes]` and only calls `.get`. `_Seeds` satisfies that use. mypy rejects `_Seeds` as a `Mapping[str, bytes]`. Put `# type: ignore[arg-type]  # read-only lookup, see _Seeds` on the `seeds=seeds,` line. The reason must be its own `#` comment: mypy rejects `-- reason` after the bracket as invalid syntax. Do not widen `verify_lease`.
 
 - [ ] **Step 7: Write the failing ingress tests**
 
@@ -3933,7 +3987,7 @@ async def test_a_good_bearer_reaches_status(ingress):
 
 
 async def test_every_bad_bearer_gets_identical_bytes_before_parsing(ingress):
-    conn, _services, port, seed = ingress
+    _conn, _services, port, seed = ingress
     import time
     bad = {
         "missing": None,
@@ -3964,6 +4018,13 @@ async def test_duplicate_keys_are_refused_after_auth(ingress):
     assert response.status_code == 400
 
 
+async def test_an_oversize_body_is_refused_and_charges_nothing(ingress):
+    conn, _services, port, seed = ingress
+    response = await _call(port, _lease(seed), raw=b'{"pad":"' + b"x" * 70_000 + b'"}')
+    assert response.status_code >= 400
+    assert conn.execute("SELECT count(*) FROM disclosure_receipts").fetchone()[0] == 0
+
+
 async def test_the_rate_limit_is_429_with_retry_after(ingress):
     _conn, _services, port, seed = ingress
     statuses = [(await _call(port, _lease(seed))).status_code for _ in range(4)]
@@ -3986,7 +4047,7 @@ Review Focus #2 (two clients at once) is proven in Task 11 by observable behavio
 - [ ] **Step 8: Run the ingress tests and watch them pass**
 
 Run: `uv run pytest tests/unit/test_http_guards.py tests/integration/test_ingress.py -q`
-Expected: 9 passed.
+Expected: 10 passed.
 
 - [ ] **Step 9: Commit**
 
@@ -4029,7 +4090,7 @@ from pathlib import Path
 
 from telegram_mcp.telegram.service import TelegramReadService
 
-SRC = Path("src/telegram_mcp")
+SRC = Path(__file__).resolve().parents[2] / "src" / "telegram_mcp"
 PACKAGE = "telegram_mcp"
 ADAPTER = SRC / "telegram" / "telethon_adapter.py"
 COMPOSITION = SRC / "runtime" / "composition.py"
@@ -4047,7 +4108,12 @@ CONCRETE_BACKENDS = {"telegram_mcp.telegram.metadata", "telegram_mcp.telegram.te
 
 
 def _modules():
-    for path in SRC.rglob("*.py"):
+    paths = sorted(SRC.rglob("*.py"))
+    # Anchored to this file, and non-vacuous: executing revision 1 showed that
+    # a relative SRC run from another directory made seven guards pass on an
+    # empty file list.
+    assert len(paths) > 40, f"source tree not found at {SRC}"
+    for path in paths:
         yield path, ast.parse(path.read_text(encoding="utf-8"))
 
 
@@ -4155,7 +4221,7 @@ Expected: 8 passed. If `test_the_demo_server_cannot_reach_sensitive_dispatch` fa
 
 - [ ] **Step 3: Prove each guard can fail**
 
-For each guard, make a throwaway edit that it must catch, run the test, see it fail, and revert with `git checkout -- src`:
+Start from a clean tree (`git diff --quiet src` must succeed; Tasks 1–9 are committed). For each guard, make a one-line throwaway edit that it must catch, run the test, see it fail, and revert **that one file** with `git checkout -- <file>`. Never `git checkout -- src`: before the per-task commits it wipes every task's work.
 1. Add `import telethon` to `src/telegram_mcp/dispatch.py`.
 2. Add `from telegram_mcp.telegram.metadata import MetadataReadAdapter` to `src/telegram_mcp/server.py`.
 3. Add `def read_history(): ...` to `src/telegram_mcp/telegram/service.py`.
@@ -4345,6 +4411,13 @@ async def test_concurrent_bearers_resolve_to_their_own_principal(world):
     assert world["agent"].prompts == 2
 
 
+async def test_same_client_concurrency_prompts_once_per_call(world):
+    results = await asyncio.gather(*(call(world, CODEX, "telegram_list_projects", {}) for _ in range(3)))
+    assert all(body["ok"] for body in results), results
+    assert world["agent"].prompts == 3  # no re-prompt: the snapshot never moved under a call
+    assert counts(world["conn"]) == (3, 3, 3)
+
+
 async def test_grant_revoked_during_prompt_refuses(world):
     def revoke():
         world["admin"].dispatch({"cmd": "project revoke-client", "args": {"presence": PROOF, "project_ref": world["ops"], "client_ref": CODEX}})
@@ -4373,6 +4446,34 @@ async def test_no_agent_is_unavailable_at_once(world):
     assert time.monotonic() - started < 5
 
 
+async def test_cancellation_during_consent_never_reaches_retrieval(world):
+    from telegram_mcp.runtime.identity import resolve_principal
+
+    world["agent"].mode = "silent"
+    services = world["services"]
+    task = asyncio.create_task(
+        services.coordinator.disclose(
+            tool_name="telegram_list_projects",
+            arguments={"limit": 20},
+            adapter=_Exploding(),
+            principal=resolve_principal(world["conn"], CODEX),
+        )
+    )
+    while world["agent"].prompts == 0:
+        await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert counts(world["conn"]) == (0, 0, 0)
+    assert services.broker.pending_count() == 0
+    assert services.coordinator._ledger._reservations == {}
+
+
+class _Exploding:
+    async def retrieve(self, **_kwargs):
+        raise AssertionError("retrieval ran after a cancelled consent")
+
+
 async def test_the_other_seven_tools_still_refuse_honestly(world):
     body = await call(world, CODEX, "telegram_list_chats", {"project_ref": world["ops"]})
     assert body["error"]["code"] == "POLICY_UNCONFIGURED"
@@ -4384,7 +4485,7 @@ The timeout test uses `monkeypatch.setattr` on the consent seam's private wait, 
 - [ ] **Step 2: Run them and fix only real defects**
 
 Run: `uv run pytest tests/integration/test_phase4a_end_to_end.py -q`
-Expected: 7 passed. For any failure, apply the systematic-debugging discipline: read the full error and find the root cause before changing code. A schema failure in `success_result` means the payload or `meta` is wrong. Fix the producer, never the contract.
+Expected: 9 passed. For any failure, apply the systematic-debugging discipline: read the full error and find the root cause before changing code. A schema failure in `success_result` means the payload or `meta` is wrong. Fix the producer, never the contract.
 
 - [ ] **Step 3: The platform-gated Touch ID run**
 
@@ -4568,3 +4669,27 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 - **Deliberately not covered in 4a:** §6.2 runtime recorder, §6.4 Test DC leak sweep (4b); §4 (4c).
 - **Type consistency.** `approval.nonce` and `approval.exposure_snapshot_digest` (Task 1) are consumed in Tasks 3 and 6. The `CatalogueSnapshot` fields in Task 5 are read by Tasks 6 and 7. `mint_catalogue_cursor(snapshot, arguments, page)` matches `MetadataReadAdapter(mint_cursor=...)`. `issue(..., worst_case=...)` in Task 3 matches `CoordinatorConsent.issue` in Task 6.
 - **Known rough edge flagged in place:** the draft concurrency spy in Task 9 Step 7 is marked "do not write this". The real test lives in Task 11.
+
+## What revision 2 changed
+
+Revision 1 was applied verbatim in an isolated worktree, one task at a time, with every step's own commands run. The production logic held: no task's tests failed for a logic reason. These defects were found and fixed in place:
+
+| # | Where | Defect | Evidence | Fix |
+|---|---|---|---|---|
+| P1 | Every task | The commit gate failed on `ruff format --check` in every task: the plan's code blocks are not formatter-clean | executed gate | Global constraint: format and `check --fix` touched files, then review the diff |
+| P2 | Task 11, design | Three concurrent calls from one client gave four prompts, all approved, and one `CONSENT_UNAVAILABLE`. Buckets are per client and the digest must match exactly (§9.8, §23C.3), so a sibling call from the same client moves the snapshot by construction | executed probe | `SensitiveDispatcher` serialises per client (§28 ceiling lowered to 1, as §28 permits). New test asserts 3 prompts, 3 receipts |
+| P3 | Task 3 | `meta.partial` derived from `next_cursor` would contradict the signed receipt's `partial` and mislabel ordinary pages | §14.1A, §21.5, §22.4, CT-148 | `meta.partial` is the signed value. Regression test added |
+| P4 | Task 6 | The `CoordinatorConsent` harness prompted before `attach()` ran: 2 of 4 tests failed with `CONSENT_UNAVAILABLE` | executed | `await asyncio.sleep(0)` after starting the session |
+| P5 | Task 10 | `git checkout -- src` reverts every uncommitted task, not just the planted edit | executed | Revert the one planted file, from a clean tree |
+| P6 | Task 10 | The relative `SRC` path made seven of eight guards pass vacuously when run from another directory | executed | Anchor to `__file__` and assert the file list is non-empty |
+| P7 | Task 9 | `_refuse` gave a `list` parameter a `()` default and hid it behind `type: ignore`, which moved and fired once the line was formatted | mypy | `Sequence[...]` annotation, no ignore |
+| P8 | Task 9 | The suggested `# type: ignore[arg-type] -- reason` is invalid mypy syntax | mypy | The reason becomes its own `#` comment |
+| P9 | Task 4 | `make_view(memberships=...)`: dict invariance made mypy reject `dict[str, set[str]]` | mypy | Pass a comprehension |
+| P10 | Task 3 | Rewriting `_prepare_proof`'s signature dropped its annotations, and mypy stopped checking its body | mypy note | Annotated signature given in full |
+| P11 | Tasks 6, 8, 9 | Unsorted import, unused `noqa`s, unused test variables | ruff | Fixed in the code blocks |
+| P12 | Review Focus | Item 2 named the wrong owning task | read | Task 11 |
+| P13 | Tasks 6, 11 | Design §2.8 "cancellation during consent never reaches retrieval" had no test | read | A seam-level test and a whole-chain test with an adapter that fails if called |
+| P14 | Task 9 | Design §2.8 "oversize never reaches the dispatcher" had no test | read | A 70 KB body is refused and charges nothing |
+| P15 | Task 7 | The pre-commit cursor mint was undocumented | read | Rationale written in place: no content, resuming needs its own consent, and minting after commit would put a write inside the disclosure barrier |
+
+Checked and **not** a defect: the Phase-3 formal model has no digest-comparison step, so Task 3's compare-before-reserve reordering sits below its abstraction, and the model still passes 624/624 on the executed code. Every moved or renamed symbol's importers (`create_app`, `build_server`, `_descriptors`) are unaffected. The §37 prohibited words in current `src/` occur only in comments and docstrings, which the AST guard does not read.
