@@ -208,6 +208,14 @@ class BudgetLedger:
     created, and released before retrieval — never held across a Telegram
     call. Plan 3c converts a reservation into ledger rows inside its
     disclosure-commit transaction.
+
+    **One ledger belongs to one connection, and therefore to one thread.**
+    ``sqlite3`` connections are thread-bound, so a ledger shared across
+    threads fails inside ``get_setting`` before it reaches any budget logic.
+    The daemon is single-process asyncio, so concurrency here is interleaved
+    coroutines and the lock guards against re-entrancy rather than against
+    parallel threads. A future thread pool needs a ledger and a connection
+    per thread, not a shared one.
     """
 
     def __init__(self, conn: sqlite3.Connection, *, clock: Callable[[], float] = time.time) -> None:
