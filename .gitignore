@@ -10,8 +10,8 @@
 !.env.example
 secrets/
 
-# Runtime metadata
-runtime/
+# Runtime metadata (repo-root state dir only; src/telegram_mcp/runtime/ is source)
+/runtime/
 *.log
 
 # Python
