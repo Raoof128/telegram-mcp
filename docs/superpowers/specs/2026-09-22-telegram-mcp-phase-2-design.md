@@ -34,8 +34,13 @@ this design; the service account stays `telegram-mcpd` to avoid churn). One
 Python runtime per start, running as the service account: MCP ingress on 8766
 (bearer leases) and 8767 (mTLS, only in ChatGPT mode), authority modules,
 consent broker, admin Unix socket, and a fake Telegram adapter seam that Phase
-4 fills with the real adapter. Start modes: `start --local` (runtime + consent
-UI, for Codex/Claude), `start --chatgpt` (adds tunnel-client), `start --all`.
+4 fills with the real adapter. The interactive launcher (operator-owned) starts
+and stops three independent launchd jobs — runtime as `telegram-mcpd`,
+consent agent in the GUI session, tunnel as `telegram-mcp-tunnel` — escalating
+through interactive sudo per job; the runtime never spawns or owns its
+siblings. Start modes: `start --local` (runtime + consent UI, 8766 only, for
+Codex/Claude), `start --chatgpt` (adds tunnel-client, 8767 only), `start --all`
+(both listeners).
 
 Startup readiness ordering (normative; no listener before step 15, no tunnel
 polling before READY):
@@ -109,14 +114,18 @@ rows it requires; future private keys are not generated early:
 | lease-seed (per client) | HMAC-SHA-256 | runtime account |      yes | bearer lease MAC      |
 | tunnel TLS/mTLS keys | X.509/SPKI   | respective service accounts | yes | ingress 8767     |
 | agent approval key   | P-256 Secure Enclave | operator | device-bound | Touch ID signatures |
+| agent transport key  | Ed25519 software (operator keychain, no biometry) | operator | yes | rendezvous auth; starting MCP costs no biometric prompt (implementation row beyond the twelve spec purposes) |
 | disclosure/audit/backup keys | Ed25519/HMAC | runtime account | NO (Phase 3) | registry only |
 
 Daemon file-backed secrets are `0600` in the service account home (spec permits
 this with `doctor` validation). Key IDs are recomputed on load
 (`ed25519:`/`p256:`/`spki:sha256`).
 
-Pairing: the operator generates the agent Enclave key and exports its public
-key for the daemon to pin. The daemon's challenge public key is stored in a
+Pairing: the operator generates the agent approval key in the Enclave and a
+software transport keypair, storing the approval key's encrypted
+`dataRepresentation` plus the transport private key in the login keychain
+under the app access group; both publics go to the daemon for separate pin
+slots. The daemon's challenge public key is stored in a
 trusted pairing record in the operator's protected keychain — never compiled
 into the agent bundle — so daemon-key rotation needs a re-pairing ceremony,
 not a rebuild. Both directions are verified by on-screen fingerprint
@@ -127,7 +136,10 @@ material.
 ## 4. Consent protocol
 
 Signed challenge (canonical JCS) contains: `canonical_request_hmac`,
-`display_digest`, principal, client, account, tool, both epochs,
+`display_digest`, `exposure_snapshot_digest` (synthetic-zero form in Phase 2:
+`{"bytes_disclosed": 0, "mode": "synthetic", "records_disclosed": 0, "schema":
+"tg-mcp-exposure-snapshot/v1"}` — Phase 3 swaps the computation, never the
+field), principal, client, account, tool, both epochs,
 `project_scope_digest`, `runtime_id`, nonce, expiry. The display payload
 (client/action/project/peer display strings, risk class) is hashed as
 `display_digest = SHA256("telegram-mcp-display-v1" || JCS(display_payload))`,

@@ -34,7 +34,7 @@
 
 ## Scope and execution preparation
 
-Work in `/Users/raoof.r12/Desktop/Raouf/Telegram`. Read `AGENT.md`, the Phase-2 design §4, and Plan 2a Task 3 (frozen interface). macOS + Touch ID + Developer ID required; keychain/Touch ID/signing tests are platform-gated and interactive. Build with `swiftc -O agent/consent-agent.swift -o build/consent/telegram-mcp-consent` (exact flags in Task 1). `build/` is git-ignored scratch (add it); only `agent/` sources, tests, plist data, and verification docs are committed.
+Work in `/Users/raoof.r12/Desktop/Raouf/Telegram`. Read `AGENT.md`, the Phase-2 design §4, and Plan 2a Task 3 (frozen interface). macOS + Touch ID + Developer ID required; keychain/Touch ID/signing tests are platform-gated and interactive. Build with `swiftc -O agent/consent-agent.swift -o build/consent/telegram-mcp-consent` (exact flags in Task 1). Every binary path in task steps means the tests' `AGENT_BIN` constant (loose build until Task 4, bundle binary after). `build/` is git-ignored scratch (add it); only `agent/` sources, tests, plist data, and verification documents are committed.
 
 ## File responsibilities
 
@@ -48,12 +48,13 @@ Work in `/Users/raoof.r12/Desktop/Raouf/Telegram`. Read `AGENT.md`, the Phase-2 
 
 ## Frozen wire contract (from Plan 2a; duplicated here so this plan is self-contained)
 
-- Challenge JCS: sorted keys, `,`/`:` separators, literal UTF-8, str/int/bool/None only.
-- Signed fields: `canonical_request_hmac`, `display_digest`, `principal`, `client`, `account`, `tool`, `policy_epoch`, `project_scope_digest`, `security_epoch`, `runtime_id` (hex), `nonce` (22-char b64url of 16 random bytes), `expiry` (integer seconds).
+**TG-JCS-v1** (restricted RFC 8785 profile, byte-identical on both sides): ASCII property names only; keys sorted; `,`/`:` separators; literal UTF-8; escape only U+0000–U+001F plus `"` and `\` with lowercase hex (C1-and-above stay literal); values limited to str/int/bool/None/array/object; floats, NaN, Infinity, lone surrogates, and non-ASCII keys are all fatal errors.
+- Challenge JCS fields: `account`, `canonical_request_hmac`, `client`, `display_digest`, `exposure_snapshot_digest`, `expiry` (integer seconds), `nonce` (22-char b64url of 16 random bytes), `policy_epoch`, `principal`, `project_scope_digest`, `runtime_id` (hex), `security_epoch`, `tool`.
 - Daemon signature: Ed25519 over exact JCS bytes; transport `{"challenge": "<b64url JCS>", "sig": "<b64url raw 64B>"}`.
-- Display payload fields: `client_display`, `action_display`, `project_display[]`, `peer_display`, `risk_class`; digest `SHA256("telegram-mcp-display-v1" || JCS)`.
-- Approval: `{"challenge_sha256": "<hex of JCS>", "sig": "<b64url DER>", "key_id": "<p256:sha256:...>"}` after Touch ID; broker verifies ECDSA-SHA256 + exact-once.
-- Byte-equality vectors: `tests/fixtures/consent/jcs_vectors.json` (Plan 2a Task 7 freezes it).
+- Display payload fields: `client_display`, `action_display`, `project_display[]`, `peer_display`, `risk_class`; digest `SHA256("telegram-mcp-display-v1" || JCS)`, lowercase hex.
+- **ApprovalEnvelope** (frozen struct, verified whole by the broker): `{"challenge_sha256": "<hex of JCS>", "sig": "<b64url DER ECDSA>", "key_id": "<p256:sha256:...>"}`.
+- Fixture seeds (Plan 2a Task 3 seed table, asserted here too): challenge daemon key `b"\x01" * 32`.
+- Byte-equality vectors: `tests/fixtures/consent/jcs_vectors.json` (Plan 2a Task 3 Step 7 freezes it).
 
 ## Task 1: JCS encoder and challenge verification
 
@@ -67,13 +68,14 @@ Work in `/Users/raoof.r12/Desktop/Raouf/Telegram`. Read `AGENT.md`, the Phase-2 
 import json, subprocess
 
 VECTORS = "tests/fixtures/consent/jcs_vectors.json"
+AGENT_BIN = "build/consent/telegram-mcp-consent"  # Task 4 re-points this at the bundle binary and re-runs green
 
 
 def test_jcs_vectors_match_frozen_bytes():
     cases = json.load(open(VECTORS))["cases"]
     assert len(cases) >= 3
     out = subprocess.run(
-        ["build/consent/telegram-mcp-consent", "selftest-jcs", VECTORS],
+        [AGENT_BIN, "selftest-jcs", VECTORS],
         capture_output=True, text=True, timeout=60,
     )
     assert out.returncode == 0, out.stderr
@@ -81,7 +83,7 @@ def test_jcs_vectors_match_frozen_bytes():
 ```
 
 - [ ] **Step 2: Run it; expect binary-missing failure.** Add a `@main struct ConsentAgent` entry in `agent/consent-agent.swift` with a `selftest-jcs <vectors-file>` subcommand: for each case, encode the input with the Swift JCS encoder and byte-compare against the frozen `jcs_hex`; print `JCS-OK` only if all match (including a non-ASCII case).
-- [ ] **Step 3: Swift JCS encoder.** Sorted keys (byte-wise UTF-8 order to match Python's codepoint sort for our ASCII keys — assert key ASCII in encoder, throw otherwise), strings with `\"`/`\\`/control escapes only (`\u00XX` lowercase hex for C0/C1, matching Python), literal UTF-8 above U+001F, integers plain, `true`/`false`/`null`. Any float input throws (parity with Plan 2a).
+- [ ] **Step 3: Swift JCS encoder.** TG-JCS-v1 exactly: assert every key ASCII (throw otherwise — byte-wise UTF-8 order then equals codepoint order for our keys); escape only U+0000–U+001F plus `"`/`\` (`\u00XX` lowercase hex); C1-and-above literal UTF-8; integers plain; `true`/`false`/`null`. Any float, NaN-equivalent, lone surrogate, or non-ASCII key throws (parity with Plan 2a's rejections).
 - [ ] **Step 4: Ed25519 verify.** `Curve25519.Signing.PublicKey(rawRepresentation:)` from the 32-byte pinned daemon key; `isValidSignature` over the exact JCS bytes. `selftest-verify` subcommand: verifies each vector's daemon signature fixture (Plan 2a vectors include daemon `sig` values made with the fixture challenge key) and rejects a one-bit-flipped signature.
 - [ ] **Step 5: Build, run tests, commit `feat: add Swift JCS and challenge verification`.** Exact build: `mkdir -p build/consent && swiftc -O agent/consent-agent.swift -o build/consent/telegram-mcp-consent`.
 
@@ -96,7 +98,7 @@ def test_jcs_vectors_match_frozen_bytes():
 ```python
 def test_tampered_display_refuses_to_render():
     out = subprocess.run(
-        ["build/consent/telegram-mcp-consent", "selftest-display-tamper"],
+        [AGENT_BIN, "selftest-display-tamper"],
         capture_output=True, text=True, timeout=60,
     )
     assert out.returncode != 0
@@ -104,7 +106,7 @@ def test_tampered_display_refuses_to_render():
 ```
 
 - [ ] **Step 2: Run; expect subcommand-missing failure.** Implement `selftest-display-tamper`: valid signed challenge + one-codepoint-modified display payload → digest mismatch → exit nonzero printing `DISPLAY-MISMATCH`, never touching LocalAuthentication (assert by environment flag `CONSENT_NO_UI=1` which makes any prompt attempt a fatal error in selftests).
-- [ ] **Step 3: Implement the approval flow.** Build the key access object once: `SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, [.privateKeyUsage, .biometryCurrentSet], nil)` (unwrap or fatal — a nil object means misconfiguration, never proceed without Touch ID binding). Generate with `SecureEnclave.P256.Signing.PrivateKey(accessControl:)`; evaluate `LAContext.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)` per signature (no reuse across prompts); sign JCS bytes, output approval JSON. `CONSENT_NO_UI=1` short-circuits to a signed-with-test-key path ONLY in `selftest-` subcommands; the real `approve` path contains no test-key branch (pinned by the Step 2 `grep` assertion).
+- [ ] **Step 3: Implement the approval flow.** Key material arrives through a `KeyProvider` protocol (`keyForApproval(context:) throws -> SecureEnclave.P256.Signing.PrivateKey`); tests inject an ephemeral-key double, Task 4 binds the keychain-backed provider — no forward reference. Per consent: create a fresh `LAContext`; obtain the key with that exact context; evaluate `LAContext.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)` on the same context (no reuse across prompts); sign the exact JCS bytes; invalidate the context; discard the key object; output the ApprovalEnvelope JSON. `CONSENT_NO_UI=1` short-circuits to a signed-with-test-key path ONLY in `selftest-` subcommands; the real `approve` path contains no test-key branch (pinned by the Step 2 `grep` assertion).
 - [ ] **Step 4: Platform-gated live test** (Touch ID prompt appears; operator approves/denies once; approval verifies against the Enclave public key with Python `cryptography` in the test). Marked `platform_gated`, interactive.
 - [ ] **Step 5: Run headless tests + full pytest file; commit `feat: add display gate and Touch ID approval`.**
 
@@ -134,7 +136,7 @@ def test_replay_rejected():
 (`run_scenario` spawns the real agent binary against an in-proto stub broker over a tmp socket, using `CONSENT_NO_UI=1` selftest approval path for headless runs; `tamper` and `kill` scenarios assert refusal and agent exit respectively.)
 
 - [ ] **Step 2: Run; expect missing-stub failure.** Implement `stub_broker.py`: frozen challenge fixtures, Ed25519 daemon-signer using the fixture challenge key from Plan 2a's seed table (`b"\x01" * 32`; assert equality at import so the two plans cannot drift silently), P-256 approval verifier, exact-once map, scenario drivers (`good`, `tamper-display`, `replay`, `kill-mid-prompt` asserting agent process exits within 5s of socket close).
-- [ ] **Step 3: Implement the rendezvous client.** Connect Unix socket, handshake (pinned-key challenge-response at connect, mirroring Plan 2a Task 8 server side), prompt loop, auto-exit on disconnect + 2s grace. `kill-mid-prompt` scenario green proves no orphan UI.
+- [ ] **Step 3: Implement the rendezvous client (RV-1).** Wire: `uint32_be` length + payload frames, 64 KiB max, UTF-8 JSON, strict decode (duplicate keys and unknown protocol fields rejected). Handshake: `HELLO {version: "rv-1", agent_key_id, agent_nonce, expected_runtime_id}` → `CHALLENGE {version, runtime_id, agent_nonce, daemon_nonce, daemon_key_id, sig}` where `sig` covers `SHA256("telegram-mcp-rendezvous/v1" || JCS(transcript))` with the daemon challenge key; agent verifies against its keychain-pinned daemon key, then `READY {agent_nonce, daemon_nonce, sig}` signed with the agent **transport** identity key (a software Ed25519 key in the keychain pairing record — Touch ID approval keys never authenticate connections, so starting MCP costs no biometric prompt). 5s handshake deadline; either side closes on violation; prompt loop; auto-exit on disconnect + 2s grace. `kill-mid-prompt` scenario green proves no orphan UI.
 - [ ] **Step 4: Run all agent tests headless; commit `feat: add rendezvous client and broker scenarios`.**
 
 ## Task 4: Pairing, LaunchAgent, signing
@@ -146,18 +148,27 @@ def test_replay_rejected():
 - [ ] **Step 1: Write the failing pairing tests.**
 
 ```python
-def test_adhoc_build_fails_pairing_identity():
-    out = subprocess.run(
-        ["build/consent/telegram-mcp-consent", "pairing-status"],
+def test_adhoc_build_cannot_pair():
+    gen = subprocess.run(
+        [AGENT_BIN, "pairing", "generate"],
         capture_output=True, text=True, timeout=60,
     )
-    assert "developer-id" in out.stdout or "ad-hoc" in out.stdout
+    assert gen.returncode != 0
+    assert "ad-hoc" in (gen.stdout + gen.stderr).lower()
+
+
+def test_signed_build_pairs():
+    out = subprocess.run(
+        [AGENT_BIN, "pairing-status"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert "developer-id:" in out.stdout
 ```
 
-(Pre-signing: reports `ad-hoc`; post-signing: `developer-id:<team>`. The test asserts the reported identity matches `codesign -dv` output — never trusts self-report alone.)
+(`pairing generate`/`import` on an ad-hoc build must exit nonzero with no Enclave identity created and no pairing record changed — assert both by re-checking keychain state in the test. `pairing-status` must match `codesign -dv` output, never self-report alone. The signed-build test runs only after Step 4 signing; before that it fails at the signature check — correct RED ordering.)
 
-- [ ] **Step 2: Run; expect subcommand-missing failure.** Implement `pairing generate` (Enclave key, print `p256:sha256:` fingerprint), `pairing export` (public bytes b64url), `pairing import-daemon-pin <b64>` (writes keychain pairing record under the app access group; prints stored fingerprint for on-screen compare), `pairing-status` (signing identity + pairing record presence, public material only).
-- [ ] **Step 3: LaunchAgent plist data.** `agent/ConsentAgent-Info.plist`: `Label` com-specific, `RunAtLoad false`, `ProgramArguments` pointing at the installed signed binary, `StandardOut/StandardError` to user log paths, `ProcessType Interactive`. Install/uninstall is Plan 2a's launcher calling `bootstrap`/`bootout`; this task only validates the plist (`plutil -lint`) and documents the commands.
+- [ ] **Step 2: Run; expect subcommand-missing failure.** Implement `pairing generate`: create the `SecAccessControl` from Step 3, generate the Enclave approval key, generate the software transport Ed25519 keypair, store the approval key's encrypted `dataRepresentation` plus the transport private key in the login keychain under the app access group, export both publics (approval SPKI for the daemon's approval slot, transport raw bytes for its transport slot) and print both `p256:`/`ed25519:` fingerprints. `pairing export` (public bytes b64url), `pairing import-daemon-pin <b64>` (writes keychain pairing record under the app access group; prints stored fingerprint for on-screen compare), `pairing-status` (signing identity + pairing record presence, public material only). Keychain-backed `KeyProvider` binds here for the Task 2 approval flow. Lifecycle tests: agent restart → same public key; keychain item deleted → re-pair required with a fixed error; simulated biometric-set change → key unavailable → re-pair required; different Mac → representation unrestorable (documented, asserted by design of Enclave binding, not executed).
+- [ ] **Step 3: App-bundle packaging (no Xcode project) + LaunchAgent data.** Assemble `build/consent/TelegramMCPConsent.app/Contents/` (`MacOS/telegram-mcp-consent` binary, `Info.plist` with stable `CFBundleIdentifier`, `embedded.provisionprofile` authorizing the `keychain-access-groups` restricted entitlement, `_CodeSignature/` via `codesign` with Developer ID + Hardened Runtime). All tests invoke the bundle binary path. `agent/ConsentAgent-Info.plist`: `Label` com-specific, `RunAtLoad false`, `ProgramArguments` pointing at the bundle executable, `StandardOut/StandardError` to `/dev/null` (challenge/display payloads never reach ordinary user logs; a `--diagnostics` flag may emit redacted lifecycle lines only), `ProcessType Interactive`. Install/uninstall is Plan 2a's launcher calling `bootstrap`/`bootout`; this task validates the plist (`plutil -lint`) and documents the commands. Re-point the tests' `AGENT_BIN` constant at the bundle binary and re-run the whole agent suite green against it. Add a test asserting no challenge/display bytes appear in any agent output file after a scenario run.
 - [ ] **Step 4: Sign with Developer ID.** Discover the identity with `security find-identity -v -p codesigning` and use the `Developer ID Application` line verbatim (`codesign -s "<name>" --options runtime ...`); verify `codesign -dv`, re-run pairing-identity test green; commit `feat: add pairing, LaunchAgent data, signing`.
 
 ## Task 5: Evidence and handoff

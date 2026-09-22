@@ -41,6 +41,7 @@ These findings distinguish demonstrable defects from engineering choices. Line n
 | C5 | Section 38.8 still requires direct-HTTPS OAuth tests; Sections 8.3/48 disable that release profile | Mark OAuth tests conditional on a future approved profile. V0.1.10 tests startup refusal for direct HTTPS with real data. | 1, 7 |
 | C6 | Appendix D, line 4101, says `0.1.2` | Generated release labels and package version must say `0.1.10`. Retain older versions only in explicitly historical material. | 1, 7 |
 | C7 | Invariant 17, line 2540, calls tunnel mTLS the only production ingress | Read “only remote production route”; retain the separately authenticated coding-client loopback ingress required by Sections 8/48. | 2, 6 |
+| C8 | V0.1.10 consent text reconstructs the UI from validated arguments but freezes no display binding in the challenge tuple | Add `display_digest = SHA256("telegram-mcp-display-v1" \|\| JCS(display_payload))` to the signed challenge; the agent renders only on constant-time equality. Recorded here so the strengthening is explicit, not silent divergence. | 2 |
 
 Mechanical evidence gathered while planning: all 33 JSON fences parse with duplicate-key rejection; an in-memory SQLite reproduction accepts the erroneous excerpt/NULL combination; literal schema assembly leaves the two message references without root definitions. JSON syntax passing does not prove schema semantics.
 
