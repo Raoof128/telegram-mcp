@@ -10,8 +10,8 @@ it controls wherever anything else is silent.
 (privileged runtime, identity, consent, authority, storage, IPC, and the Swift
 consent agent) are complete and qualified. Phase 3 is under way: Plan
 3a (measurement, egress, provenance, coverage, receipts, verification keys) is
-complete; Plans 3b (exposure accounting) and 3c (audit chain, anchor,
-coordinator) have not started, so nothing is wired into a tool and no
+complete, 3b (exposure accounting) is complete, and 3c (audit chain, anchor,
+coordinator) has not started, so nothing is wired into a tool and no
 disclosure has ever been committed. Nothing here has ever touched Telegram.
 
 ## Non-negotiables
@@ -39,7 +39,7 @@ disclosure has ever been committed. Nothing here has ever touched Telegram.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 536 passed, 7 skipped
+uv run pytest -q                                  # 561 passed, 7 skipped
 uv run python scripts/e2e_smoke.py                # 41 checks, end to end
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
