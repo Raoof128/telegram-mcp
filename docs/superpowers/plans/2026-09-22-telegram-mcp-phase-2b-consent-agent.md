@@ -34,7 +34,7 @@
 
 ## Scope and execution preparation
 
-Work in `/Users/raoof.r12/Desktop/Raouf/Telegram`. Read `AGENT.md`, the Phase-2 design §4, and Plan 2a Task 3 (frozen interface). macOS + Touch ID + Developer ID required; keychain/Touch ID/signing tests are platform-gated and interactive. Build with `swiftc -O agent/consent-agent.swift -o build/consent/telegram-mcp-consent` (exact flags in Task 1). Every binary path in task steps means the tests' `AGENT_BIN` constant (loose build until Task 4, bundle binary after). `build/` is git-ignored scratch (add it); only `agent/` sources, tests, plist data, and verification documents are committed.
+Work in the repository root. Read `AGENT.md`, the Phase-2 design §4, and Plan 2a Task 3 (frozen interface). macOS + Touch ID + Developer ID required; keychain/Touch ID/signing tests are platform-gated and interactive. Build with `swiftc -O agent/consent-agent.swift -o build/consent/telegram-mcp-consent` (exact flags in Task 1). Every binary path in task steps means the tests' `AGENT_BIN` constant (loose build until Task 4, bundle binary after). `build/` is git-ignored scratch (add it); only `agent/` sources, tests, plist data, and verification documents are committed.
 
 ## File responsibilities
 

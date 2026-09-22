@@ -40,7 +40,7 @@
 
 ## Scope and execution preparation
 
-Work in `/Users/raoof.r12/Desktop/Raouf/Telegram`. Read `AGENT.md` and `CHANGELOG.md`. The workspace is not yet a Git repository. After plan approval, initialize Git locally if still absent and make a documentation-only baseline commit using explicit paths. Do not create a remote, push, install launch agents, provision service users or access a Telegram account.
+Work in the repository root. Read `AGENT.md` and `CHANGELOG.md`. The workspace is not yet a Git repository. After plan approval, initialize Git locally if still absent and make a documentation-only baseline commit using explicit paths. Do not create a remote, push, install launch agents, provision service users or access a Telegram account.
 
 The independently testable result is a loopback demo that answers status, advertises the complete contracts and refuses all sensitive calls. Positive sensitive fixtures are schema tests only; the server never returns them. Full database migrations are Phase 2/3 work, avoiding an unused storage layer in this slice.
 

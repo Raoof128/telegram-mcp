@@ -30,9 +30,10 @@ TELEGRAM_MCP_SIGN_IDENTITY="<identity>" bash scripts/package_agent.sh
 - `swiftc` Apple Swift 6.4 (swiftlang-6.4.0.34.1); build flags `-O`, single
   source file, no third-party packages.
 - Frameworks: CryptoKit, Foundation, LocalAuthentication, Security.
-- Signing identities available: one, an **Apple Development** certificate,
-  team `3L5A4R7JNY`. No Developer ID Application certificate, no
-  provisioning profiles.
+- Signing identities available: one, an **Apple Development** certificate.
+  No Developer ID Application certificate, no provisioning profiles. The
+  team identifier is redacted here as `<team-id>`; what matters to the
+  evidence is that one is present and stable, not its value.
 
 ## Artifacts
 
@@ -44,7 +45,7 @@ TELEGRAM_MCP_SIGN_IDENTITY="<identity>" bash scripts/package_agent.sh
   `Identifier=com.telegram-mcp.consent`, `flags=0x10002(adhoc,runtime)`,
   `Signature=adhoc`, `TeamIdentifier=not set` — deliberately unpairable.
 - Signed bundle `build/consent-signed/TelegramMCPConsent.app`:
-  `flags=0x10000(runtime)`, `TeamIdentifier=3L5A4R7JNY`, pairable.
+  `flags=0x10000(runtime)`, `TeamIdentifier=<team-id>`, pairable.
 
 ## Actual results
 
@@ -88,7 +89,7 @@ against the packaged agent over a Unix socket.
 ### Interactive legs (run 2026-09-22, this host)
 
 Both ran behind `--run-platform-gated` against the certificate-signed bundle
-(`apple-development`, team `3L5A4R7JNY`).
+(`apple-development`, team `<team-id>`).
 
 | Leg | Result |
 |---|---|

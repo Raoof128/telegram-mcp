@@ -38,7 +38,7 @@
 
 ## Scope and execution preparation
 
-Work in `/Users/raoof.r12/Desktop/Raouf/Telegram`. Read `AGENT.md`, `CHANGELOG.md`, the Phase-2 design doc, and `docs/verification/phase-1.md`. The workspace is a Git repository on `main`; do not push or create remotes. Service-user creation, LaunchAgent loading, and Touch ID tests are platform-gated (macOS + admin + hardware) and run interactively; everything else runs headless in CI style. Swift agent work belongs to Plan 2b; this plan consumes only the frozen challenge-wire contract (§4 of the design) and writes the `tests/fixtures/consent/jcs_vectors.json` artifact that Plan 2b asserts against.
+Work in the repository root. Read `AGENT.md`, `CHANGELOG.md`, the Phase-2 design doc, and `docs/verification/phase-1.md`. The workspace is a Git repository on `main`; do not push or create remotes. Service-user creation, LaunchAgent loading, and Touch ID tests are platform-gated (macOS + admin + hardware) and run interactively; everything else runs headless in CI style. Swift agent work belongs to Plan 2b; this plan consumes only the frozen challenge-wire contract (§4 of the design) and writes the `tests/fixtures/consent/jcs_vectors.json` artifact that Plan 2b asserts against.
 
 Every task ends with its targeted tests and an explicit-path commit. A dependency/API mismatch is a recorded failed prerequisite, never a reason to weaken a check.
 
