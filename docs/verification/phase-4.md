@@ -15,7 +15,7 @@ other seven sensitive tools still return `POLICY_UNCONFIGURED`.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                      # 704 passed, 8 skipped
+uv run pytest -q                                      # 706 passed, 8 skipped
 uv run python scripts/e2e_smoke.py                    # 45 passed, 0 failed
 uv run pytest tests/formal -q -s                      # 624 states, 18 assertions
 uv run ruff check src tests scripts                   # clean
@@ -102,6 +102,17 @@ fails the run.
 - **`canonical_request_hmac` key.** The privacy key under domain `telegram-mcp-request/v1\0`. The spec names no key; keying stops arguments (search text, in 4c) being dictionary-guessable from the challenge.
 - **Per-client concurrency 1.** Spec §28 permits lowering `max_concurrent_per_client`. Exact-digest consent (§9.8, §23C.3) with per-client buckets otherwise re-prompts and refuses concurrent same-client calls by construction.
 
+## 8. Final whole-branch review
+
+A separate reviewer ran every Review Focus scenario and found no path that releases data or a receipt without verified consent. It raised two Important findings, both fixed test-first:
+
+| Finding | Test (seen failing first) | Evidence after the fix |
+|---|---|---|
+| A client that disconnects mid-prompt left its challenge live; a late approval then committed a receipt (spec §9.8 requires invalidation) | `test_phase4a_end_to_end.py::test_a_client_that_disconnects_mid_prompt_invalidates_its_challenge` | reviewer probe: pending 0, counts (0,0,0), previously 1 and (1,1,1) |
+| An agent that died between prompts was not noticed, so a restarted agent could not attach until a call failed | `test_prompter.py::test_agent_death_while_idle_detaches_and_a_new_agent_can_attach` | reviewer probe: detached at once; late-tap probe still discards the stale answer |
+
+The prompter's single reader loop also removes the mid-frame desync the reviewer listed as minor. The other minors, and the reviewer's "declined to judge" items, are recorded with rulings in the execution ledger. One is a hard prerequisite for 4b: project and peer display names must be bidi- and line-separator-safe before they reach a consent prompt (§9.8).
+
 ## 7. Follow-ups for 4b
 
 1. Fix `policy.evaluate`'s empty-`owner_allows`-means-allow-all under `allowlist`, with a test, before any peer-scoped success.
@@ -109,3 +120,5 @@ fails the run.
 3. The daemon entry point running the lifecycle with these seams.
 4. The account row created by login, which ends seeded identity rows.
 5. Owner-run: `tests/integration/test_phase4a_touch_id.py --run-platform-gated`.
+6. Make display names prompt-safe (reject or isolate bidi controls, LRM/RLM, U+061C, U+2028/2029) in `project create` and the agent's renderer before any name reaches a prompt.
+7. Add an authority check before the first Telegram RPC (revalidation still runs at step 8).

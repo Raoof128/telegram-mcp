@@ -43,7 +43,7 @@ Nothing here has ever touched Telegram.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 704 passed, 8 skipped
+uv run pytest -q                                  # 706 passed, 8 skipped
 uv run python scripts/e2e_smoke.py                # 45 checks, end to end
 uv run pytest tests/formal -q -s                  # 624 states, 18 assertions
 uv run ruff check src tests scripts
