@@ -40,6 +40,7 @@ __all__ = [
     "OPERATIONS",
     "REVIEWED_REQUESTS",
     "DialogView",
+    "MessageView",
     "TelegramConfig",
     "TelethonSession",
     "qualified",
@@ -554,6 +555,52 @@ class TelethonSession:
                 out[view.identity] = view
         return out
 
+    async def fetch_history(
+        self,
+        peer_type: str,
+        peer_id: int,
+        *,
+        offset_id: int,
+        max_id: int,
+        limit: int,
+        client_ref: str,
+        deadline: Deadline,
+        budget: WorkBudget,
+    ) -> tuple[list[MessageView], int | None]:
+        """One GetHistory page, newest first; deleted entries dropped.
+
+        Returns the oldest raw id when the page was full, so a caller can
+        continue below it even if deleted entries shrank what it can show.
+        """
+        peer = self.input_peer(peer_type, peer_id)  # cache only: a miss never becomes an RPC
+        result = await self._call_reviewed(
+            functions.messages.GetHistoryRequest(
+                peer=peer,
+                offset_id=offset_id,
+                offset_date=None,
+                add_offset=0,
+                limit=limit,
+                max_id=max_id,
+                min_id=0,
+                hash=0,
+            ),
+            operation="mcp.retrieval",
+            client_ref=client_ref,
+            deadline=deadline,
+            budget=budget,
+        )
+        entities = {
+            TelethonSession.identity_of(entity): entity for entity in [*result.users, *result.chats]
+        }
+        chat = (peer_type, peer_id)
+        views = [
+            _message_view(message, chat, entities)
+            for message in result.messages
+            if not isinstance(message, types.MessageEmpty)
+        ]
+        full = len(result.messages) >= limit and bool(result.messages)
+        return views, (min(int(m.id) for m in result.messages) if full else None)
+
 
 @dataclass(frozen=True)
 class DialogView:
@@ -630,3 +677,80 @@ def _views(result: Any) -> list[DialogView]:
             )
         )
     return views
+
+
+@dataclass(frozen=True)
+class MessageView:
+    message_id: int
+    sent_at: str
+    outgoing: bool
+    text: str | None
+    sender_kind: str
+    sender: tuple[str, int] | None
+    sender_display_name: str | None
+    post_author: str | None
+    forum_topic: bool
+    reply_to_id: int | None
+    has_media: bool
+    media_kind: str | None
+    edited: bool
+
+
+def _media_kind(media: Any) -> str | None:
+    if media is None or isinstance(media, types.MessageMediaEmpty):
+        return None
+    return type(media).__name__.removeprefix("MessageMedia").lower() or "unknown"
+
+
+def _sender(
+    message: Any, chat: tuple[str, int], entities: dict[tuple[str, int], Any]
+) -> tuple[str, tuple[str, int] | None]:
+    if isinstance(message, types.MessageService):
+        return "service", None
+    from_peer = getattr(message, "from_id", None)
+    if from_peer is None:
+        if chat[0] == "user":
+            return "user", (None if message.out else chat)
+        if chat[0] == "channel" and not getattr(entities.get(chat), "megagroup", False):
+            return "channel", chat
+        return "unknown", None
+    try:
+        identity = TelethonSession.identity_of(from_peer)
+    except GatewayError:
+        return "unknown", None
+    if identity == chat and chat[0] == "channel":
+        if getattr(entities.get(chat), "megagroup", False):
+            return "anonymous_admin", None
+        return "channel", chat
+    return identity[0], identity
+
+
+def _message_view(
+    message: Any, chat: tuple[str, int], entities: dict[tuple[str, int], Any]
+) -> MessageView:
+    kind, sender = _sender(message, chat, entities)
+    service = isinstance(message, types.MessageService)
+    reply = getattr(message, "reply_to", None)
+    reply_to_id = None
+    forum_topic = False
+    if isinstance(reply, types.MessageReplyHeader):
+        forum_topic = bool(reply.forum_topic)
+        if reply.reply_to_peer_id is None and reply.reply_to_msg_id:
+            reply_to_id = int(reply.reply_to_msg_id)
+    media_kind = None if service else _media_kind(getattr(message, "media", None))
+    entity = entities.get(sender) if sender is not None else None
+    return MessageView(
+        message_id=int(message.id),
+        sent_at=_iso(message.date) or "1970-01-01T00:00:00Z",
+        outgoing=bool(message.out),
+        text=None if service else (message.message or None),
+        sender_kind=kind,
+        sender=sender,
+        sender_display_name=_display_name(entity) if entity is not None else None,
+        post_author=getattr(message, "post_author", None),
+        forum_topic=forum_topic,
+        reply_to_id=reply_to_id,
+        has_media=media_kind is not None,
+        media_kind=media_kind,
+        edited=bool(getattr(message, "edit_date", None)) and not bool(message.edit_hide),
+    )
