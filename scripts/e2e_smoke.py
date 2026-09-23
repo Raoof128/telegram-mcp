@@ -1323,7 +1323,11 @@ def phase4a_catalogue(ledger: Ledger) -> None:
                         for token in (None, "not-a-lease")
                     ]
                     out["bad"] = [(r.status_code, r.content) for r in bad]
-                    other = await post("telegram_list_chats", {"project_ref": project}, lease())
+                    other = await post(
+                        "telegram_get_context",
+                        {"project_ref": project, "message_ref": "tgm_" + "a" * 26},
+                        lease(),
+                    )
                     out["other"] = other.json()["result"]["structuredContent"]
                 finally:
                     server.should_exit = True
@@ -1355,7 +1359,7 @@ def phase4a_catalogue(ledger: Ledger) -> None:
     def others_refuse():
         out = drive()
         assert out["other"]["error"]["code"] == "POLICY_UNCONFIGURED", out["other"]
-        return "telegram_list_chats -> POLICY_UNCONFIGURED"
+        return "telegram_get_context -> POLICY_UNCONFIGURED"
 
     def demo_still_refuses():
         from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
@@ -1386,7 +1390,7 @@ def phase4a_catalogue(ledger: Ledger) -> None:
 
     ledger.run(area, "catalogue success through ingress + real agent", real_success)
     ledger.run(area, "bad bearers are 401, byte-identical", bad_bearers)
-    ledger.run(area, "other seven tools still refuse", others_refuse)
+    ledger.run(area, "4c tools still refuse", others_refuse)
     ledger.run(area, "demo server still has no sensitive route", demo_still_refuses)
 
 

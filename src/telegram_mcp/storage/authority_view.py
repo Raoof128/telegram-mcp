@@ -26,6 +26,7 @@ from telegram_mcp.consent.challenge import jcs_dumps
 
 __all__ = [
     "grant_digest",
+    "load_owner_scope",
     "load_security",
     "load_view",
     "owner_account",
@@ -155,3 +156,17 @@ def load_view(conn: sqlite3.Connection, *, principal_id: int, account_id: int) -
         security_epoch=security_epoch,
         owner_mode=policy[1] if policy else "allowlist",
     )
+
+
+def load_owner_scope(
+    conn: sqlite3.Connection, *, principal_id: int, account_id: int
+) -> tuple[bool, bool, bool, bool]:
+    """``(archived, private, groups, channels)``; all False without a row (fail closed)."""
+    row = conn.execute(
+        "SELECT include_archived, include_private, include_groups, include_channels"
+        " FROM policy_state WHERE principal_id = ? AND account_id = ?",
+        (principal_id, account_id),
+    ).fetchone()
+    if row is None:
+        return (False, False, False, False)
+    return (bool(row[0]), bool(row[1]), bool(row[2]), bool(row[3]))

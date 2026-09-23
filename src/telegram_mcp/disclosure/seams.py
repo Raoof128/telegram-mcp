@@ -4,8 +4,9 @@
 live SQLite, fresh at step 2 and again at step 8. ``CoordinatorConsent``
 (Task 6) drives the Phase-2 broker through the daemon-side prompter.
 
-In 4a only the two catalogue tools are served. The other seven refuse with
-``POLICY_UNCONFIGURED`` before any prompt, exactly as dispatch did before.
+In 4b the two catalogue tools and the four project tools (``list_chats``,
+``resolve_peer``, ``get_messages``, ``get_unread``) are served. The other
+three refuse with ``POLICY_UNCONFIGURED`` before any prompt.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import sqlite3
 import time
 import unicodedata
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
@@ -31,29 +32,53 @@ from telegram_mcp.authority.cursors import (
     list_projects_scope_entries,
     mint_cursor,
     project_scope_digest,
+    scope_entries_from_view,
 )
 from telegram_mcp.authority.policy import AuthorityRequest, Denial, evaluate
 from telegram_mcp.consent.broker import ConsentBroker, ConsentError, ConsumedChallenge
 from telegram_mcp.consent.challenge import display_digest, jcs_dumps
 from telegram_mcp.consent.display import build_display
 from telegram_mcp.consent.prompter import PromptDenied, Prompter, PromptUnavailable
-from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, Usage, subject_digest
+from telegram_mcp.disclosure.bounds import NAME_MAX, clamp, worst_case
+from telegram_mcp.disclosure.budget import GLOBAL, PROJECT, BucketKey, Usage, subject_digest
 from telegram_mcp.disclosure.coordinator import AuthorityRefusal, ConsentRefusal
+from telegram_mcp.disclosure.egress import transform_record
 from telegram_mcp.disclosure.exposure import exposure_digest
 from telegram_mcp.runtime.identity import PrincipalContext
-from telegram_mcp.storage.authority_view import load_security, load_view, project_labels
+from telegram_mcp.storage.authority_view import (
+    load_owner_scope,
+    load_security,
+    load_view,
+    project_labels,
+)
+from telegram_mcp.storage.refstore import RefStore
 
 __all__ = [
     "CATALOGUE_TOOLS",
+    "PROJECT_TOOLS",
+    "SERVED_TOOLS",
     "CatalogueSnapshot",
     "CoordinatorAuthority",
     "CoordinatorConsent",
     "FrozenRequest",
     "IssuedConsent",
+    "OwnerScope",
+    "ProjectSnapshot",
     "VisibleProject",
 ]
 
 CATALOGUE_TOOLS = frozenset({"telegram_list_projects", "telegram_resolve_project"})
+PROJECT_TOOLS = frozenset(
+    {
+        "telegram_list_chats",
+        "telegram_resolve_peer",
+        "telegram_get_messages",
+        "telegram_get_unread",
+    }
+)
+SERVED_TOOLS = CATALOGUE_TOOLS | PROJECT_TOOLS
+# Design §3.8: only these two contracts let a record carry origin_project_refs.
+_PROJECT_BUCKET_TOOLS = frozenset({"telegram_list_chats", "telegram_get_messages"})
 _REQUEST_DOMAIN = b"telegram-mcp-request/v1\0"
 # The longest match_kind value in E.12, used by the catalogue upper bound.
 _LONGEST_MATCH_KIND = "substring_display_name"
@@ -118,6 +143,62 @@ class CatalogueSnapshot:
         return "hmac-sha256:" + self.scope_hex
 
 
+@dataclass(frozen=True)
+class OwnerScope:
+    """The owner's §10.4 chat-kind switches; a chat must pass all of them."""
+
+    include_archived: bool
+    include_private: bool
+    include_groups: bool
+    include_channels: bool
+
+    def admits(self, chat_type: str, is_archived: bool) -> bool:
+        if is_archived and not self.include_archived:
+            return False
+        if chat_type == "private":
+            return self.include_private
+        if chat_type in ("group", "supergroup"):
+            return self.include_groups
+        return self.include_channels
+
+
+@dataclass(frozen=True)
+class ProjectSnapshot:
+    principal_id: int
+    client_id: int
+    account_id: int
+    principal_ref: str
+    client_ref: str
+    account_ref: str
+    client_kind: str
+    security_epoch: int
+    policy_epoch: int
+    scope_hex: str
+    scope_entries: tuple[ProjectScopeEntry, ...]
+    project_ref: str
+    project_display_name: str
+    egress_level: str
+    excerpt_limit: int | None
+    readable: frozenset[str]
+    owner_scope: OwnerScope
+    limit: int
+    tool_name: str
+    peer_ref: str | None = None
+    peer_identity: str | None = None
+    peer_name: str | None = None
+    state: Mapping[str, Any] = field(default_factory=dict)
+    project_count: int = 1
+    partial: bool = False
+
+    @property
+    def project_scope_digest(self) -> str:
+        return "hmac-sha256:" + self.scope_hex
+
+    @property
+    def project_names(self) -> tuple[str, ...]:
+        return (self.project_display_name,)
+
+
 class CoordinatorAuthority:
     """Live authority for the coordinator. Reads fresh; decides nothing new."""
 
@@ -145,7 +226,7 @@ class CoordinatorAuthority:
     ) -> FrozenRequest:
         if principal is None:
             raise AuthorityRefusal("AUTH_REQUIRED")
-        if tool_name not in CATALOGUE_TOOLS:
+        if tool_name not in SERVED_TOOLS:
             raise AuthorityRefusal("POLICY_UNCONFIGURED")
         frozen = copy.deepcopy(dict(arguments))
         canonical = jcs_dumps(
@@ -175,6 +256,7 @@ class CoordinatorAuthority:
         policy_epoch: int,
         security_epoch: int,
         entries: tuple[ProjectScopeEntry, ...],
+        variant: str = "list_projects",
     ) -> CursorPresenter:
         assert principal.account_ref is not None
         return CursorPresenter(
@@ -186,10 +268,14 @@ class CoordinatorAuthority:
             policy_epoch=policy_epoch,
             security_epoch=security_epoch,
             scope=entries,
-            scope_variant="list_projects",
+            scope_variant=variant,
         )
 
-    def snapshot(self, tool_name: str, request: FrozenRequest) -> CatalogueSnapshot:
+    def snapshot(
+        self, tool_name: str, request: FrozenRequest
+    ) -> CatalogueSnapshot | ProjectSnapshot:
+        if tool_name in PROJECT_TOOLS:
+            return self._project_snapshot(tool_name, request)
         principal = request.principal
         if principal.account_id is None or principal.account_ref is None:
             raise AuthorityRefusal("POLICY_UNCONFIGURED")
@@ -292,6 +378,166 @@ class CoordinatorAuthority:
             runtime_id=self._runtime_id,
         )
 
+    # -- project tools (4b) ------------------------------------------------
+
+    @staticmethod
+    def _readable(view: Any, client_ref: str, project_ref: str) -> frozenset[str]:
+        """Members that pass every layer for ``read``: owner mode, deny, membership."""
+        return frozenset(
+            identity
+            for identity in view.memberships.get(project_ref, frozenset())
+            if not isinstance(
+                evaluate(
+                    view,
+                    AuthorityRequest("read", client_ref, (project_ref,), peer_identity=identity),
+                ),
+                Denial,
+            )
+        )
+
+    def _project_snapshot(self, tool_name: str, request: FrozenRequest) -> ProjectSnapshot:
+        principal = request.principal
+        if principal.account_id is None or principal.account_ref is None:
+            raise AuthorityRefusal("POLICY_UNCONFIGURED")
+        security_epoch, locked = load_security(self._conn)
+        if locked:
+            raise AuthorityRefusal("SECURITY_LOCKED")
+        view = load_view(
+            self._conn, principal_id=principal.principal_id, account_id=principal.account_id
+        )
+        args = request.validated_args
+        project_ref = args["project_ref"]
+        verdict = evaluate(view, AuthorityRequest("discover", principal.client_ref, (project_ref,)))
+        if isinstance(verdict, Denial):
+            raise AuthorityRefusal(verdict.code)
+        grant = view.grants[(principal.client_ref, project_ref)]
+        if not grant.can_read:
+            raise AuthorityRefusal("NOT_ACCESSIBLE")
+        readable = self._readable(view, principal.client_ref, project_ref)
+        entries = scope_entries_from_view(view, principal.client_ref, [project_ref])
+        peer_ref = peer_identity = peer_name = None
+        if tool_name == "telegram_get_messages":
+            row = RefStore(self._conn, account_id=principal.account_id).peer_by_ref(
+                args["peer_ref"]
+            )
+            if row is None:
+                raise AuthorityRefusal("REF_NOT_FOUND")
+            if row.identity not in readable:
+                raise AuthorityRefusal("NOT_ACCESSIBLE")
+            peer_ref, peer_identity = row.peer_ref, row.identity
+            peer_name = clamp(row.display_name, NAME_MAX)[0]
+        state: dict[str, Any] = {}
+        cursor = args.get("cursor")
+        if cursor is not None:
+            presenter = self._presenter(
+                principal,
+                tool_name,
+                args,
+                view.policy_epoch,
+                security_epoch,
+                entries,
+                variant="selected",
+            )
+            try:
+                record = check_cursor(
+                    self._cursors,
+                    cursor_key=self._cursor_key,
+                    privacy_key=self._privacy_key,
+                    ref=cursor,
+                    presenter=presenter,
+                    now=self._clock(),
+                    runtime_id=self._runtime_id,
+                )
+            except CursorError as exc:
+                raise AuthorityRefusal(exc.code) from None
+            state = dict(record.state)
+        labels = project_labels(self._conn, account_id=principal.account_id)
+        return ProjectSnapshot(
+            principal_id=principal.principal_id,
+            client_id=principal.client_id,
+            account_id=principal.account_id,
+            principal_ref=principal.principal_ref,
+            client_ref=principal.client_ref,
+            account_ref=principal.account_ref,
+            client_kind=principal.client_kind,
+            security_epoch=security_epoch,
+            policy_epoch=view.policy_epoch,
+            scope_hex=project_scope_digest(self._privacy_key, entries, variant="selected"),
+            scope_entries=entries,
+            project_ref=project_ref,
+            project_display_name=labels[project_ref][1],
+            egress_level=grant.egress_level,
+            excerpt_limit=grant.excerpt_limit,
+            readable=readable,
+            owner_scope=OwnerScope(
+                *load_owner_scope(
+                    self._conn,
+                    principal_id=principal.principal_id,
+                    account_id=principal.account_id,
+                )
+            ),
+            limit=int(args["limit"]),
+            tool_name=tool_name,
+            peer_ref=peer_ref,
+            peer_identity=peer_identity,
+            peer_name=peer_name,
+            state=state,
+        )
+
+    def mint_project_cursor(
+        self, snapshot: ProjectSnapshot, arguments: Mapping[str, Any], state: Mapping[str, Any]
+    ) -> str:
+        principal = PrincipalContext(
+            principal_id=snapshot.principal_id,
+            principal_ref=snapshot.principal_ref,
+            client_id=snapshot.client_id,
+            client_ref=snapshot.client_ref,
+            client_kind=snapshot.client_kind,
+            account_id=snapshot.account_id,
+            account_ref=snapshot.account_ref,
+        )
+        presenter = self._presenter(
+            principal,
+            snapshot.tool_name,
+            arguments,
+            snapshot.policy_epoch,
+            snapshot.security_epoch,
+            snapshot.scope_entries,
+            variant="selected",
+        )
+        return mint_cursor(
+            self._cursors,
+            cursor_key=self._cursor_key,
+            privacy_key=self._privacy_key,
+            presenter=presenter,
+            state=state,
+            now=self._clock(),
+            runtime_id=self._runtime_id,
+        )
+
+    def _revalidate_project(self, snapshot: ProjectSnapshot) -> str | None:
+        security_epoch, locked = load_security(self._conn)
+        if locked or security_epoch != snapshot.security_epoch:
+            return "SECURITY_LOCKED"
+        view = load_view(
+            self._conn, principal_id=snapshot.principal_id, account_id=snapshot.account_id
+        )
+        verdict = evaluate(
+            view, AuthorityRequest("discover", snapshot.client_ref, (snapshot.project_ref,))
+        )
+        if isinstance(verdict, Denial):
+            return "CLIENT_REVOKED" if verdict.code == "CLIENT_REVOKED" else "NOT_ACCESSIBLE"
+        if view.policy_epoch != snapshot.policy_epoch:
+            return "POLICY_CHANGED"
+        entries = scope_entries_from_view(view, snapshot.client_ref, [snapshot.project_ref])
+        if project_scope_digest(self._privacy_key, entries, variant="selected") != (
+            snapshot.scope_hex
+        ):
+            return "POLICY_CHANGED"
+        if self._readable(view, snapshot.client_ref, snapshot.project_ref) != snapshot.readable:
+            return "POLICY_CHANGED"
+        return None
+
     # -- step 3 -------------------------------------------------------------
 
     def worst_case_buckets(
@@ -303,6 +549,24 @@ class CoordinatorAuthority:
         longer than its counterpart here, and the longest ``match_kind`` is
         assumed for each. So the bound holds for both tools, for any page.
         """
+        if isinstance(snapshot, ProjectSnapshot):
+            records, total, project_bytes = worst_case(
+                tool_name,
+                limit=snapshot.limit,
+                project_ref=snapshot.project_ref,
+                project_display_name=snapshot.project_display_name,
+                egress_level=snapshot.egress_level,
+                excerpt_limit=snapshot.excerpt_limit,
+            )
+            buckets = {
+                BucketKey(snapshot.client_id, GLOBAL, subject_digest(GLOBAL)): Usage(records, total)
+            }
+            if tool_name in _PROJECT_BUCKET_TOOLS:
+                key = BucketKey(
+                    snapshot.client_id, PROJECT, subject_digest(PROJECT, snapshot.project_ref)
+                )
+                buckets[key] = Usage(records, project_bytes)
+            return buckets
         bound = {
             "ambiguous": False,
             "projects": [
@@ -314,7 +578,9 @@ class CoordinatorAuthority:
 
     # -- step 8 -------------------------------------------------------------
 
-    def revalidate(self, snapshot: CatalogueSnapshot) -> str | None:
+    def revalidate(self, snapshot: CatalogueSnapshot | ProjectSnapshot) -> str | None:
+        if isinstance(snapshot, ProjectSnapshot):
+            return self._revalidate_project(snapshot)
         security_epoch, locked = load_security(self._conn)
         if locked or security_epoch != snapshot.security_epoch:
             return "SECURITY_LOCKED"
@@ -336,9 +602,14 @@ class CoordinatorAuthority:
 
     # -- step 9 -------------------------------------------------------------
 
-    def apply_egress(self, raw: Mapping[str, Any], snapshot: CatalogueSnapshot) -> dict[str, Any]:
-        # Catalogue records carry no text field: nothing to transform.
-        return dict(raw)
+    def apply_egress(self, raw: Mapping[str, Any], snapshot: Any) -> dict[str, Any]:
+        out = dict(raw)
+        if isinstance(snapshot, ProjectSnapshot) and "messages" in out:
+            out["messages"] = [
+                transform_record(message, snapshot.egress_level, snapshot.excerpt_limit)
+                for message in out["messages"]
+            ]
+        return out  # catalogue and chat records carry no text field
 
 
 @dataclass(frozen=True)
@@ -377,8 +648,8 @@ class CoordinatorConsent:
         display = build_display(
             tool_name=tool_name,
             client_kind=snapshot.client_kind,
-            project_names=[],
-            peer_name=None,
+            project_names=list(getattr(snapshot, "project_names", ())),
+            peer_name=getattr(snapshot, "peer_name", None),
             egress_level=snapshot.egress_level,
             tier=tier,
             current=Usage(after.records - increment.records, after.bytes - increment.bytes),
