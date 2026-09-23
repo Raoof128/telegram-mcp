@@ -304,3 +304,23 @@
   - The line-by-line gauntlet of the plan (owner request).
   - Inline execution.
   - Owner-run: the Test DC run, including the 4c forum and search cases; the dedicated-account qualification; the Touch ID test; the installed-host check; re-packaging the signed agent.
+
+### 2026-09-23 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase-4c plan, revision 6: a line-by-line gauntlet, then an external review, on branch `phase-4c`.
+- **Summary:** The gauntlet read the plan against the frozen spec, the pinned Telethon source and the tested tree, and ran probes against it. The owner then pasted an external review of the first transcription, and each claim was checked before anything changed. Every confirmed defect was fixed test first in the scratch tree: each new test failed before its fix, and four guard tests also had control runs. The confirmed defects:
+  - **Paging ended too early.** A short page was taken as the end. Telethon 1.45.0 `client/messages.py:213-225` documents that it is not. This affected both search and 4b history.
+  - **Offsets and coverage were unreliable.** A foreign entry could steer the next offset. Uncertainty was forgotten between pages. `peers_scanned` counted peers merely started. The coverage counters were guessed rather than measured.
+  - **Two work bounds were enforced nowhere, including 4b.** One is the 10-search-page bound; the other is the 32,000-codepoint cap on combined text.
+  - **Owner-excluded peers were counted as eligible.**
+  - **Continuations were slow.** A continuation made one dialog request per resumed peer.
+  - **The Test DC run would have failed at its first read,** because of a stale chat-kind equality.
+  - **Smaller defects:** a lowercase `z` in RFC 3339 times and a fractional `until`; the epoch `since` edge; forum classification; an empty cursor entry; query-canary coverage of logs and files.
+
+  The plan was re-proved: every task was replayed onto a fresh `main` export with its own tests, lint, types, the full suite and the smoke, and all 48 checks were green. The plan text was then replayed mechanically: 38 blocks applied with zero fuzz, and the 36 files are byte-identical to the tested tree. Design §4.7 records every rule change.
+- **Files changed:** `docs/superpowers/plans/2026-09-23-telegram-mcp-phase-4c-context-and-search.md`, `docs/superpowers/specs/2026-09-23-telegram-mcp-phase-4-design.md`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** staged proof: 1333 passed, 10 skipped (plus the 4 git-only tests in the repo); smoke 53/53 at Task 8. Full gate on this commit (docs only): pytest 862 passed, 10 skipped; smoke 49/49; formal 624/624; ruff, format and mypy clean; contracts check and build OK.
+- **Follow-ups:**
+  - Inline execution.
+  - Deferred minors: the exposure-invariant `_rehome` truncates a shared list in place; the universe digest binds the candidate universe.
+  - Owner-run: the Test DC run (now including real paging), the dedicated-account qualification, the Touch ID test, the installed-host check, and re-packaging the signed agent.

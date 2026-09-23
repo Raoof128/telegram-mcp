@@ -25,8 +25,10 @@ This plan is a transcription of code that already ran. Every task's code was fir
 - **Only `src/telegram_mcp/telegram/telethon_adapter.py` imports `telethon`.** The engine and the search authority are Telethon-free.
 - **Query text is never persisted.** It stays out of SQLite, logs, audit rows and cursors. A cursor binds it only through the keyed query HMAC (§21.5, §23.2).
 - **§13.2 bounds hold per call:**
-  - 20 Telegram RPCs;
-  - 500 examined search hits;
+  - 20 Telegram RPCs (dialog checks included);
+  - 10 Telegram search pages;
+  - 500 examined search hits, counted as the raw entries Telegram returned;
+  - 32,000 codepoints of combined text in one result, alongside the byte cap;
   - a 15-second deadline;
   - a search limit of 50;
   - `before`/`after` of at most 50, and at most 101 messages;
@@ -34,7 +36,9 @@ This plan is a transcription of code that already ran. Every task's code was fir
 - **Coverage (§23D):**
   - `complete=true` implies no cursor, `meta.partial=false`, no reasons, and every eligible peer scanned;
   - every non-null cursor carries `response_limit`;
-  - Telegram uncertainty is never complete.
+  - Telegram uncertainty is never complete;
+  - the counters are measured, never re-derived: `telegram_rpcs` from the work budget, `hits_examined` from raw entries, `peers_scanned` from peers searched to Telegram's end;
+  - `eligible_peers` is the candidate universe minus peers the owner's live scope excluded.
 - **Cross-project peer cap.** Cross-project search searches at most the first 250 canonical peers, and reports `peer_budget` on every page; ordinary search has no universe cap.
 - **Egress (§23B.2).** Each record takes the most restrictive grant among its own origin projects. The estimate uses the widest selected grant.
 - **Budget attribution (§23C.1).** A cross-project record counts whole in every contributing project's bucket.
@@ -54,7 +58,11 @@ This plan is a transcription of code that already ran. Every task's code was fir
 4. **Long full-text hits filling the 64 KiB response.** Expected: the page ends early with a cursor, and the next page resumes at the first hit that did not fit. Owned by Task 4 and Task 6 (`test_a_long_page_is_held_under_the_cap_without_losing_hits`).
 5. **A peer the entity cache cannot reach, or a Telegram response naming another chat.** Expected: never searched or attributed, and never claimed complete. Owned by Task 2 (`test_messages_from_another_chat_are_never_attributed`, `test_dialogs_nobody_asked_for_are_not_returned`) and Task 6 (`test_an_unreachable_member_is_never_claimed_complete`).
 6. **A continuation after policy, grant, egress or membership changes.** Expected: the frozen §23.3 hierarchy, then the universe digest. Owned by Task 5 (`test_the_cursor_hierarchy_then_the_universe_digest`).
-7. **A coverage object that disagrees with the result it describes.** Expected: `PROOF_GENERATION_FAILED`, nothing signed. Owned by Task 7 (`test_dishonest_coverage_is_never_signed`).
+7. **A coverage object that disagrees with the result it describes.** Expected: `PROOF_GENERATION_FAILED`, nothing signed. Owned by Task 7 (`test_inconsistent_coverage_is_never_signed`). That gate proves consistency; truth comes from the measured counters (Tasks 4 and 6).
+8. **A channel that withholds messages, so pages come back short.** Expected: the walk continues until Telegram's own end signal, and nothing is claimed complete early. Owned by Task 2 (`test_the_last_page_is_telegrams_own_signal_not_a_short_page`, `test_history_keeps_paging_past_a_short_slice`) and Task 6 (`test_a_continuation_checks_dialogs_in_one_batch`).
+9. **Telegram answers `inexact` on one page of a multi-page search.** Expected: every later page, including the last, reports `telegram_partial` and is never complete. Owned by Task 4 (`test_telegram_uncertainty_sticks_to_the_whole_continuation`) and Task 6 (`test_telegram_uncertainty_survives_the_cursor`).
+10. **ASCII-heavy results that stay under the byte cap but exceed 32,000 codepoints.** Expected: the page ends early with a cursor, in every script. Owned by Task 3 (`test_a_page_holds_both_caps_for_every_script`, with ASCII, Persian, combining-mark, emoji and ZWNJ fixtures) and Task 6 (`test_a_search_page_holds_combined_text_under_32000_codepoints`).
+11. **The query text escaping to disk or logs.** Expected: a random canary appears in no file under the runtime directory and in no log line, on success and failure paths alike. Owned by Task 7 (`test_the_query_text_never_leaves_memory`), with two control runs.
 
 ## Defects the execution-first method caught before this plan existed
 
@@ -72,6 +80,36 @@ Each was found by running the code, fixed, and is pinned by a test named in its 
 10. **Search pinned unbounded.** A 4b unit test pinned search as having no bound.
 11. **Order-dependent fixture import.** Importing a pytest fixture across modules tripped `F811` on every test; the reads-world fixture body is now a plain helper.
 
+## Defects the line-by-line gauntlet caught
+
+After the first transcription, the plan was read line by line against the frozen spec, the pinned Telethon source and the tested tree, with executed probes. Each defect was then fixed test first in the scratch tree, and the staged proof was re-run. Each is pinned by a named test:
+
+1. **Short page taken as the end** (Important). Telethon 1.45.0 `client/messages.py:213-225` says a short page is not the end, but both search and 4b history treated it as the end. Coverage could sign `complete=true` over withheld pages. Task 2, `_page_end`.
+2. **Foreign entry steering the offset** (Important). A dropped other-chat message still set the next offset, which could skip hits before a later page claimed completeness. Task 2.
+3. **Uncertainty forgotten between pages** (Important). An inexact page followed by an exact last page signed `complete=true`, although spec §23D requires *every* peer to reach Telegram's end. Tasks 1, 4 and 6 (`uncertain`).
+4. **`peers_scanned` counted started peers** (Important). The window starts 64 peers before any request, so a page stopped after 3 requests signed `peers_scanned: 64`. Task 4.
+5. **One dialog request per resumed peer** (Important, efficiency). On a continuation, each mid-walk peer paid its own `GetPeerDialogs`, halving the work a page could do. Task 6.
+6. **The Test DC run would fail at its first read** (Important). The 4b chat-kind equality survived after the forum joined the project. Task 8.
+7. **RFC 3339 lowercase `t`/`z`, and fractional `until`** (Minor). Valid input answered `INTERNAL_ERROR`. A fractional `until` truncated the exclusive bound and dropped that second's messages. Tasks 4 and 5 (`parse_time`, ceiling).
+8. **An unresolvable cursor peer read as exhausted** (Minor). It now fails closed. Task 6.
+
+## Revision 6: defects an external review caught
+
+The owner pasted an external line-by-line review of the first transcription (`fe25745`). Each claim was checked against the frozen spec and the tree before anything changed. Five had already been fixed by the gauntlet above: constructor-aware exhaustion, `peers_scanned`, fractional `until`, the wording of the coverage gate, and part of the attribution rules. Two it rated non-defects (the 250-peer cap, `add_offset=-n` with `limit=n`) were confirmed as non-defects. The rest were confirmed and fixed test first:
+
+1. **Coverage counters guessed rather than measured** (Important). `telegram_rpcs` ignored the dialog checks, and `hits_examined` counted entries after filtering. Now `telegram_rpcs` comes from `WorkBudget.used` and `hits_examined` from `SearchPage.examined`, the raw entries. Tasks 2, 4 and 6.
+2. **No 10-search-page bound** (Important). Spec §13.2 line 1518 and §28 line 2431 set it. The engine stops with `rpc_budget`, the closed list's work-bound reason. Task 4, tested at 9, 10 and 11 pages.
+3. **Owner-excluded peers counted as eligible and scanned** (Important). Spec §21.4 defines the universe after intersection with owner scope. An excluded peer now leaves the eligible set, globally and per project, and cumulative counts ride in the cursor. An unreachable peer stays eligible and unscanned. Tasks 1, 4 and 6.
+4. **The 32,000-codepoint combined-text cap was enforced nowhere** (Important). This included 4b's `get_messages` (spec §13.2 line 1515). `PageBudget` in `bounds.py` is the one copy of both caps. `fit()` and the search's `accept()` use it before the disclosure commit. Tasks 3 and 6.
+5. **An epoch-era `since` clamped to +1 s** (Minor). A widened bound at or before the epoch now sends no lower bound, and the exact post-filter decides. Task 4.
+6. **Forum classification depended on the by-id response carrying the chat** (Minor, robustness). The fetched dialog's `is_forum` now also classifies the chat. Task 6.
+7. **`per_peer: {ref: {}}` validated** (Minor). An entry is now exactly `{"offset_id"}`. Task 1.
+8. **Query non-persistence tested only in SQLite** (Minor). A random canary is now swept from every file under the runtime directory and from every log line, on success and failure. Two planted leaks (a log line, and a row that surfaced in `meta.db-wal`) made it fail. Task 7.
+
+Deferred to the owner (Minor, not fixed):
+- The exposure-invariant test's `_rehome` truncates the shared history list in place, which weakens the cross-search round.
+- The universe digest binds the *candidate* universe (authority-derived), not the live owner-admitted one. Each peer's admission is decided by the owner's live scope when the peer is first reached, and resumed peers are re-checked on every call. So no peer is ever searched in violation of the owner's current scope. A peer that was excluded and is unarchived after it was passed stays counted as excluded for that continuation; a fresh search sees it.
+
 ---
 
 ## File map
@@ -79,15 +117,16 @@ Each was found by running the code, fixed, and is pinned by a test named in its 
 | File | Task | Responsibility |
 |---|---|---|
 | `src/telegram_mcp/authority/cursors.py` | 1 | one value rule per state key; the search window keys |
-| `src/telegram_mcp/telegram/telethon_adapter.py` | 2 | by-id, replies, per-peer search, forum flag, response attribution checks |
-| `src/telegram_mcp/disclosure/bounds.py` | 3 | worst-case shapes for the three 4c tools |
+| `src/telegram_mcp/telegram/telethon_adapter.py` | 2 | by-id, replies, per-peer search, forum flag, response attribution, the one page-end rule |
+| `src/telegram_mcp/disclosure/bounds.py` | 3 | worst-case shapes for the three 4c tools; `PageBudget`, the one copy of both response caps |
+| `src/telegram_mcp/validation.py` | 4 | `parse_time`: the one RFC 3339 parser |
 | `src/telegram_mcp/telegram/search.py` | 4 | the continuation engine and coverage (pure) |
 | `src/telegram_mcp/authority/policy.py` | 5 | `readable_members`, one copy |
 | `src/telegram_mcp/storage/refstore.py` | 5 | `peer_by_row` |
 | `src/telegram_mcp/disclosure/search_authority.py` | 5 | search snapshot, estimate, drift, per-record egress, cursor |
 | `src/telegram_mcp/disclosure/seams.py` | 5 | the `get_context` path; delegation to the search authority |
 | `src/telegram_mcp/telegram/reads.py` | 6 | `get_context`, `search_messages`, `cross_project_search` |
-| `src/telegram_mcp/disclosure/coordinator.py` | 7 | refuse to sign dishonest coverage |
+| `src/telegram_mcp/disclosure/coordinator.py` | 7 | refuse to sign inconsistent coverage |
 | `src/telegram_mcp/consent/display.py` | 7 | the cross-project context-insertion warning |
 | `src/telegram_mcp/runtime/composition.py` | 7 | route the three tools |
 | `scripts/e2e_smoke.py` | 5, 7 | pin moves (5); four Phase-4c rows (7) |
@@ -99,7 +138,7 @@ Each was found by running the code, fixed, and is pinned by a test named in its 
 
 ### Task 1: Cursor state: one value rule per key, and the search window
 
-Design §3.4 and §4.3. The search continuation stores `upper_date`, `universe_digest`, `window_start` and `next_unstarted_index`, plus a `per_peer` map whose entries hold only `offset_id`. Absence encodes exhaustion, so there is no flag to spoof. The validator's key-by-key if-chain becomes a table, `STATE_VALUE_RULES`, so "exactly one value rule per allowed key" is testable, and `ALLOWED_STATE_KEYS` derives from it.
+Design §3.4 and §4.3. The search continuation stores `upper_date`, `universe_digest`, `window_start` and `next_unstarted_index`, plus a `per_peer` map whose entries hold only `offset_id`. Absence encodes exhaustion, so there is no flag to spoof. The validator's key-by-key if-chain becomes a table, `STATE_VALUE_RULES`, so "exactly one value rule per allowed key" is testable, and `ALLOWED_STATE_KEYS` derives from it. The key `uncertain` (rule `flag`: exactly 0 or 1) carries Telegram uncertainty across pages, because §23D forbids completeness once any page was inexact. `scanned_counts` and `excluded_counts` (rule `counts`: 1–9 non-negative integers, global then one per selected project) carry the measured coverage counts. A `per_peer` entry is exactly `{"offset_id"}`; an empty entry is refused.
 
 **Files:**
 - Create: `tests/unit/test_cursor_state_rules.py`
@@ -107,7 +146,7 @@ Design §3.4 and §4.3. The search continuation stores `upper_date`, `universe_d
 
 **Interfaces:**
 - Produces:
-  - `STATE_VALUE_RULES: dict[str, str]` (rules: `int`, `date`, `peer_ref`, `seen_ids`, `per_peer`, `hmac`); `ALLOWED_STATE_KEYS = frozenset(STATE_VALUE_RULES)`
+  - `STATE_VALUE_RULES: dict[str, str]` (rules: `int`, `date`, `peer_ref`, `seen_ids`, `per_peer`, `hmac`, `flag`, `counts`); `ALLOWED_STATE_KEYS = frozenset(STATE_VALUE_RULES)`
   - `universe_digest` values must match `hmac-sha256:<64 lowercase hex>`; `per_peer` entries may hold only `offset_id`
 
 - [ ] **Step 1: Write the failing tests**
@@ -134,8 +173,18 @@ def test_each_allowed_key_has_exactly_one_rule():
         "seen_ids",
         "per_peer",
         "hmac",
+        "flag",
+        "counts",
     }
-    for key in ("upper_date", "universe_digest", "window_start", "next_unstarted_index"):
+    for key in (
+        "upper_date",
+        "universe_digest",
+        "window_start",
+        "next_unstarted_index",
+        "uncertain",
+        "scanned_counts",
+        "excluded_counts",
+    ):
         assert key in ALLOWED_STATE_KEYS
 
 
@@ -145,6 +194,9 @@ def test_a_search_window_state_validates():
         "universe_digest": DIGEST,
         "window_start": 3,
         "next_unstarted_index": 67,
+        "uncertain": 1,
+        "scanned_counts": [3, 2, 1],
+        "excluded_counts": [0, 0, 0],
         "per_peer": {REF: {"offset_id": 99}},
     }
     assert _check_state(state) == state
@@ -157,6 +209,14 @@ def test_a_search_window_state_validates():
         {"universe_digest": "hmac-sha256:" + "Z" * 64},
         {"window_start": -1},
         {"window_start": True},
+        {"uncertain": 2},  # a flag is 0 or 1
+        {"uncertain": True},
+        {"per_peer": {REF: {}}},  # an entry is exactly its offset
+        {"scanned_counts": []},
+        {"scanned_counts": [1] * 10},  # global + at most 8 projects
+        {"excluded_counts": [-1]},
+        {"excluded_counts": [True]},
+        {"scanned_counts": "3"},
         {"upper_date": "2026-09-23"},
         {"per_peer": {REF: {"offset_id": 1, "exhausted": True}}},  # absence encodes exhaustion
         {"per_peer": {REF: {"page": 1}}},
@@ -173,7 +233,7 @@ def test_out_of_rule_state_is_refused(state):
 
 Run: `uv run pytest tests/unit/test_cursor_state_rules.py tests/unit/test_refs_cursors.py -q`
 Expected: `ImportError: cannot import name 'STATE_VALUE_RULES'`.
-Observed in the staged proof: 1 error in 1.43s; first error: `ImportError: cannot import name 'STATE_VALUE_RULES' from 'telegram_mcp.authority.cursors'`.
+Observed in the staged proof: 1 error in 0.47s; first error: `ImportError: cannot import name 'STATE_VALUE_RULES' from 'telegram_mcp.authority.cursors'`.
 
 - [ ] **Step 3: Implement**
 
@@ -182,7 +242,7 @@ Apply to `src/telegram_mcp/authority/cursors.py`:
 ```diff
 --- a/src/telegram_mcp/authority/cursors.py
 +++ b/src/telegram_mcp/authority/cursors.py
-@@ -102,23 +102,32 @@
+@@ -102,23 +102,35 @@
  _HEX64_RE = re.compile(r"[0-9a-f]{64}\Z")
  _ISO_Z_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
  
@@ -210,6 +270,7 @@ Apply to `src/telegram_mcp/authority/cursors.py`:
 +    "add_offset": "int",
 +    "anchor_date": "date",
 +    "anchor_id": "int",
++    "excluded_counts": "counts",
 +    "max_id": "int",
 +    "min_id": "int",
 +    "next_unstarted_index": "int",
@@ -219,7 +280,9 @@ Apply to `src/telegram_mcp/authority/cursors.py`:
 +    "page": "int",
 +    "per_peer": "per_peer",
 +    "remaining": "int",
++    "scanned_counts": "counts",
 +    "seen_ids": "seen_ids",
++    "uncertain": "flag",
 +    "universe_digest": "hmac",
 +    "upper_date": "date",
 +    "window_start": "int",
@@ -232,7 +295,7 @@ Apply to `src/telegram_mcp/authority/cursors.py`:
  _INT_MAX = 2**63 - 1
  _SEEN_IDS_MAX = 1024
  _PER_PEER_MAX = 64
-@@ -335,31 +344,36 @@
+@@ -335,31 +347,47 @@
  
  
  def _check_state_value(key: str, value: Any, *, nested: bool = False) -> None:
@@ -255,7 +318,7 @@ Apply to `src/telegram_mcp/authority/cursors.py`:
              validate_ref_format(peer_ref, expect="tgp_")
 -            if not isinstance(sub, dict):
 -                raise ValueError("invalid cursor state: per_peer")  # noqa: TRY004 -- uniform ValueError on state validation
-+            if not isinstance(sub, dict) or set(sub) - _PER_PEER_ENTRY_KEYS:
++            if not isinstance(sub, dict) or set(sub) != _PER_PEER_ENTRY_KEYS:
 +                raise ValueError("invalid cursor state: per_peer")
              _check_state(sub, nested=True)
          return
@@ -272,6 +335,17 @@ Apply to `src/telegram_mcp/authority/cursors.py`:
 +        if not isinstance(value, str) or _HMAC_RE.fullmatch(value) is None:
 +            raise ValueError(f"invalid cursor state: {key}")
 +        return
++    if rule == "counts":  # [global, *one per selected project]: 1..9 counters
++        if not isinstance(value, list) or not 1 <= len(value) <= 9:
++            raise ValueError(f"invalid cursor state: {key}")
++        for item in value:
++            if not isinstance(item, int) or isinstance(item, bool) or not 0 <= item <= _INT_MAX:
++                raise ValueError(f"invalid cursor state: {key}")
++        return
++    if rule == "flag":
++        if isinstance(value, bool) or value not in (0, 1):
++            raise ValueError(f"invalid cursor state: {key}")
++        return
      if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= _INT_MAX:
          raise ValueError(f"invalid cursor state: {key}")
  
@@ -280,11 +354,11 @@ Apply to `src/telegram_mcp/authority/cursors.py`:
 - [ ] **Step 4: Run them and watch them pass**
 
 Run: `uv run pytest tests/unit/test_cursor_state_rules.py tests/unit/test_refs_cursors.py -q`
-Expected: 40 passed (observed in the staged proof).
+Expected: 48 passed (observed in the staged proof).
 
 - [ ] **Step 5: Commit** (format, check, full gate first)
 
-Full gate expected at this task: suite 873 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
+Full gate expected at this task: suite 881 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
 
 ```bash
 git add tests/unit/test_cursor_state_rules.py src/telegram_mcp/authority/cursors.py
@@ -304,23 +378,27 @@ Design §4.1–§4.2 and §4.7. Three typed reads join the adapter under the `mc
 
 `fetch_history` gains `add_offset` and `min_id`. `MessageView` gains the private topic fields `reply_to_top_id` and `topic_root`, and `DialogView` gains `is_forum`.
 
-Two hardening rules close gaps that execution found:
-- a message whose `peer_id` is not the requested chat is dropped;
+Three hardening rules close gaps that execution and the gauntlet found:
+- **One stop rule, `_page_end`, for history and search.** A short page is *not* the end. Telethon 1.45.0 (`client/messages.py:213-225`) documents that channels withhold messages, so a page ends only when it is empty, a non-slice `messages.Messages`, or its highest id is within the limit. This also corrects 4b's `fetch_history`, which dropped `get_messages`' cursor on a short page.
+- **Offsets come from this chat's own entries.** A message whose `peer_id` is another chat is dropped and never steers the offset, and it marks the search page inexact, so it can never be claimed complete.
 - `peer_dialogs` returns only peers that were requested and resolved from the cache.
+- `SearchPage.examined` is the raw entry count Telegram returned, before deleted or foreign entries are dropped. It is what the 500 examined-hit bound counts.
 
-The reviewer's copies in the architecture test and the recorder gain the two request classes.
+The reviewer's copies in the architecture test and the recorder gain the two request classes. Three 4b fakes that modelled a longer history with the plain `messages.Messages` type (which Telegram sends only for *everything*) now send `messages.MessagesSlice`, as Telegram does.
 
 **Files:**
 - Create: `tests/unit/test_adapter_4c.py`
 - Modify: `tests/security/test_phase4_architecture.py`
 - Modify: `tests/telegram/recorder.py`
+- Modify: `tests/unit/test_message_views.py`
+- Modify: `tests/integration/test_telegram_reads.py`
 - Modify: `src/telegram_mcp/telegram/telethon_adapter.py`
 
 **Interfaces:**
 - Produces:
   - `TelethonSession.fetch_by_ids(peer_type, peer_id, ids, *, client_ref, deadline, budget) -> tuple[list[MessageView], bool]`
   - `TelethonSession.fetch_replies(peer_type, peer_id, topic_id, *, offset_id, add_offset, limit, min_id, max_id, client_ref, deadline, budget) -> list[MessageView]`
-  - `TelethonSession.search_peer(peer_type, peer_id, query, *, min_date, max_date, offset_id, limit, client_ref, deadline, budget) -> SearchPage`
+  - `TelethonSession.search_peer(peer_type, peer_id, query, *, min_date, max_date, offset_id, limit, client_ref, deadline, budget) -> SearchPage`; `SearchPage(views, exhausted, inexact, next_offset, examined=0)`
   - `fetch_history(..., add_offset: int = 0, min_id: int = 0)`; `MessageView.reply_to_top_id: int | None`, `MessageView.topic_root: bool`; `DialogView.is_forum: bool`
 
 - [ ] **Step 1: Write the failing tests**
@@ -466,6 +544,7 @@ async def test_search_passes_absent_bounds_as_zero_and_reports_completeness(tmp_
             messages=[
                 types.Message(id=i, peer_id=types.PeerUser(100), date=WHEN, message="needle")
                 for i in (9, 8)
+                if not request.offset_id or i < request.offset_id  # Telegram: nothing below 8
             ],
         )
 
@@ -543,6 +622,64 @@ async def test_dialogs_nobody_asked_for_are_not_returned(tmp_path):
     session, _fake = await _session(tmp_path, {"messages.GetPeerDialogsRequest": dialogs}, ALI)
     got = await session.peer_dialogs([("user", 100), ("user", 555)], **_kw())  # 555 is not cached
     assert set(got) == {"user:100"}
+
+
+def _slice(*messages, count=99, inexact=False):
+    return types.messages.MessagesSlice(
+        count=count, inexact=inexact, messages=list(messages), topics=[], chats=[], users=[ALI]
+    )
+
+
+def _dm(i, peer=100):
+    return types.Message(id=i, peer_id=types.PeerUser(peer), date=WHEN, message=f"m{i}")
+
+
+async def _search(tmp_path, response, *, limit):
+    session, _fake = await _session(tmp_path, {"messages.SearchRequest": response}, ALI)
+    return await session.search_peer(
+        "user", 100, "x", min_date=None, max_date=None, offset_id=0, limit=limit, **_kw()
+    )
+
+
+@pytest.mark.parametrize(
+    "response,limit,exhausted,next_offset",
+    [
+        # Telethon 1.45.0 client/messages.py:213-225: a short slice is NOT the end
+        # (channels withhold messages); only these three signals are.
+        (_slice(_dm(90), _dm(80)), 5, False, 80),
+        (_msgs(_dm(90), _dm(80), _dm(70)), 3, True, None),  # not a slice: everything
+        (_slice(_dm(3), _dm(2)), 5, True, None),  # the highest id is within the limit
+        (_slice(), 5, True, None),  # empty
+        (_slice(_dm(90), _dm(80), _dm(70)), 3, False, 70),
+    ],
+)
+async def test_the_last_page_is_telegrams_own_signal_not_a_short_page(
+    tmp_path, response, limit, exhausted, next_offset
+):
+    page = await _search(tmp_path, response, limit=limit)
+    assert (page.exhausted, page.next_offset) == (exhausted, next_offset)
+
+
+async def test_a_foreign_message_never_steers_the_offset_and_is_never_complete(tmp_path):
+    page = await _search(tmp_path, _slice(_dm(90), _dm(80), _dm(5, peer=555)), limit=3)
+    assert [v.message_id for v in page.views] == [90, 80]
+    assert page.next_offset == 80 and page.exhausted is False and page.inexact is True
+    assert page.examined == 3  # the dropped entry was still examined (spec §13.2's 500)
+
+
+async def test_history_keeps_paging_past_a_short_slice(tmp_path):
+    session, _fake = await _session(
+        tmp_path, {"messages.GetHistoryRequest": _slice(_dm(90), _dm(80))}, ALI
+    )
+    views, below = await session.fetch_history("user", 100, offset_id=0, max_id=0, limit=5, **_kw())
+    assert [v.message_id for v in views] == [90, 80] and below == 80
+    session, _fake = await _session(
+        tmp_path / "full", {"messages.GetHistoryRequest": _msgs(_dm(90), _dm(80))}, ALI
+    )
+    _views, below = await session.fetch_history(
+        "user", 100, offset_id=0, max_id=0, limit=2, **_kw()
+    )
+    assert below is None  # a full non-slice page is still everything
 ```
 
 Apply to `tests/security/test_phase4_architecture.py`:
@@ -577,11 +714,75 @@ Apply to `tests/telegram/recorder.py`:
  }
 ```
 
+Apply to `tests/unit/test_message_views.py`:
+
+```diff
+--- a/tests/unit/test_message_views.py
++++ b/tests/unit/test_message_views.py
+@@ -55,11 +55,15 @@
+ 
+ 
+ async def test_a_full_page_reports_the_oldest_raw_id_even_when_deleted(tmp_path):
+-    result = _history(
+-        [
++    # A page of a longer history: Telegram sends a slice (plain messages means "everything").
++    result = types.messages.MessagesSlice(
++        count=99,
++        messages=[
+             types.Message(id=10, peer_id=types.PeerUser(100), date=WHEN, message="a"),
+             types.MessageEmpty(id=9, peer_id=types.PeerUser(100)),
+         ],
++        topics=[],
++        chats=[],
+         users=[ALI],
+     )
+     session, _fake = await _session(tmp_path, {"messages.GetHistoryRequest": result}, ALI)
+```
+
+Apply to `tests/integration/test_telegram_reads.py`:
+
+```diff
+--- a/tests/integration/test_telegram_reads.py
++++ b/tests/integration/test_telegram_reads.py
+@@ -298,6 +298,13 @@
+     )
+ 
+ 
++def _slice(*messages, users=(ALI, ZED), chats=(TEAM,)):
++    """A page of a longer history: Telegram answers with a slice, never plain messages."""
++    return types.messages.MessagesSlice(
++        count=99, messages=list(messages), topics=[], chats=list(chats), users=list(users)
++    )
++
++
+ async def test_sender_outside_project_gets_null_ref(world):
+     """Review Focus 2."""
+     conn, fake, reads, snap, refs = world
+@@ -332,7 +339,7 @@
+     def history(request):
+         seen.append((request.offset_id, request.max_id))
+         top = request.offset_id - 1 if request.offset_id else 50
+-        return _history(
++        return _slice(
+             *(
+                 types.Message(id=i, peer_id=types.PeerUser(100), date=WHEN, message=str(i))
+                 for i in range(top, top - 2, -1)
+@@ -352,7 +359,7 @@
+ 
+ async def test_a_deleted_message_does_not_end_paging(world):
+     _conn, fake, reads, snap, refs = world
+-    fake.script["messages.GetHistoryRequest"] = _history(
++    fake.script["messages.GetHistoryRequest"] = _slice(
+         types.Message(id=10, peer_id=types.PeerUser(100), date=WHEN, message="a"),
+         types.MessageEmpty(id=9, peer_id=types.PeerUser(100)),
+     )
+```
+
 - [ ] **Step 2: Run them and watch them fail**
 
-Run: `uv run pytest tests/unit/test_adapter_4c.py tests/security/test_phase4_architecture.py tests/unit/test_recorder.py -q`
+Run: `uv run pytest tests/unit/test_adapter_4c.py tests/security/test_phase4_architecture.py tests/unit/test_recorder.py tests/unit/test_message_views.py tests/integration/test_telegram_reads.py -q`
 Expected: `AttributeError: 'TelethonSession' object has no attribute 'fetch_by_ids'` (and the architecture test's reviewed-set equality fails until the adapter lists the two new requests).
-Observed in the staged proof: 7 failed, 13 passed in 7.43s; first error: `AttributeError: 'TelethonSession' object has no attribute 'fetch_by_ids'`.
+Observed in the staged proof: 14 failed, 34 passed in 6.22s; first error: `AttributeError: 'TelethonSession' object has no attribute 'fetch_by_ids'`.
 
 - [ ] **Step 3: Implement**
 
@@ -666,23 +867,17 @@ Apply to `src/telegram_mcp/telegram/telethon_adapter.py`:
                  hash=0,
              ),
              operation="mcp.retrieval",
-@@ -594,19 +616,125 @@
+@@ -594,19 +616,126 @@
              deadline=deadline,
              budget=budget,
          )
 -        entities = {
 -            TelethonSession.identity_of(entity): entity for entity in [*result.users, *result.chats]
 -        }
--        chat = (peer_type, peer_id)
--        views = [
--            _message_view(message, chat, entities)
--            for message in result.messages
--            if not isinstance(message, types.MessageEmpty)
--        ]
 +        views, _entities = self._message_views(result, (peer_type, peer_id))
-         full = len(result.messages) >= limit and bool(result.messages)
-         return views, (min(int(m.id) for m in result.messages) if full else None)
- 
++        below, _foreign = _page_end(result, limit, (peer_type, peer_id))
++        return views, below
++
 +    async def fetch_by_ids(
 +        self,
 +        peer_type: str,
@@ -708,10 +903,17 @@ Apply to `src/telegram_mcp/telegram/telethon_adapter.py`:
 +            deadline=deadline,
 +            budget=budget,
 +        )
-+        chat = (peer_type, peer_id)
+         chat = (peer_type, peer_id)
+-        views = [
+-            _message_view(message, chat, entities)
+-            for message in result.messages
+-            if not isinstance(message, types.MessageEmpty)
+-        ]
+-        full = len(result.messages) >= limit and bool(result.messages)
+-        return views, (min(int(m.id) for m in result.messages) if full else None)
 +        views, entities = self._message_views(result, chat)
 +        return views, bool(getattr(entities.get(chat), "forum", False))
- 
++
 +    async def fetch_replies(
 +        self,
 +        peer_type: str,
@@ -748,7 +950,7 @@ Apply to `src/telegram_mcp/telegram/telethon_adapter.py`:
 +        )
 +        views, _entities = self._message_views(result, (peer_type, peer_id))
 +        return views
-+
+ 
 +    async def search_peer(
 +        self,
 +        peer_type: str,
@@ -764,7 +966,7 @@ Apply to `src/telegram_mcp/telegram/telethon_adapter.py`:
 +        budget: WorkBudget,
 +    ) -> SearchPage:
 +        """One messages.Search page in one peer (never SearchGlobal).
-+
+ 
 +        ``None`` bounds are sent as 0, which Telegram reads as unbounded.
 +        """
 +        peer = self.input_peer(peer_type, peer_id)
@@ -788,20 +990,21 @@ Apply to `src/telegram_mcp/telegram/telethon_adapter.py`:
 +            budget=budget,
 +        )
 +        views, _entities = self._message_views(result, (peer_type, peer_id))
-+        raw = list(result.messages)
-+        exhausted = len(raw) < limit or not raw
++        next_offset, foreign = _page_end(result, limit, (peer_type, peer_id))
 +        return SearchPage(
 +            views=views,
-+            exhausted=exhausted,
-+            inexact=bool(getattr(result, "inexact", False)),
-+            next_offset=None if exhausted else min(int(m.id) for m in raw),
++            exhausted=next_offset is None,
++            # A response naming another chat is not a response we can vouch for.
++            inexact=bool(getattr(result, "inexact", False)) or foreign,
++            next_offset=next_offset,
++            examined=len(result.messages),  # raw, before any filtering
 +        )
 +
 +
  @dataclass(frozen=True)
  class DialogView:
      peer_type: str
-@@ -620,6 +748,7 @@
+@@ -620,6 +749,7 @@
      last_message_at: str | None
      read_outbox_max_id: int
      top_message_id: int
@@ -809,7 +1012,7 @@ Apply to `src/telegram_mcp/telegram/telethon_adapter.py`:
  
      @property
      def identity(self) -> str:
-@@ -679,6 +808,7 @@
+@@ -679,6 +809,7 @@
                  last_message_at=_iso(getattr(top, "date", None)),
                  read_outbox_max_id=int(dialog.read_outbox_max_id or 0),
                  top_message_id=int(dialog.top_message or 0),
@@ -817,7 +1020,7 @@ Apply to `src/telegram_mcp/telegram/telethon_adapter.py`:
              )
          )
      return views
-@@ -699,6 +829,10 @@
+@@ -699,6 +830,10 @@
      has_media: bool
      media_kind: str | None
      edited: bool
@@ -828,7 +1031,7 @@ Apply to `src/telegram_mcp/telegram/telethon_adapter.py`:
  
  
  def _media_kind(media: Any) -> str | None:
-@@ -737,11 +871,17 @@
+@@ -737,11 +872,17 @@
      service = isinstance(message, types.MessageService)
      reply = getattr(message, "reply_to", None)
      reply_to_id = None
@@ -846,7 +1049,7 @@ Apply to `src/telegram_mcp/telegram/telethon_adapter.py`:
      media_kind = None if service else _media_kind(getattr(message, "media", None))
      entity = entities.get(sender) if sender is not None else None
      return MessageView(
-@@ -758,4 +898,23 @@
+@@ -758,4 +899,41 @@
          has_media=media_kind is not None,
          media_kind=media_kind,
          edited=bool(getattr(message, "edit_date", None)) and not bool(message.edit_hide),
@@ -863,6 +1066,24 @@ Apply to `src/telegram_mcp/telegram/telethon_adapter.py`:
 +    exhausted: bool
 +    inexact: bool
 +    next_offset: int | None
++    examined: int = 0  # entries Telegram returned, before dropping deleted or foreign ones
++
++
++def _page_end(result: Any, limit: int, chat: tuple[str, int]) -> tuple[int | None, bool]:
++    """``(next offset, or None on the last page; whether another chat's entry appeared)``.
++
++    One copy of the stop rule, for history and search alike. A short page is
++    *not* the end: Telethon 1.45.0 (``client/messages.py:213-225``) documents
++    that channels withhold messages, so it stops only on an empty page, a
++    non-slice ``messages.Messages`` (everything), or a highest id within the
++    limit (ids start at 1). The offset comes from this chat's own entries
++    only, so a foreign entry can never steer it past hits.
++    """
++    raw = list(result.messages)
++    foreign = any(getattr(m, "peer_id", None) is not None and not _belongs(m, chat) for m in raw)
++    own = [int(m.id) for m in raw if getattr(m, "peer_id", None) is None or _belongs(m, chat)]
++    last = not own or isinstance(result, types.messages.Messages) or max(own) <= limit
++    return (None if last else min(own)), foreign
 +
 +
 +def _belongs(message: Any, chat: tuple[str, int]) -> bool:
@@ -874,15 +1095,15 @@ Apply to `src/telegram_mcp/telegram/telethon_adapter.py`:
 
 - [ ] **Step 4: Run them and watch them pass**
 
-Run: `uv run pytest tests/unit/test_adapter_4c.py tests/security/test_phase4_architecture.py tests/unit/test_recorder.py -q`
-Expected: 20 passed (observed in the staged proof).
+Run: `uv run pytest tests/unit/test_adapter_4c.py tests/security/test_phase4_architecture.py tests/unit/test_recorder.py tests/unit/test_message_views.py tests/integration/test_telegram_reads.py -q`
+Expected: 48 passed (observed in the staged proof).
 
 - [ ] **Step 5: Commit** (format, check, full gate first)
 
-Full gate expected at this task: suite 880 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
+Full gate expected at this task: suite 895 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
 
 ```bash
-git add tests/unit/test_adapter_4c.py tests/security/test_phase4_architecture.py tests/telegram/recorder.py src/telegram_mcp/telegram/telethon_adapter.py
+git add tests/unit/test_adapter_4c.py tests/security/test_phase4_architecture.py tests/telegram/recorder.py tests/unit/test_message_views.py tests/integration/test_telegram_reads.py src/telegram_mcp/telegram/telethon_adapter.py
 git commit -m "feat: read anchors, topic replies and per-peer search pages
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
@@ -894,6 +1115,8 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 Phase-3 design §5.4 and 4b Task 12. `get_context` shares the message shape. A search hit gets its own shape; for cross-project search it lists every selected project in `origin_project_refs` and `matched_projects`. The estimate for cross-project search uses the widest selected grant, because each record takes its own intersection. The 4b test that pinned search as unbounded now pins a tool that still has no project bound.
 
+**Both response caps, in one place.** Spec §13.2 caps a result at 32,000 codepoints of combined text as well as by size, and nothing enforced the codepoint cap, not even 4b's `get_messages`. `PageBudget` admits a record only if the canonical bytes stay within `DATA_BYTES_MAX` *and* the combined text (every string in `data`) stays within `TEXT_CODEPOINTS_MAX`. `fit()` now runs through it, so every read is held to both caps before the disclosure commit.
+
 **Files:**
 - Create: `tests/unit/test_bounds_4c.py`
 - Modify: `tests/unit/test_bounds.py`
@@ -902,6 +1125,7 @@ Phase-3 design §5.4 and 4b Task 12. `get_context` shares the message shape. A s
 **Interfaces:**
 - Produces:
   - `worst_case(tool_name, *, limit, project_ref, project_display_name, egress_level, excerpt_limit, projects: Sequence[tuple[str, str]] = ())` for `telegram_get_context`, `telegram_search_messages` and `telegram_cross_project_search`
+  - `TEXT_CODEPOINTS_MAX = 32_000`; `text_codepoints(value) -> int`; `PageBudget(container).take(record) -> bool`; `fit(data, element)` holds both caps
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -910,8 +1134,19 @@ Create `tests/unit/test_bounds_4c.py`:
 ```python
 """4c worst-case shapes dominate the widest real records."""
 
+import pytest
+
 from telegram_mcp.consent.challenge import jcs_dumps
-from telegram_mcp.disclosure.bounds import DATA_BYTES_MAX, NAME_MAX, TEXT_MAX, worst_case
+from telegram_mcp.disclosure.bounds import (
+    DATA_BYTES_MAX,
+    NAME_MAX,
+    TEXT_CODEPOINTS_MAX,
+    TEXT_MAX,
+    PageBudget,
+    fit,
+    text_codepoints,
+    worst_case,
+)
 
 P, Q = "tpr_" + "a" * 26, "tpr_" + "b" * 26
 R, M = "tgp_" + "b" * 26, "tgm_" + "c" * 26
@@ -992,6 +1227,37 @@ def test_context_bound_covers_101_full_messages_at_the_page_cap():
         excerpt_limit=None,
     )
     assert small[2] >= TEXT_MAX * 6  # one full-length message fits in the bound
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "a",  # ASCII: the codepoint cap binds before the byte cap
+        "س",  # Persian: two bytes per codepoint
+        "é",  # a combining mark is its own codepoint
+        "👍🏽",  # emoji with a skin-tone modifier: two codepoints, eight bytes
+        "‌",  # zero-width non-joiner
+    ],
+)
+def test_a_page_holds_both_caps_for_every_script(unit):
+    """Spec §13.2: combined text <= 32,000 codepoints AND data <= the byte cap."""
+    text = unit * (4000 // len(unit))
+    data = {
+        "project": {"project_ref": P, "display_name": "Alpha"},
+        "messages": [{"message_ref": M, "text": text} for _ in range(12)],
+    }
+    fit(data, "messages")
+    assert 1 <= len(data["messages"]) < 12
+    assert text_codepoints(data) <= TEXT_CODEPOINTS_MAX
+    assert len(jcs_dumps(data)) <= DATA_BYTES_MAX
+
+
+def test_the_page_budget_refuses_the_record_that_would_cross_either_cap():
+    budget = PageBudget({"results": []})
+    taken = 0
+    while budget.take({"text": "a" * 4000}):
+        taken += 1
+    assert taken == 8  # exactly 32,000 codepoints is allowed; the ninth record crosses it
 ```
 
 Apply to `tests/unit/test_bounds.py`:
@@ -1013,8 +1279,8 @@ Apply to `tests/unit/test_bounds.py`:
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `uv run pytest tests/unit/test_bounds_4c.py tests/unit/test_bounds.py -q`
-Expected: `ValueError: no bound for this tool` from the three new-tool cases.
-Observed in the staged proof: 3 failed, 10 passed in 0.40s; first error: `ValueError: no bound for this tool`.
+Expected: `ImportError: cannot import name 'TEXT_CODEPOINTS_MAX'`: collection of `test_bounds_4c.py` stops there, before any case runs.
+Observed in the staged proof: 1 error in 0.52s; first error: `ImportError: cannot import name 'TEXT_CODEPOINTS_MAX' from 'telegram_mcp.disclosure.bounds'`.
 
 - [ ] **Step 3: Implement**
 
@@ -1031,7 +1297,89 @@ Apply to `src/telegram_mcp/disclosure/bounds.py`:
  from typing import Any
  
  from telegram_mcp.consent.challenge import jcs_dumps
-@@ -79,7 +80,9 @@
+@@ -19,10 +20,13 @@
+     "DATA_BYTES_MAX",
+     "MEDIA_KIND_MAX",
+     "NAME_MAX",
++    "TEXT_CODEPOINTS_MAX",
+     "TEXT_MAX",
+     "USERNAME_MAX",
++    "PageBudget",
+     "clamp",
+     "fit",
++    "text_codepoints",
+     "worst_case",
+ ]
+ 
+@@ -33,6 +37,9 @@
+ # The dispatcher refuses a response over 64 KiB, after the commit. Canonical
+ # data is held to 48 KiB so meta, the proof and the envelope always fit.
+ DATA_BYTES_MAX = 49_152
++# Spec §13.2: the combined textual payload of one result, in codepoints. Every
++# string in ``data`` counts (conservative: names and refs as well as bodies).
++TEXT_CODEPOINTS_MAX = 32_000
+ 
+ _W = "\x01"
+ _INT = 2**63 - 1
+@@ -51,16 +58,51 @@
+     return text[:limit], True
+ 
+ 
++def text_codepoints(value: Any) -> int:
++    """Codepoints of every string in ``value`` (keys excluded)."""
++    if isinstance(value, str):
++        return len(value)
++    if isinstance(value, dict):
++        return sum(text_codepoints(v) for v in value.values())
++    if isinstance(value, list):
++        return sum(text_codepoints(v) for v in value)
++    return 0
++
++
++class PageBudget:
++    """Both §13.2 response caps for one page, in one place.
++
++    Built from the page's container (everything but the records); ``take``
++    admits a record only if the canonical bytes stay within
++    ``DATA_BYTES_MAX`` *and* the combined text stays within
++    ``TEXT_CODEPOINTS_MAX``. Enforced while the page is built, before the
++    disclosure commit, never after it.
++    """
++
++    def __init__(self, container: dict[str, Any]) -> None:
++        self._bytes = DATA_BYTES_MAX - len(jcs_dumps(container))
++        self._points = TEXT_CODEPOINTS_MAX - text_codepoints(container)
++        self._kept = 0
++
++    def take(self, record: Any) -> bool:
++        size = len(jcs_dumps(record)) + (1 if self._kept else 0)  # the separating comma
++        points = text_codepoints(record)
++        if size > self._bytes or points > self._points:
++            return False
++        self._bytes -= size
++        self._points -= points
++        self._kept += 1
++        return True
++
++
+ def fit(data: dict[str, Any], element: str) -> int:
+-    """Keep the longest record prefix whose canonical ``data`` fits; return drops."""
++    """Keep the longest record prefix that fits both caps; return drops."""
+     records = data[element]
+-    room = DATA_BYTES_MAX - len(jcs_dumps({**data, element: []}))
+-    kept = used = 0
++    budget = PageBudget({**data, element: []})
++    kept = 0
+     for record in records:
+-        size = len(jcs_dumps(record)) + (1 if kept else 0)  # the separating comma
+-        if used + size > room:
++        if not budget.take(record):
+             break
+-        used += size
+         kept += 1
+     dropped = len(records) - kept
+     del records[kept:]
+@@ -79,7 +121,9 @@
      raise ValueError("unknown egress level")
  
  
@@ -1042,7 +1390,7 @@ Apply to `src/telegram_mcp/disclosure/bounds.py`:
      name, user = _W * NAME_MAX, _W * USERNAME_MAX
      if tool_name == "telegram_list_chats":
          return {
-@@ -110,7 +113,7 @@
+@@ -110,7 +154,7 @@
              "is_muted": False,
              "last_message_at": _DATE,
          }
@@ -1051,7 +1399,7 @@ Apply to `src/telegram_mcp/disclosure/bounds.py`:
          return {
              "message_ref": _MSG,
              "origin_project_refs": [project_ref],
-@@ -129,6 +132,26 @@
+@@ -129,6 +173,26 @@
              "media_kind": _W * MEDIA_KIND_MAX,
              "edited": False,
          }
@@ -1078,7 +1426,7 @@ Apply to `src/telegram_mcp/disclosure/bounds.py`:
      raise ValueError("no bound for this tool")
  
  
-@@ -137,6 +160,9 @@
+@@ -137,6 +201,9 @@
      "telegram_resolve_peer": "matches",
      "telegram_get_unread": "chats",
      "telegram_get_messages": "messages",
@@ -1088,7 +1436,7 @@ Apply to `src/telegram_mcp/disclosure/bounds.py`:
  }
  
  
-@@ -148,14 +174,29 @@
+@@ -148,14 +215,29 @@
      project_display_name: str,
      egress_level: str,
      excerpt_limit: int | None,
@@ -1130,11 +1478,11 @@ Apply to `src/telegram_mcp/disclosure/bounds.py`:
 - [ ] **Step 4: Run them and watch them pass**
 
 Run: `uv run pytest tests/unit/test_bounds_4c.py tests/unit/test_bounds.py -q`
-Expected: 13 passed (observed in the staged proof).
+Expected: 19 passed (observed in the staged proof).
 
 - [ ] **Step 5: Commit** (format, check, full gate first)
 
-Full gate expected at this task: suite 883 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
+Full gate expected at this task: suite 904 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
 
 ```bash
 git add tests/unit/test_bounds_4c.py tests/unit/test_bounds.py src/telegram_mcp/disclosure/bounds.py
@@ -1156,18 +1504,28 @@ The invariants, each covered by an exhaustive or seeded test:
 - **Bounded work.** Each request asks for at most the hits still needed and the remaining 500-hit budget.
 - **No loss at the cap.** `accept()` holds the page under the response cap, and a refusal makes that peer resume *at* the refused hit.
 - **Honest completeness.** `complete` implies no cursor and no reasons.
+- **Sticky uncertainty.** Once any page was inexact (or a peer unreachable), every later page of the walk reports `telegram_partial`.
+- **Measured counters.** `peers_scanned` counts peers searched to Telegram's end, never merely started. `telegram_rpcs` comes from the caller's work budget (`rpcs_used`), so dialog checks count. `hits_examined` sums each page's raw `examined`.
+- **Owner scope shapes eligibility.** A page may say it was decided without a search (`searched=False`) and whether the owner's scope excluded the peer (`excluded=True`). An excluded peer leaves `eligible_peers`, globally and per project. An unreachable peer stays eligible and unscanned. Both counts are cumulative in `EngineState`.
+- **Ten search pages.** At most `MAX_SEARCH_PAGES = 10` search requests per call (spec §13.2); the bound reports `rpc_budget`.
+- **The epoch edge.** A widened `since` at or before the epoch sends no lower bound; the exact post-filter decides.
+
+`validation.parse_time` becomes the one RFC 3339 parser. It upper-cases first, because RFC 3339 §5.6 allows a lowercase `t`/`z` that jsonschema accepts but `fromisoformat` rejects. The engine, the search authority and the argument validator all use it.
 
 The tests enumerate every universe of up to three peers, each with 0, 1 or 3 hits, at three limits and three RPC budgets. On top of that they cover the 64→65 window transition, an ordinary universe of 300, and a cross-project universe of 251.
 
 **Files:**
 - Create: `tests/unit/test_search_engine.py`
+- Modify: `tests/unit/test_validation.py`
+- Modify: `src/telegram_mcp/validation.py`
 - Create: `src/telegram_mcp/telegram/search.py`
 
 **Interfaces:**
 - Produces:
-  - `WINDOW = 64`; `SearchStop(reason)`; `Hit(peer, view)`; `EngineState(upper_date, window_start=0, next_unstarted_index=0, per_peer={})`; `PageResult(hits, state, coverage, complete)`
+  - `WINDOW = 64`; `SearchStop(reason)`; `Hit(peer, view)`; `EngineState(upper_date, window_start=0, next_unstarted_index=0, per_peer={}, uncertain=False, scanned=[], excluded=[])`; `MAX_SEARCH_PAGES = 10`; `PageResult(hits, state, coverage, complete)`
+  - `telegram_mcp.validation.parse_time(value) -> datetime` (replaces the private `_parse_offset`)
   - `universe_digest(key, universe) -> str`; `rpc_bounds(since, upper) -> (datetime | None, datetime)`
-  - `async run_page(universe, state, *, limit, fetch, since, projects, peer_cap=None, max_hits=500, accept=lambda peer, view: True) -> PageResult`
+  - `async run_page(universe, state, *, limit, fetch, since, projects, peer_cap=None, max_hits=500, max_pages=10, accept=lambda peer, view: True, rpcs_used=None) -> PageResult`; a page may carry `examined`, `searched` and `excluded`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1213,32 +1571,65 @@ class Page:
     exhausted: bool
     inexact: bool
     next_offset: int | None
+    examined: int = 0  # raw entries Telegram returned, before any filtering
+    searched: bool = True  # a real messages.Search request went out
+    excluded: bool = False  # the owner's live scope excludes this peer
 
 
 class FakeSearch:
     """Per peer, a descending list of message ids; minute = id % 60."""
 
-    def __init__(self, hits_per_peer, *, rpc_budget=10**9, inexact=()):
+    def __init__(
+        self,
+        hits_per_peer,
+        *,
+        rpc_budget=10**9,
+        inexact=(),
+        excluded=(),
+        unreachable=(),
+        per_request=None,
+    ):
         self.data = hits_per_peer
         self.rpc_budget = rpc_budget
         self.inexact = set(inexact)
+        self.excluded = set(excluded)
+        self.unreachable = set(unreachable)
+        self.per_request = per_request  # a withholding channel: at most this many per page
         self.scanned: set[str] = set()
         self.rpcs = 0
 
     async def fetch(self, peer, offset_id, want):
+        if peer in self.excluded or peer in self.unreachable:  # decided without a search
+            return Page(
+                [],
+                True,
+                peer in self.unreachable,
+                None,
+                searched=False,
+                excluded=peer in self.excluded,
+            )
         if self.rpcs >= self.rpc_budget:
             raise SearchStop("rpc_budget")
         self.rpcs += 1
         self.scanned.add(peer)
-        ids = [i for i in self.data[peer] if not offset_id or i < offset_id][:want]
+        rest = [i for i in self.data[peer] if not offset_id or i < offset_id]
+        ids = rest[: min(want, self.per_request or want)]
         views = [View(i, f"2026-09-23T10:{i % 60:02d}:00Z") for i in ids]
-        exhausted = len(ids) < want
-        return Page(views, exhausted, peer in self.inexact, None if exhausted else ids[-1])
+        exhausted = not ids or len(rest) == len(ids)
+        return Page(
+            views,
+            exhausted,
+            peer in self.inexact,
+            None if exhausted else ids[-1],
+            examined=len(ids),
+        )
 
 
-def _run_all(universe, data, *, limit, rpc_budget=10**9, peer_cap=None, max_pages=10_000):
+def _run_all(
+    universe, data, *, limit, rpc_budget=10**9, peer_cap=None, max_pages=10_000, inexact=()
+):
     """Page to the end. Returns (pages, all hits, fake)."""
-    fake = FakeSearch(data, rpc_budget=rpc_budget)
+    fake = FakeSearch(data, rpc_budget=rpc_budget, inexact=inexact)
     state = EngineState(upper_date=UPPER)
     pages, hits = [], []
     for _ in range(max_pages):
@@ -1352,7 +1743,11 @@ def test_since_is_inclusive_and_bounds_over_fetch_by_a_second():
     assert lower.isoformat() == "2026-09-23T09:59:59+00:00"
     assert upper.isoformat() == "2026-09-23T11:00:01+00:00"
     assert rpc_bounds(None, UPPER)[0] is None  # absent is 0: unbounded
-    assert rpc_bounds("1970-01-01T00:00:00Z", UPPER)[0].timestamp() == 1  # never an accidental 0
+    # A widened bound at or before the epoch would be Telegram's 0 (= unbounded)
+    # or negative: send no lower bound at all and rely on the exact post-filter.
+    assert rpc_bounds("1970-01-01T00:00:00Z", UPPER)[0] is None
+    assert rpc_bounds("1970-01-01T00:00:01.5Z", UPPER)[0] is None
+    assert rpc_bounds("1970-01-01T00:00:03Z", UPPER)[0].timestamp() == 2
 
 
 def test_a_hit_budget_stops_the_page_with_a_cursor():
@@ -1449,22 +1844,216 @@ def test_a_page_held_under_the_cap_loses_and_repeats_nothing():
         )
         pages += 1
         seen += [(h.peer, h.view.message_id) for h in result.hits]
-        assert len(result.hits) <= 3
+        assert len(result.hits) <= 2  # accept() leaves room for two
         if result.state is None:
             break
         assert "response_limit" in result.coverage["partial_reasons"]
         state = result.state
     assert sorted(seen) == sorted((p, i) for p, ids in data.items() for i in ids)
     assert len(seen) == len(set(seen)) and pages >= 3
+
+
+def test_telegram_uncertainty_sticks_to_the_whole_continuation():
+    """Spec §23D: complete only if EVERY peer reached Telegram's exhaustion."""
+    universe = ["user:1", "user:2"]
+    data = {"user:1": [3, 2], "user:2": [9, 8, 7, 6, 5]}
+    pages, hits, _fake = _run_all(universe, data, limit=1, inexact={"user:1"})
+    assert len(hits) == 7 and pages[-1].state is None
+    first = next(
+        i for i, p in enumerate(pages) if "telegram_partial" in p.coverage["partial_reasons"]
+    )
+    for page in pages[first:]:
+        assert "telegram_partial" in page.coverage["partial_reasons"] and page.complete is False
+
+
+def test_peers_scanned_counts_only_peers_searched_to_the_end():
+    universe = [f"user:{i}" for i in range(10)]
+    fake = FakeSearch({p: [5, 4, 3, 2, 1] for p in universe}, rpc_budget=3)
+    result = asyncio.run(
+        run_page(
+            universe,
+            EngineState(upper_date=UPPER),
+            limit=50,
+            fetch=fake.fetch,
+            since=None,
+            projects={P: frozenset(universe[:4])},
+        )
+    )
+    assert fake.rpcs == 3 and result.coverage["peers_scanned"] == 3  # never the 10 started
+    assert result.coverage["project_coverage"][0]["peers_scanned"] == 3
+
+
+@pytest.mark.parametrize(
+    "text", ["2026-09-23T10:00:00Z", "2026-09-23T10:00:00z", "2026-09-23t10:00:00Z"]
+)
+def test_rfc3339_case_variants_parse_the_same(text):
+    """RFC 3339 §5.6 allows lowercase t/z; jsonschema's date-time accepts them."""
+    from telegram_mcp.validation import parse_time
+
+    assert parse_time(text).isoformat() == "2026-09-23T10:00:00+00:00"
+    assert rpc_bounds(text, text)[0].isoformat() == "2026-09-23T09:59:59+00:00"
+
+
+def _one_page(universe, fake, **kw):
+    kw.setdefault("projects", {P: frozenset(universe)})
+    return asyncio.run(
+        run_page(
+            universe,
+            EngineState(upper_date=UPPER),
+            limit=kw.pop("limit", 50),
+            fetch=fake.fetch,
+            since=None,
+            **kw,
+        )
+    )
+
+
+@pytest.mark.parametrize("pages_needed,complete", [(9, True), (10, True), (11, False)])
+def test_search_pages_are_bounded_at_ten_per_call(pages_needed, complete):
+    """Spec §13.2: at most 10 Telegram search pages per tool call."""
+    fake = FakeSearch({"user:1": list(range(pages_needed, 0, -1))}, per_request=1)
+    result = _one_page(["user:1"], fake)
+    assert fake.rpcs == min(pages_needed, 10) and result.complete is complete
+    if not complete:
+        assert "rpc_budget" in result.coverage["partial_reasons"] and result.state is not None
+
+
+def test_telegram_rpcs_and_hits_examined_are_measured_not_guessed():
+    """Dialog checks are RPCs too, and a filtered-out entry was still examined."""
+
+    async def fetch(peer, offset_id, want):
+        return Page([View(9, "2026-09-23T10:09:00Z")], True, False, None, examined=5)
+
+    result = asyncio.run(
+        run_page(
+            ["user:1"],
+            EngineState(upper_date=UPPER),
+            limit=10,
+            fetch=fetch,
+            since=None,
+            projects={P: frozenset({"user:1"})},
+            rpcs_used=lambda: 7,
+        )
+    )
+    assert result.coverage["telegram_rpcs"] == 7 and result.coverage["hits_examined"] == 5
+
+
+def test_an_owner_excluded_peer_leaves_the_eligible_set():
+    universe = ["user:1", "user:2", "user:3"]
+    fake = FakeSearch({p: [1] for p in universe}, excluded={"user:2"})
+    result = _one_page(
+        universe, fake, projects={P: frozenset(universe), "tpr_" + "b" * 26: frozenset({"user:2"})}
+    )
+    c = result.coverage
+    assert (c["eligible_peers"], c["peers_scanned"], result.complete) == (2, 2, True)
+    assert [(e["eligible_peers"], e["peers_scanned"]) for e in c["project_coverage"]] == [
+        (2, 2),
+        (0, 0),
+    ]
+    assert "user:2" not in fake.scanned
+
+
+def test_an_unreachable_peer_stays_eligible_and_is_never_counted_scanned():
+    universe = ["user:1", "user:2", "user:3"]
+    fake = FakeSearch({p: [1] for p in universe}, unreachable={"user:3"})
+    c = _one_page(universe, fake).coverage
+    assert (c["eligible_peers"], c["peers_scanned"], c["complete"]) == (3, 2, False)
+    assert c["partial_reasons"] == ["telegram_partial"]
+
+
+def test_scanned_and_excluded_counts_survive_the_continuation():
+    universe = [f"user:{i}" for i in range(5)]
+    data = {p: [3, 2, 1] for p in universe}
+    fake = FakeSearch(data, excluded={"user:1"})
+    state, pages = EngineState(upper_date=UPPER), []
+    while True:
+        result = asyncio.run(
+            run_page(
+                universe,
+                state,
+                limit=2,
+                fetch=fake.fetch,
+                since=None,
+                projects={P: frozenset(universe)},
+            )
+        )
+        pages.append(result)
+        if result.state is None:
+            break
+        state = result.state
+    last = pages[-1].coverage
+    assert len(pages) > 3 and pages[-1].complete is True
+    assert (last["eligible_peers"], last["peers_scanned"]) == (4, 4)
+    scanned = [p.coverage["peers_scanned"] for p in pages]
+    assert scanned == sorted(scanned)  # cumulative, never re-counted
+```
+
+Apply to `tests/unit/test_validation.py`:
+
+```diff
+--- a/tests/unit/test_validation.py
++++ b/tests/unit/test_validation.py
+@@ -184,3 +184,15 @@
+     with pytest.raises(ArgumentError) as exc:
+         validate_arguments(contract, {"host": "not a host name!!"})
+     assert exc.value.code == "INVALID_ARGUMENT"
++
++
++def test_a_lowercase_rfc3339_range_is_valid():
++    """RFC 3339 §5.6 allows lowercase t/z; the range check must parse them too."""
++    c = load_contracts()["telegram_search_messages"]
++    args = {
++        "project_ref": TPR,
++        "query": "q",
++        "since": "2026-09-22t00:00:00z",
++        "until": "2026-09-22T01:00:00z",
++    }
++    assert validate_arguments(c, args)["until"] == "2026-09-22T01:00:00z"
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
 
-Run: `uv run pytest tests/unit/test_search_engine.py -q`
-Expected: `ModuleNotFoundError: No module named 'telegram_mcp.telegram.search'`.
-Observed in the staged proof: 1 error in 1.11s; first error: `ModuleNotFoundError: No module named 'telegram_mcp.telegram.search'`.
+Run: `uv run pytest tests/unit/test_search_engine.py tests/unit/test_validation.py -q`
+Expected: `ModuleNotFoundError: No module named 'telegram_mcp.telegram.search'`: collection stops there. Run the validation case alone to watch it fail (`uv run pytest tests/unit/test_validation.py -q -k lowercase`): `ArgumentError: INVALID_TIME` for a valid lowercase range.
+Observed in the staged proof: 1 error in 0.52s; first error: `ModuleNotFoundError: No module named 'telegram_mcp.telegram.search'`.
 
 - [ ] **Step 3: Implement**
+
+Apply to `src/telegram_mcp/validation.py`:
+
+```diff
+--- a/src/telegram_mcp/validation.py
++++ b/src/telegram_mcp/validation.py
+@@ -15,10 +15,16 @@
+         super().__init__(code)
+ 
+ 
+-def _parse_offset(value: str) -> datetime:
+-    # Already format-validated date-time with offset. Python cannot represent
+-    # an RFC 3339 leap second; that yields INVALID_TIME by contract decision.
+-    text = value.replace("Z", "+00:00")
++def parse_time(value: str) -> datetime:
++    """The one parser for tool date-times: RFC 3339 with an offset, any case.
++
++    RFC 3339 §5.6 allows a lowercase ``t`` and ``z`` and jsonschema accepts
++    them, but ``datetime.fromisoformat`` does not, so the text is upper-cased
++    first (digits, signs and separators are unaffected). Python cannot
++    represent an RFC 3339 leap second; that yields INVALID_TIME by contract
++    decision.
++    """
++    text = value.upper().replace("Z", "+00:00")
+     try:
+         parsed = datetime.fromisoformat(text)
+     except ValueError:
+@@ -44,6 +50,6 @@
+             value[name] = deepcopy(property_schema["default"])
+     if isinstance(value, dict) and "since" in value and "until" in value:
+         since, until = value["since"], value["until"]
+-        if since is not None and until is not None and _parse_offset(since) >= _parse_offset(until):
++        if since is not None and until is not None and parse_time(since) >= parse_time(until):
+             raise ArgumentError("INVALID_TIME")
+     return value
+```
 
 Create `src/telegram_mcp/telegram/search.py`:
 
@@ -1487,7 +2076,9 @@ The invariants, each tested exhaustively in ``test_search_engine.py``:
 - across a full continuation the union of scanned peers is the universe
   (or its first ``peer_cap`` peers, with ``peer_budget`` on every page);
 - ``complete`` implies no cursor, no partial reasons, every peer scanned; any
-  cursor carries ``response_limit``.
+  cursor carries ``response_limit``;
+- ``peers_scanned`` counts peers searched to their end, and Telegram
+  uncertainty, once seen, is reported on every later page of the walk.
 """
 
 from __future__ import annotations
@@ -1502,6 +2093,7 @@ from typing import Any
 
 from telegram_mcp.consent.challenge import jcs_dumps
 from telegram_mcp.disclosure.coverage import build_coverage
+from telegram_mcp.validation import parse_time
 
 __all__ = [
     "WINDOW",
@@ -1516,6 +2108,7 @@ __all__ = [
 
 WINDOW = 64  # design §4.3: the reviewed _PER_PEER_MAX
 MAX_PEER_PAGE = 100  # Telegram's messages.search page ceiling
+MAX_SEARCH_PAGES = 10  # spec §13.2 / §28: max_search_pages_per_call
 _UNIVERSE_DOMAIN = b"telegram-mcp-universe/v1\0"
 _EPOCH_FLOOR = datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC)
 
@@ -1540,6 +2133,14 @@ class EngineState:
     window_start: int = 0
     next_unstarted_index: int = 0
     per_peer: dict[str, int] = field(default_factory=dict)  # identity -> offset_id
+    # Sticky for the whole continuation: once Telegram answered inexactly (or a
+    # peer was unreachable), no later page may claim completeness (§23D).
+    uncertain: bool = False
+    # Cumulative over the continuation, as [global, *one per selected project]:
+    # peers searched to Telegram's own end, and peers the owner's live scope
+    # excluded (they leave the eligible set; they are never searched).
+    scanned: list[int] = field(default_factory=list)
+    excluded: list[int] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -1561,7 +2162,7 @@ def _iso(moment: datetime) -> str:
 
 
 def _parse(text: str) -> datetime:
-    return datetime.fromisoformat(text).astimezone(UTC)
+    return parse_time(text).astimezone(UTC)
 
 
 def rpc_bounds(since: str | None, upper: str) -> tuple[datetime | None, datetime]:
@@ -1579,7 +2180,10 @@ def rpc_bounds(since: str | None, upper: str) -> tuple[datetime | None, datetime
     lower = datetime.fromtimestamp(math.floor(_parse(since).timestamp()), UTC) - timedelta(
         seconds=1
     )
-    return max(lower, _EPOCH_FLOOR), upper_rpc
+    # At or before the epoch the widened bound would be Telegram's 0
+    # (unbounded) or negative. Over-fetching is safe (the post-filter is
+    # exact); under-fetching is not, so send no lower bound at all.
+    return (lower if lower >= _EPOCH_FLOOR else None), upper_rpc
 
 
 def _in_range(sent_at: str, since: str | None, upper: str) -> bool:
@@ -1597,7 +2201,9 @@ async def run_page(
     projects: Mapping[str, frozenset[str]],
     peer_cap: int | None = None,
     max_hits: int = 500,
+    max_pages: int = MAX_SEARCH_PAGES,
     accept: Callable[[str, Any], bool] = lambda peer, view: True,
+    rpcs_used: Callable[[], int] | None = None,
 ) -> PageResult:
     """One bounded page. ``state.upper_date`` is the frozen upper anchor.
 
@@ -1605,13 +2211,31 @@ async def run_page(
     reads use it to hold a page under the response cap. A refusal ends the
     page with that peer resuming *at* the refused hit, so nothing examined
     is ever lost or repeated.
+
+    Coverage counters are measured, never re-derived: ``rpcs_used`` reports
+    every Telegram request the call really made (dialog checks included), a
+    page's ``examined`` is the raw entries Telegram returned before any
+    filtering, a page with ``searched=False`` was decided without a search
+    request, and one with ``excluded=True`` left the eligible set.
     """
     searchable = list(universe[:peer_cap]) if peer_cap is not None else list(universe)
     capped = peer_cap is not None and len(universe) > peer_cap
     hits: list[Hit] = []
     reasons: list[str] = []
-    rpcs = examined = 0
+    rpcs = examined = pages = 0
     stopped = False
+    width = 1 + len(projects)
+    if not state.scanned:
+        state.scanned = [0] * width
+    if not state.excluded:
+        state.excluded = [0] * width
+    memberships = list(projects.values())
+
+    def count(vector: list[int], peer: str) -> None:
+        vector[0] += 1
+        for index, members in enumerate(memberships, start=1):
+            if peer in members:
+                vector[index] += 1
 
     def active() -> list[str]:
         return [
@@ -1644,16 +2268,23 @@ async def run_page(
             # Never ask for more than the page, Telegram's ceiling, or the
             # examined-hit budget still allows: nothing is examined and lost.
             want = min(limit - len(hits), MAX_PEER_PAGE, max_hits - examined)
+            if pages >= max_pages:  # §13.2: the closed reasons name this rpc_budget
+                reasons.append("rpc_budget")
+                stopped = True
+                break
             try:
                 page = await fetch(peer, state.per_peer[peer], want)
             except SearchStop as stop:
                 reasons.append(stop.reason)
                 stopped = True
                 break
-            rpcs += 1
-            examined += len(page.views)
-            if page.inexact and "telegram_partial" not in reasons:
-                reasons.append("telegram_partial")
+            searched = getattr(page, "searched", True)
+            if searched:
+                rpcs += 1
+                pages += 1
+            examined += getattr(page, "examined", len(page.views))
+            if page.inexact:
+                state.uncertain = True
             full = False
             for view in page.views[:want]:
                 if not _in_range(view.sent_at, since, state.upper_date):
@@ -1670,6 +2301,10 @@ async def run_page(
                 break
             if page.exhausted:
                 del state.per_peer[peer]
+                if getattr(page, "excluded", False):
+                    count(state.excluded, peer)
+                elif searched:
+                    count(state.scanned, peer)
             else:
                 state.per_peer[peer] = int(page.next_offset)
             if examined >= max_hits:  # spec §13.2: at most 500 examined hits per call
@@ -1681,26 +2316,31 @@ async def run_page(
 
     advance()
     remaining = bool(active()) or state.next_unstarted_index < len(searchable)
+    if state.uncertain:
+        reasons.append("telegram_partial")
     if capped:
         reasons.append("peer_budget")
     if remaining:
         reasons.append("response_limit")
     complete = not reasons
     hits.sort(key=lambda h: (h.view.sent_at, h.peer, h.view.message_id), reverse=True)
-    scanned = set(searchable[: state.next_unstarted_index])
+    # Scanned means searched to Telegram's own end (never merely started: the
+    # window starts up to 64 peers before a request). Eligible excludes the
+    # peers the owner's live scope has excluded so far; an unreachable peer
+    # stays eligible and unscanned.
     project_coverage = [
         {
             "project_ref": ref,
-            "eligible_peers": sum(1 for p in universe if p in members),
-            "peers_scanned": sum(1 for p in scanned if p in members),
+            "eligible_peers": sum(1 for p in universe if p in members) - state.excluded[index],
+            "peers_scanned": state.scanned[index],
         }
-        for ref, members in projects.items()
+        for index, (ref, members) in enumerate(projects.items(), start=1)
     ]
     coverage = build_coverage(
         complete=complete,
-        eligible_peers=len(universe),
-        peers_scanned=len(scanned),
-        telegram_rpcs=rpcs,
+        eligible_peers=len(universe) - state.excluded[0],
+        peers_scanned=state.scanned[0],
+        telegram_rpcs=rpcs_used() if rpcs_used is not None else rpcs,
         hits_examined=examined,
         hits_returned=len(hits),
         partial_reasons=_ordered(reasons),
@@ -1725,15 +2365,15 @@ def _ordered(reasons: Sequence[str]) -> list[str]:
 
 - [ ] **Step 4: Run them and watch them pass**
 
-Run: `uv run pytest tests/unit/test_search_engine.py -q`
-Expected: 361 passed (observed in the staged proof).
+Run: `uv run pytest tests/unit/test_search_engine.py tests/unit/test_validation.py -q`
+Expected: 408 passed (observed in the staged proof).
 
 - [ ] **Step 5: Commit** (format, check, full gate first)
 
-Full gate expected at this task: suite 1244 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
+Full gate expected at this task: suite 1278 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
 
 ```bash
-git add tests/unit/test_search_engine.py src/telegram_mcp/telegram/search.py
+git add tests/unit/test_search_engine.py tests/unit/test_validation.py src/telegram_mcp/validation.py src/telegram_mcp/telegram/search.py
 git commit -m "feat: add the search continuation engine with honest coverage
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
@@ -1750,7 +2390,7 @@ Spec §20.4, §21.4, §21A.4, §23.1–§23.7; design §4.1–§4.5.
 **`SearchAuthority`.** Both searches share one snapshot:
 - **Universe.** It is the canonical-sorted readable members of the project (optionally narrowed by `peer_ref`), or the de-duplicated union for cross-project search, which requires `can_read` and `can_cross_search` on every selected project.
 - **Cursor.** The frozen hierarchy runs first, then the universe digest (`CURSOR_PROJECT_CHANGED`).
-- **Upper anchor.** It is the earlier of `until` and now, frozen across pages.
+- **Upper anchor.** It is the earlier of `until` and now, frozen across pages. `until` is exclusive and Telegram dates are whole seconds, so a fractional `until` rounds up.
 - **Estimate.** It uses the widest grant, charged to every selected project's bucket.
 - **Revalidation.** It compares every selected project's readable set.
 - **Egress.** Each record takes the intersection of its own projects' grants.
@@ -2043,6 +2683,22 @@ def test_query_text_never_reaches_the_database(world):
     conn.commit()
     for path in tmp.glob("meta.db*"):
         assert b"needle" not in path.read_bytes()
+
+
+def test_until_is_exclusive_to_the_second_and_any_rfc3339_case(world):
+    _conn, _authority, snap, _refs, _tmp = world
+    _a, fraction = snap(
+        "telegram_search_messages",
+        project_ref=PROJECT_REF,
+        query="x",
+        until="2026-01-01T10:00:00.5Z",
+    )
+    # A message sent at 10:00:00 is before 10:00:00.5 and must stay in range.
+    assert fraction.upper_date == "2026-01-01T10:00:01Z"
+    _b, lower = snap(
+        "telegram_search_messages", project_ref=PROJECT_REF, query="x", until="2026-01-01t10:00:00z"
+    )
+    assert lower.upper_date == "2026-01-01T10:00:00Z"
 ```
 
 Apply to `tests/integration/test_project_snapshot.py`:
@@ -2117,8 +2773,8 @@ Apply to `scripts/e2e_smoke.py`:
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `uv run pytest tests/integration/test_search_snapshot.py tests/integration/test_project_snapshot.py tests/integration/test_phase4a_end_to_end.py -q`
-Expected: `ImportError: cannot import name 'SearchSnapshot'` (collection of `test_search_snapshot.py`); the moved pins fail until the seams serve `get_context`.
-Observed in the staged proof: 1 error in 8.16s; first error: `ModuleNotFoundError: No module named 'telegram_mcp.disclosure.search_authority'`.
+Expected: `ModuleNotFoundError: No module named 'telegram_mcp.disclosure.search_authority'`: collection stops at `test_search_snapshot.py`, so the moved pins do not run in this step. Run them alone to watch them fail (`uv run pytest tests/integration/test_project_snapshot.py tests/integration/test_phase4a_end_to_end.py -q`): 1 failed, 16 passed. The 4a pin fails, because `get_context` still answers `POLICY_UNCONFIGURED` rather than `AUTH_REQUIRED`. The snapshot pin already passes, because it now names `telegram_status`, which was never served.
+Observed in the staged proof: 1 error in 3.57s; first error: `ModuleNotFoundError: No module named 'telegram_mcp.disclosure.search_authority'`.
 
 - [ ] **Step 3: Implement**
 
@@ -2192,6 +2848,7 @@ never searched.
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
@@ -2221,6 +2878,7 @@ from telegram_mcp.storage.authority_view import (
 )
 from telegram_mcp.storage.refstore import RefStore
 from telegram_mcp.telegram.search import universe_digest
+from telegram_mcp.validation import parse_time
 
 __all__ = ["CROSS_PEER_CAP", "SEARCH_TOOLS", "SearchAuthority", "SearchSnapshot", "SelectedProject"]
 
@@ -2420,9 +3078,13 @@ class SearchAuthority:
                 raise AuthorityRefusal("CURSOR_PROJECT_CHANGED")
         now = datetime.fromtimestamp(self._clock(), UTC)
         until = args.get("until")
-        upper = state.get("upper_date") or _iso(
-            min(now, datetime.fromisoformat(until)) if until else now
+        # ``until`` is exclusive and Telegram dates are whole seconds, so a
+        # fractional ``until`` rounds up: a message at 10:00:00 stays before
+        # an ``until`` of 10:00:00.5.
+        ceiling = (
+            datetime.fromtimestamp(math.ceil(parse_time(until).timestamp()), UTC) if until else None
         )
+        upper = state.get("upper_date") or _iso(min(now, ceiling) if ceiling else now)
         return SearchSnapshot(
             principal_id=principal.principal_id,
             client_id=principal.client_id,
@@ -2724,11 +3386,11 @@ Apply to `src/telegram_mcp/disclosure/seams.py`:
 - [ ] **Step 4: Run them and watch them pass**
 
 Run: `uv run pytest tests/integration/test_search_snapshot.py tests/integration/test_project_snapshot.py tests/integration/test_phase4a_end_to_end.py -q`
-Expected: 30 passed (observed in the staged proof).
+Expected: 31 passed (observed in the staged proof).
 
 - [ ] **Step 5: Commit** (format, check, full gate first)
 
-Full gate expected at this task: suite 1257 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
+Full gate expected at this task: suite 1292 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
 
 ```bash
 git add tests/authority_fixtures.py tests/integration/test_search_snapshot.py tests/integration/test_project_snapshot.py tests/integration/test_phase4a_end_to_end.py scripts/e2e_smoke.py src/telegram_mcp/authority/policy.py src/telegram_mcp/storage/refstore.py src/telegram_mcp/disclosure/search_authority.py src/telegram_mcp/disclosure/seams.py
@@ -2751,9 +3413,12 @@ Spec §13.5, §20, §21, §21A; design §4.1–§4.5 and §4.7.
 
 **The searches:**
 - They drive the engine.
-- **Owner switches.** A batched dialog check before each peer is first searched applies the owner's chat-kind switches. Excluded peers are never searched; unreachable ones make the result `telegram_partial`.
+- **Owner switches.** A dialog check applies the owner's chat-kind switches before a peer is searched in each call. It is one batched request for every active peer the call has not checked yet, so a continuation that resumes mid-walk peers does not pay one request per peer. Excluded peers are never searched; unreachable ones make the result `telegram_partial`.
+- **Cursor state.** It is restored strictly: a `per_peer` ref that does not resolve refuses (`INTERNAL_ERROR`), rather than reading as exhausted and skipping the peer. `uncertain`, `scanned_counts` and `excluded_counts` round-trip.
 - **Ordering.** Records are sorted newest-first with `message_ref` as the tie-break.
-- **Bytes.** Pages are byte-accounted through `accept()`.
+- **Both caps.** `accept()` admits hits through the shared `PageBudget`, bytes and codepoints alike.
+- **Measured RPCs.** Coverage takes `telegram_rpcs` from the call's `WorkBudget`.
+- **Forum classification.** It comes from the fetched dialog as well as the by-id response, so a response that omits the chat entity cannot turn a forum into an ordinary chat.
 - **Sidecars.** The `_coverage`, `_partial` and `_next_cursor` sidecars are set honestly.
 - **Fault injection.** It proves all six `partial_reasons`.
 
@@ -3073,6 +3738,27 @@ async def test_a_flood_wait_on_the_window_is_flood_wait(world):
     with pytest.raises(RetrievalRefusal) as exc:
         await reads.get_context(args, s)
     assert (exc.value.code, exc.value.retry_after) == ("FLOOD_WAIT", 9)
+
+
+async def test_forum_classification_comes_from_the_dialog(world):
+    """A by-id response that omits the chat entity must not turn a forum ordinary."""
+    conn, fake, reads, snap, _refs = world
+    peer = types.PeerChannel(7)
+    thread = [_msg(12, peer, root=True)] + [_msg(i, peer, topic=12) for i in (20, 22, 24)]
+    _forum_world(fake, thread)
+    fake.script["channels.GetMessagesRequest"] = _by_ids(thread, chats=(), users=())
+    fake.script["messages.GetHistoryRequest"] = types.messages.Messages(  # the wrong path
+        messages=[], topics=[], chats=[], users=[]
+    )
+    fake.script["messages.GetRepliesRequest"] = lambda r: types.messages.Messages(
+        messages=[m for m in thread[1:] if m.id != 22], topics=[], chats=[FORUM], users=[]
+    )
+    args, s = snap(
+        "telegram_get_context", message_ref=_anchor_ref(conn, "channel:7", 22), before=1, after=1
+    )
+    await reads.get_context(args, s)
+    assert "messages.GetRepliesRequest" in fake.calls
+    assert "messages.GetHistoryRequest" not in fake.calls
 ```
 
 Create `tests/integration/test_search_reads.py`:
@@ -3130,9 +3816,16 @@ def _search_server(corpus, *, inexact=()):
             )
             for i, m in page
         ]
-        if identity in inexact:
+        if identity in inexact or len(rows) > len(page):
+            # Like Telegram: a slice while more remain (or when it is unsure),
+            # the plain messages type only for everything that is left.
             return types.messages.MessagesSlice(
-                count=99, inexact=True, messages=messages, topics=[], chats=[], users=[]
+                count=len(rows),
+                inexact=identity in inexact,
+                messages=messages,
+                topics=[],
+                chats=[],
+                users=[],
             )
         return types.messages.Messages(messages=messages, topics=[], chats=[], users=[])
 
@@ -3382,6 +4075,160 @@ async def test_a_flood_wait_fails_the_call(world):
     with pytest.raises(RetrievalRefusal) as exc:
         await reads.search_messages(args, s)
     assert (exc.value.code, exc.value.retry_after) == ("FLOOD_WAIT", 4)
+
+
+async def _pages(reads, snap, **args):
+    out, cursor = [], None
+    for _page in range(40):
+        extra = {"cursor": cursor} if cursor else {}
+        a, s = snap(
+            "telegram_search_messages", project_ref=PROJECT_REF, query="needle", **args, **extra
+        )
+        data, side = _check(await reads.search_messages(a, s))
+        out.append((data, side))
+        cursor = side.get("_next_cursor")
+        if cursor is None:
+            return out
+    raise AssertionError("continuation never ended")
+
+
+async def test_telegram_uncertainty_survives_the_cursor(world):
+    _conn, fake, reads, snap, _refs = world
+    search, _seen = _search_server(
+        {"chat:9": [(i, i) for i in range(10, 14)], "user:100": [(i, i) for i in range(1, 4)]},
+        inexact={"chat:9"},
+    )
+    fake.script["messages.SearchRequest"] = search
+    pages = await _pages(reads, snap, limit=2)
+    first = next(
+        i
+        for i, (_d, side) in enumerate(pages)
+        if "telegram_partial" in side["_coverage"]["partial_reasons"]
+    )
+    assert first == 0 and len(pages) > 1
+    for _data, side in pages[first:]:
+        assert "telegram_partial" in side["_coverage"]["partial_reasons"]
+        assert side["_coverage"]["complete"] is False
+    assert sum(len(d["results"]) for d, _s in pages) == 7
+
+
+async def test_a_continuation_checks_dialogs_in_one_batch(world):
+    _conn, fake, reads, snap, _refs = world
+
+    def withholding(request):  # one hit per request, and always "more": a buggy channel
+        identity = _peer_key(request.peer)
+        top = (request.offset_id or 50) - 1
+        return types.messages.MessagesSlice(
+            count=99,
+            messages=[
+                types.Message(id=top, peer_id=_telegram_peer(identity), date=BASE, message="needle")
+            ],
+            topics=[],
+            chats=[],
+            users=[],
+        )
+
+    fake.script["messages.SearchRequest"] = withholding
+    a, s = snap("telegram_search_messages", project_ref=PROJECT_REF, query="needle", limit=2)
+    _data, side = _check(await reads.search_messages(a, s))
+    a, s = snap(
+        "telegram_search_messages",
+        project_ref=PROJECT_REF,
+        query="needle",
+        limit=2,
+        cursor=side["_next_cursor"],
+    )
+    fake.calls.clear()
+    _check(await reads.search_messages(a, s))
+    assert fake.calls.count("messages.GetPeerDialogsRequest") == 1, fake.calls
+
+
+async def test_a_cursor_naming_an_unknown_peer_fails_closed(world):
+    _conn, fake, reads, snap, _refs = world
+    fake.script["messages.SearchRequest"] = _search_server({})[0]
+    a, s = snap("telegram_search_messages", project_ref=PROJECT_REF, query="needle", limit=2)
+    s = dataclasses.replace(
+        s, state={"per_peer": {"tgp_" + "z" * 26: {"offset_id": 5}}, "next_unstarted_index": 3}
+    )
+    with pytest.raises(RetrievalRefusal) as exc:
+        await reads.search_messages(a, s)
+    assert exc.value.code == "INTERNAL_ERROR"
+
+
+async def test_coverage_counts_every_telegram_request_the_call_made(world):
+    """Dialog checks are Telegram RPCs too (spec §13.2's 20)."""
+    conn, fake, reads, snap, _refs = world
+    conn.execute("UPDATE policy_state SET include_archived = 1, policy_epoch = policy_epoch + 1")
+    conn.commit()  # every peer is really searched: no non-request to miscount
+    search, _seen = _search_server(
+        {"user:100": [(1, 1)], "chat:9": [(2, 2)], "channel:7": [(3, 3)]}
+    )
+    fake.script["messages.SearchRequest"] = search
+    a, s = snap("telegram_search_messages", project_ref=PROJECT_REF, query="needle", limit=20)
+    _data, side = _check(await reads.search_messages(a, s))
+    made = [c for c in fake.calls if c.startswith(("messages.", "channels."))]
+    assert "messages.GetPeerDialogsRequest" in made
+    assert side["_coverage"]["telegram_rpcs"] == len(made)
+
+
+async def test_an_owner_excluded_peer_is_not_eligible(world):
+    """Spec §21.4: the universe is the project after intersection with owner scope."""
+    _conn, fake, reads, snap, _refs = world
+    search, seen = _search_server({"user:100": [(1, 1)], "chat:9": [(2, 2)]})
+    fake.script["messages.SearchRequest"] = search
+    a, s = snap("telegram_search_messages", project_ref=PROJECT_REF, query="needle", limit=20)
+    _data, side = _check(await reads.search_messages(a, s))
+    c = side["_coverage"]
+    assert "channel:7" not in {identity for identity, _ in seen}  # archived: owner excludes it
+    assert (c["eligible_peers"], c["peers_scanned"], c["complete"]) == (2, 2, True)
+    assert c["project_coverage"][0]["eligible_peers"] == 2
+
+
+async def test_a_search_page_holds_combined_text_under_32000_codepoints(world):
+    _conn, fake, reads, snap, _refs = world
+    corpus = {"user:100": [(i, i) for i in range(1, 11)]}
+
+    def search(request):
+        if _peer_key(request.peer) != "user:100":
+            return types.messages.Messages(messages=[], topics=[], chats=[], users=[])
+        rows = sorted(
+            (r for r in corpus["user:100"] if not request.offset_id or r[0] < request.offset_id),
+            key=lambda r: -r[0],
+        )
+        page = rows[: request.limit]
+        cls = types.messages.MessagesSlice if len(rows) > len(page) else types.messages.Messages
+        extra = {"count": len(rows)} if cls is types.messages.MessagesSlice else {}
+        return cls(
+            messages=[
+                types.Message(
+                    id=i,
+                    peer_id=types.PeerUser(100),
+                    date=BASE + timedelta(minutes=m),
+                    message="a" * 4000,  # ASCII: the codepoint cap binds first
+                )
+                for i, m in page
+            ],
+            topics=[],
+            chats=[],
+            users=[],
+            **extra,
+        )
+
+    fake.script["messages.SearchRequest"] = search
+    got, cursor, first = [], None, None
+    for _page in range(10):
+        extra = {"cursor": cursor} if cursor else {}
+        a, s = snap(
+            "telegram_search_messages", project_ref=PROJECT_REF, query="needle", limit=10, **extra
+        )
+        data, side = _check(await reads.search_messages(a, s))
+        first = first or data
+        got += [r["message_ref"] for r in data["results"]]
+        cursor = side.get("_next_cursor")
+        if cursor is None:
+            break
+    assert sum(len(r["text"]) for r in first["results"]) <= 32_000 and len(first["results"]) < 10
+    assert len(got) == 10 and len(set(got)) == 10
 ```
 
 Create `tests/integration/test_exposure_bound_invariant_4c.py`:
@@ -3505,7 +4352,7 @@ async def test_actual_charge_never_exceeds_the_reservation(world, egress):
 
 Run: `uv run pytest tests/integration/test_telegram_reads.py tests/integration/test_get_context.py tests/integration/test_search_reads.py tests/integration/test_exposure_bound_invariant_4c.py -q`
 Expected: `AttributeError: 'TelegramReads' object has no attribute 'get_context'`, and `TypeError: ... unexpected keyword argument 'mint_search_cursor'`.
-Observed in the staged proof: 10 failed, 17 passed, 16 errors in 10.65s; first error: `TypeError: TelegramReads.__init__() got an unexpected keyword argument 'mint_search_cursor'`.
+Observed in the staged proof: 11 failed, 17 passed, 22 errors in 5.94s; first error: `TypeError: TelegramReads.__init__() got an unexpected keyword argument 'mint_search_cursor'`.
 
 - [ ] **Step 3: Implement**
 
@@ -3514,20 +4361,21 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 ```diff
 --- a/src/telegram_mcp/telegram/reads.py
 +++ b/src/telegram_mcp/telegram/reads.py
-@@ -12,9 +12,12 @@
+@@ -12,6 +12,7 @@
  
  import sqlite3
  from collections.abc import Callable, Mapping
 +from dataclasses import dataclass
  from typing import Any
  
-+from telegram_mcp.consent.challenge import jcs_dumps
  from telegram_mcp.disclosure.bounds import (
-+    DATA_BYTES_MAX,
-     MEDIA_KIND_MAX,
+@@ -19,17 +20,38 @@
      NAME_MAX,
      TEXT_MAX,
-@@ -24,12 +27,32 @@
+     USERNAME_MAX,
++    PageBudget,
+     clamp,
+     fit,
  )
  from telegram_mcp.disclosure.coordinator import RetrievalRefusal
  from telegram_mcp.disclosure.seams import ProjectSnapshot, normalise
@@ -3560,7 +4408,7 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
  _RANK = {
      "exact_display_name": 0,
      "exact_username": 1,
-@@ -65,12 +88,15 @@
+@@ -65,12 +87,15 @@
          conn: sqlite3.Connection,
          *,
          mint_cursor: Callable[[ProjectSnapshot, Mapping[str, Any], Mapping[str, Any]], str],
@@ -3576,11 +4424,10 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
          self._deadline_s = deadline_s
          self._max_rpcs = max_rpcs
  
-@@ -157,6 +183,55 @@
-                 nxt["anchor_date"] = first_newest
+@@ -158,6 +183,55 @@
              data["_next_cursor"] = self._mint(snapshot, arguments, nxt)
          return data
-+
+ 
 +    def _message_record(
 +        self, view: Any, chat: PeerRow, snapshot: ProjectSnapshot, refs: RefStore
 +    ) -> dict[str, Any]:
@@ -3629,10 +4476,11 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 +        if dialog is None or not snapshot.owner_scope.admits(dialog.chat_type, dialog.is_archived):
 +            raise GatewayError("NOT_ACCESSIBLE")
 +        return dialog
- 
++
      def _project(self, snapshot: ProjectSnapshot) -> dict[str, str]:
          return {"project_ref": snapshot.project_ref, "display_name": snapshot.project_display_name}
-@@ -332,39 +407,7 @@
+ 
+@@ -332,39 +406,7 @@
              username=clamp(dialog.username, USERNAME_MAX)[0],
          )
          anchor = anchor or (views[0].message_id if views else 0)
@@ -3673,7 +4521,7 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
          data: dict[str, Any] = {
              "project": self._project(snapshot),
              "peer": {
-@@ -383,5 +426,378 @@
+@@ -383,5 +425,390 @@
          if offset:
              data["_next_cursor"] = self._mint(
                  snapshot, arguments, {"anchor_id": anchor, "offset_id": offset}
@@ -3707,11 +4555,14 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 +                client_ref=snapshot.client_ref,
 +                deadline=deadline,
 +                budget=budget,
-+            )
+             )
 +            anchor = next((v for v in found if v.message_id == anchor_id), None)
 +            if anchor is None:
 +                raise GatewayError("MESSAGE_NOT_FOUND")
-+            topic = _topic_of(anchor, is_forum)
++            # The dialog already says whether the chat is a forum; the by-id
++            # response may omit the chat entity. Either signal classifies it as
++            # a forum, which only ever narrows the window to one topic.
++            topic = _topic_of(anchor, dialog.is_forum or is_forum)
 +            older, newer, partial = await self._window(
 +                snapshot, peer_type, peer_id, anchor, topic, before, after, deadline, budget
 +            )
@@ -3748,7 +4599,7 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 +        ][:_CONTEXT_MAX]
 +        if partial:
 +            data["_partial"] = True
-+        return data
+         return data
 +
 +    async def _window(
 +        self,
@@ -3855,7 +4706,7 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 +                min(v.message_id for v in views)
 +                if side == "older"
 +                else max(v.message_id for v in views)
-             )
++            )
 +            found += [v for v in views if not (general and v.forum_topic)]
 +            if not general:
 +                return found[:want], False
@@ -3888,24 +4739,29 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 +        cross = snapshot.tool_name == "telegram_cross_project_search"
 +        rows = refs.peers_by_identities(snapshot.universe)
 +        by_ref = {row.peer_ref: identity for identity, row in rows.items()}
-+        per_peer = {
-+            by_ref[ref]: int(entry["offset_id"])
-+            for ref, entry in snapshot.state.get("per_peer", {}).items()
-+            if ref in by_ref
-+        }
++        per_peer = {}
++        for ref, entry in snapshot.state.get("per_peer", {}).items():
++            if ref not in by_ref:  # never read as "exhausted": that would skip a peer
++                raise RetrievalRefusal("INTERNAL_ERROR")
++            per_peer[by_ref[ref]] = int(entry["offset_id"])
 +        state = EngineState(
 +            upper_date=snapshot.upper_date,
 +            window_start=int(snapshot.state.get("window_start", 0)),
 +            next_unstarted_index=int(snapshot.state.get("next_unstarted_index", 0)),
 +            per_peer=per_peer,
++            uncertain=bool(snapshot.state.get("uncertain", 0)),
++            scanned=list(snapshot.state.get("scanned_counts", [])),
++            excluded=list(snapshot.state.get("excluded_counts", [])),
 +        )
 +        min_date, max_date = rpc_bounds(snapshot.since, snapshot.upper_date)
 +        admitted: dict[str, bool | None] = {}  # None: not reachable in the entity cache
 +        names: dict[str, str] = {}
 +
 +        async def check_new_peers(first: str) -> None:
-+            fresh = [p for p, off in state.per_peer.items() if off == 0 and p not in admitted]
-+            fresh = [first, *[p for p in fresh if p != first]][:100]
++            # Every active peer this call has not checked yet, in one request:
++            # a continuation resumes mid-walk peers, not only unstarted ones.
++            fresh = [p for p in state.per_peer if p not in admitted and p != first]
++            fresh = [first, *fresh][:100]
 +            views = await self._session.peer_dialogs(
 +                [_split(p) for p in fresh],
 +                client_ref=snapshot.client_ref,
@@ -3926,7 +4782,7 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 +                    await check_new_peers(peer)
 +                verdict = admitted[peer]
 +                if not verdict:  # excluded by owner scope, or unreachable: never searched
-+                    return _Nothing(inexact=verdict is None)
++                    return _Nothing(inexact=verdict is None, excluded=verdict is False)
 +                peer_type, peer_id = _split(peer)
 +                return await self._session.search_peer(
 +                    peer_type,
@@ -3969,8 +4825,7 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 +                "search_scope": "peer" if snapshot.peer_ref else "project",
 +            }
 +        )
-+        room = DATA_BYTES_MAX - len(jcs_dumps({**container, "results": []}))
-+        used = [0]
++        page_budget = PageBudget({**container, "results": []})
 +
 +        def record(peer: str, view: Any, message_ref: str) -> dict[str, Any]:
 +            text, cut = clamp(view.text, TEXT_MAX)
@@ -3994,11 +4849,8 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 +            return hit
 +
 +        def accept(peer: str, view: Any) -> bool:
-+            size = len(jcs_dumps(record(peer, view, "tgm_" + "a" * 26))) + 1  # refs are fixed width
-+            if used[0] + size > room:
-+                return False
-+            used[0] += size
-+            return True
++            # Both §13.2 caps (bytes and combined codepoints); refs are fixed width.
++            return page_budget.take(record(peer, view, "tgm_" + "a" * 26))
 +
 +        result = await run_page(
 +            list(snapshot.universe),
@@ -4009,6 +4861,7 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 +            peer_cap=snapshot.peer_cap,
 +            accept=accept,
 +            projects={p.project_ref: p.readable for p in snapshot.projects},
++            rpcs_used=lambda: budget.used,  # measured: dialog checks are RPCs too
 +        )
 +        results = []
 +        for hit in result.hits:
@@ -4039,16 +4892,23 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 +                        rows[peer].peer_ref: {"offset_id": offset}
 +                        for peer, offset in result.state.per_peer.items()
 +                    },
++                    "uncertain": int(result.state.uncertain),
++                    "scanned_counts": result.state.scanned,
++                    "excluded_counts": result.state.excluded,
 +                },
 +            )
-         return data
++        return data
 +
 +
 +@dataclass(frozen=True)
 +class _Nothing:
-+    """A peer the owner's switches exclude (or the cache cannot reach): not searched."""
++    """A peer decided without a search request: the owner's live scope excludes
++    it (it leaves the eligible set), or the entity cache cannot reach it (it
++    stays eligible, unscanned, and the result is ``telegram_partial``)."""
 +
 +    inexact: bool
++    excluded: bool
++    searched: bool = False
 +    views: tuple[()] = ()
 +    exhausted: bool = True
 +    next_offset: None = None
@@ -4057,13 +4917,13 @@ Apply to `src/telegram_mcp/telegram/reads.py`:
 - [ ] **Step 4: Run them and watch them pass**
 
 Run: `uv run pytest tests/integration/test_telegram_reads.py tests/integration/test_get_context.py tests/integration/test_search_reads.py tests/integration/test_exposure_bound_invariant_4c.py -q`
-Expected: 43 passed (observed in the staged proof).
+Expected: 50 passed (observed in the staged proof).
 
 **Control run (record it in the ledger):** Change `_W = "\x01"` in `bounds.py` to `_W = "a"`: `test_exposure_bound_invariant_4c.py` must fail all three cases. Restore it. The dry run observed exactly that: 3 failed, then 3 passed.
 
 - [ ] **Step 5: Commit** (format, check, full gate first)
 
-Full gate expected at this task: suite 1285 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
+Full gate expected at this task: suite 1327 passed, 10 skipped; smoke 49 passed, 0 failed, 0 skipped — 49 checks.
 
 ```bash
 git add tests/integration/test_telegram_reads.py tests/integration/test_get_context.py tests/integration/test_search_reads.py tests/integration/test_exposure_bound_invariant_4c.py src/telegram_mcp/telegram/reads.py
@@ -4078,7 +4938,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 Spec §14.1A, §21A.4, §23D; design §4.4–§4.5 and §4.7.
 
-**Coverage gate.** For both searches, the coordinator refuses with `PROOF_GENERATION_FAILED` unless all of the following hold, in which case nothing is signed:
+**Coverage consistency gate.** It proves consistency, not truth: truth comes from the measured counters of Tasks 2, 4 and 6. For both searches, the coordinator refuses with `PROOF_GENERATION_FAILED` unless all of the following hold, in which case nothing is signed:
 - the coverage object exists;
 - it satisfies the §23D chain against the cursor and `meta.partial`;
 - its `hits_returned` equals the records disclosed.
@@ -4090,7 +4950,8 @@ Spec §14.1A, §21A.4, §23D; design §4.4–§4.5 and §4.7.
 **Proof.** An end-to-end run through the real ingress proves:
 - a signed coverage digest;
 - `get_context`;
-- the shared-peer race, discarded at step 8 with no receipt.
+- the shared-peer race, discarded at step 8 with no receipt;
+- that a random canary query reaches no file under the runtime directory and no log line, on success and on failure.
 
 The smoke gains four Phase-4c rows.
 
@@ -4112,7 +4973,13 @@ The smoke gains four Phase-4c rows.
 Create `tests/integration/test_coordinator_coverage.py`:
 
 ```python
-"""§23D/§14.1A at the coordinator: no search result is signed without honest coverage."""
+"""§23D/§14.1A at the coordinator: no search result is signed with inconsistent coverage.
+
+This gate proves consistency (with itself, the cursor, meta.partial and the
+records disclosed). The counters' truth comes from measurement upstream: the
+work budget for RPCs, raw Telegram entries for hits examined, and the engine's
+per-peer exhaustion for peers scanned (test_search_engine, test_search_reads).
+"""
 
 import hashlib
 
@@ -4180,7 +5047,7 @@ def _coordinator(tmp_path):
     return coordinator, conn
 
 
-async def test_honest_coverage_is_signed_into_the_receipt(tmp_path):
+async def test_consistent_coverage_is_signed_into_the_receipt(tmp_path):
     coordinator, conn = _coordinator(tmp_path)
     coverage = _coverage()
     outcome = await coordinator.disclose(
@@ -4206,7 +5073,7 @@ async def test_honest_coverage_is_signed_into_the_receipt(tmp_path):
         {"_coverage": _coverage(), "_partial": True},  # complete yet partial
     ],
 )
-async def test_dishonest_coverage_is_never_signed(tmp_path, side):
+async def test_inconsistent_coverage_is_never_signed(tmp_path, side):
     coordinator, conn = _coordinator(tmp_path)
     outcome = await coordinator.disclose(
         tool_name="telegram_search_messages", arguments={}, adapter=_Adapter(side)
@@ -4251,8 +5118,11 @@ Create `tests/integration/test_phase4c_end_to_end.py`:
 """The three 4c tools through ingress, consent and coordinator on a fake Telegram."""
 
 import hashlib
+import logging
+import secrets
 from datetime import UTC, datetime, timedelta
 
+from telethon import errors
 from telethon.tl import types
 
 from telegram_mcp.consent.challenge import jcs_dumps
@@ -4273,18 +5143,19 @@ def _hits(request, identity_to_rows):
     )
     make = {"user": types.PeerUser, "chat": types.PeerChat, "channel": types.PeerChannel}[key[0]]
     rows = identity_to_rows.get(f"{key[0]}:{key[1]}", [])
-    rows = [r for r in rows if not request.offset_id or r < request.offset_id][: request.limit]
-    return types.messages.Messages(
-        messages=[
-            types.Message(
-                id=i, peer_id=make(key[1]), date=BASE + timedelta(minutes=i), message=f"needle {i}"
-            )
-            for i in rows
-        ],
-        topics=[],
-        chats=[],
-        users=[],
-    )
+    rows = [r for r in rows if not request.offset_id or r < request.offset_id]
+    page = rows[: request.limit]
+    messages = [
+        types.Message(
+            id=i, peer_id=make(key[1]), date=BASE + timedelta(minutes=i), message=f"needle {i}"
+        )
+        for i in page
+    ]
+    if len(rows) > len(page):  # like Telegram: a slice while more remain
+        return types.messages.MessagesSlice(
+            count=len(rows), messages=messages, topics=[], chats=[], users=[]
+        )
+    return types.messages.Messages(messages=messages, topics=[], chats=[], users=[])
 
 
 def _receipts(world):
@@ -4370,6 +5241,43 @@ async def test_a_shared_peer_removed_between_retrieve_and_commit_is_discarded(
         assert _receipts(world) == before
     finally:
         await _close(world)
+
+
+async def test_the_query_text_never_leaves_memory(tmp_path, monkeypatch, caplog):
+    """Design §3.4 / spec §21.5: a random canary query, on a success that mints a
+    cursor and on a Telegram failure, never reaches any file under the runtime
+    directory (SQLite and its WAL/SHM, keys, sockets, session) or any log line."""
+    caplog.set_level(logging.DEBUG)
+    canary = "canary" + secrets.token_hex(12)
+    world = await _world(tmp_path, monkeypatch)
+    try:
+        world["fake"].script["messages.SearchRequest"] = lambda r: _hits(r, {"user:100": [3, 2, 1]})
+        ok = await call(
+            world,
+            CODEX,
+            "telegram_search_messages",
+            {"project_ref": PROJECT_REF, "query": canary, "limit": 2},
+        )
+        assert ok["ok"] is True and ok["meta"]["next_cursor"], ok
+        world["fake"].script["messages.SearchRequest"] = errors.FloodWaitError(
+            request=None, capture=3
+        )
+        failed = await call(
+            world,
+            CODEX,
+            "telegram_search_messages",
+            {"project_ref": PROJECT_REF, "query": canary},
+        )
+        assert failed["ok"] is False, failed
+        world["conn"].commit()
+    finally:
+        await _close(world)
+    needle = canary.encode()
+    leaks = [
+        str(path) for path in tmp_path.rglob("*") if path.is_file() and needle in path.read_bytes()
+    ]
+    assert leaks == []
+    assert canary not in caplog.text
 ```
 
 Apply to `scripts/e2e_smoke.py`:
@@ -4532,8 +5440,8 @@ Apply to `scripts/e2e_smoke.py`:
 - [ ] **Step 2: Run them and watch them fail**
 
 Run: `uv run pytest tests/integration/test_coordinator_coverage.py tests/unit/test_exposure_and_display.py tests/integration/test_phase4c_end_to_end.py -q`
-Expected: the dishonest-coverage cases are released (the gate is missing); the display test finds no warning; the end-to-end calls answer `INTERNAL_ERROR` because the tools are not routed.
-Observed in the staged proof: 8 failed, 6 passed in 7.29s; first error: `telegram_mcp.disclosure.receipts.ReceiptError: search tools require a coverage digest`.
+Expected: the no-coverage case already raises `ReceiptError: search tools require a coverage digest` from the receipt layer (the first error), the other inconsistent cases are released because the gate is missing, the display test finds no warning, and the end-to-end calls answer `INTERNAL_ERROR` because the tools are not routed.
+Observed in the staged proof: 9 failed, 6 passed in 4.10s; first error: `telegram_mcp.disclosure.receipts.ReceiptError: search tools require a coverage digest`.
 
 - [ ] **Step 3: Implement**
 
@@ -4632,15 +5540,17 @@ Apply to `src/telegram_mcp/runtime/composition.py`:
 - [ ] **Step 4: Run them and watch them pass**
 
 Run: `uv run pytest tests/integration/test_coordinator_coverage.py tests/unit/test_exposure_and_display.py tests/integration/test_phase4c_end_to_end.py -q`
-Expected: 14 passed (observed in the staged proof).
+Expected: 15 passed (observed in the staged proof).
+
+**Control run (record it in the ledger):** Plant a leak at the top of `TelegramReads._search`, first `logging.getLogger("telegram_mcp.leak").debug("q=%s", snapshot.query)`, then an `INSERT` of `snapshot.query` into a scratch table. Each must fail `test_the_query_text_never_leaves_memory`, the first in the captured log and the second in `meta.db-wal`. Remove each plant. The dry run observed exactly that.
 
 - [ ] **Step 5: Commit** (format, check, full gate first)
 
-Full gate expected at this task: suite 1294 passed, 10 skipped; smoke 53 passed, 0 failed, 0 skipped — 53 checks.
+Full gate expected at this task: suite 1337 passed, 10 skipped; smoke 53 passed, 0 failed, 0 skipped — 53 checks.
 
 ```bash
 git add tests/integration/test_coordinator_coverage.py tests/unit/test_exposure_and_display.py tests/integration/test_phase4c_end_to_end.py scripts/e2e_smoke.py src/telegram_mcp/disclosure/coordinator.py src/telegram_mcp/consent/display.py src/telegram_mcp/runtime/composition.py
-git commit -m "feat: refuse dishonest coverage and route the three 4c tools
+git commit -m "feat: refuse inconsistent coverage and route the three 4c tools
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -4655,9 +5565,10 @@ Design §4.6.
 - topic isolation;
 - General filtering;
 - the `before=0` and `after=0` edges;
-- real search exhaustion across the project.
+- real search exhaustion across the project;
+- Telegram's own paging: `search_peer` two hits at a time over the forum's nine marker messages walks to Telegram's end signal, with every hit exactly once.
 
-All of that happens before the independent witness is re-read, so it covers the 4c tools too. The run needs the owner's credentials; here it is compile-checked and skipped.
+All of that happens before the independent witness is re-read. The witness reads B's DM, basic-group and channel markers, so it covers the searches over those chats. It does not read the forum's markers; a forum witness is an owner follow-up. The 4b assertion on the set of chat kinds now includes `supergroup`, because the forum is added to the project. The run needs the owner's credentials; here it is compile-checked and skipped.
 
 **Evidence.** It records what ran, what is owner-pending, and the refinements.
 
@@ -4715,6 +5626,15 @@ Apply to `tests/telegram/test_testdc.py`:
 ```diff
 --- a/tests/telegram/test_testdc.py
 +++ b/tests/telegram/test_testdc.py
+@@ -15,7 +15,7 @@
+ from telegram_mcp.runtime.identity import resolve_principal
+ from telegram_mcp.storage.db import bind_cursor_store, open_db
+ from telegram_mcp.storage.identity import ensure_owner_principal
+-from telegram_mcp.telegram.deadline import Deadline
++from telegram_mcp.telegram.deadline import Deadline, WorkBudget
+ from telegram_mcp.telegram.discovery import DiscoveryStore
+ from telegram_mcp.telegram.reads import TelegramReads
+ from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
 @@ -90,7 +90,7 @@
          "project_ref"
      ]
@@ -4738,7 +5658,16 @@ Apply to `tests/telegram/test_testdc.py`:
      principal = resolve_principal(conn, client_ref)
  
      def snap(tool, **args):
-@@ -146,6 +151,53 @@
+@@ -127,7 +132,7 @@
+     chats = await reads.list_chats(
+         *snap("telegram_list_chats", limit=20, chat_type="any", archived="include")
+     )
+-    assert {c["chat_type"] for c in chats["chats"]} == {"private", "group", "channel"}
++    assert {c["chat_type"] for c in chats["chats"]} == {"private", "group", "channel", "supergroup"}
+     unread_before = await reads.get_unread(
+         *snap("telegram_get_unread", limit=30, include_muted=True, chat_type="any")
+     )
+@@ -146,6 +151,75 @@
          if chat["chat_type"] == "private":
              assert any(marker in (m["text"] or "") for m in page["messages"])
  
@@ -4788,6 +5717,28 @@ Apply to `tests/telegram/test_testdc.py`:
 +    assert (
 +        len(found) == len(set(found)) and len(found) >= 12
 +    )  # 3+3 topic, 3 General, DM, group, post
++    # Telegram's own paging, observed on the real server (design §4.7): two
++    # hits a page over the forum's nine marker messages. Only Telegram's own
++    # end signal stops the walk, and every hit arrives exactly once.
++    ids, offset = [], 0
++    for _page in range(10):
++        page = await session.search_peer(
++            "channel",
++            seeded["forum_id"],
++            marker,
++            min_date=None,
++            max_date=None,
++            offset_id=offset,
++            limit=2,
++            client_ref=client_ref,
++            deadline=Deadline(15),
++            budget=WorkBudget(),
++        )
++        ids += [view.message_id for view in page.views]
++        if page.exhausted:
++            break
++        offset = page.next_offset
++    assert len(ids) == len(set(ids)) == 9, ids  # 3+3 topic, 3 General
 +
      # Independent: markers Telegram reports from B's side (DM, group, channel views).
      assert witness() == before, "a read tool moved a read marker or a view counter"
@@ -4798,7 +5749,7 @@ Apply to `tests/telegram/test_testdc.py`:
 
 Run: `uv run pytest tests/telegram -q`
 Expected: not applicable: the Test DC test stays skipped without `--run-telegram-testdc`.
-Observed in the staged proof: 1 skipped in 1.61s.
+Observed in the staged proof: 1 skipped in 0.62s.
 
 - [ ] **Step 4: Run them and watch them pass**
 
@@ -4807,7 +5758,7 @@ Expected: 1 skipped (observed in the staged proof).
 
 - [ ] **Step 5: Commit** (format, check, full gate first)
 
-Full gate expected at this task: suite 1294 passed, 10 skipped; smoke 53 passed, 0 failed, 0 skipped — 53 checks.
+Full gate expected at this task: suite 1337 passed, 10 skipped; smoke 53 passed, 0 failed, 0 skipped — 53 checks.
 
 ```bash
 git add tests/telegram/fixture_builder.py tests/telegram/test_testdc.py
@@ -4874,14 +5825,14 @@ The eight tasks were applied in order to a fresh export of `main` at `cd1434e`. 
 
 | Task | own tests | ruff | format | mypy | full suite | smoke |
 |---|---|---|---|---|---|---|
-| 1 cursor state | 40 passed | All checks passed! | 186 files already formatted | Success: no issues found in 85 source files | 869 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
-| 2 adapter | 20 passed | All checks passed! | 187 files already formatted | Success: no issues found in 85 source files | 876 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
-| 3 bounds | 13 passed | All checks passed! | 188 files already formatted | Success: no issues found in 85 source files | 879 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
-| 4 engine | 361 passed | All checks passed! | 190 files already formatted | Success: no issues found in 86 source files | 1240 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
-| 5 authority | 30 passed | EXE001 at first (harness `shutil.copy` took mode 644 from its source file; git keeps 100755); after restoring the mode: All checks passed! | 192 files already formatted | Success: no issues found in 87 source files | 1253 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
-| 6 reads | 43 passed | All checks passed! | 195 files already formatted | Success: no issues found in 87 source files | 1281 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
-| 7 wiring | 14 passed | All checks passed! | 197 files already formatted | Success: no issues found in 87 source files | 1290 passed, 10 skipped, 4 deselected | 53 passed, 0 failed, 0 skipped — 53 checks |
-| 8 testdc | 1 skipped | All checks passed! | 197 files already formatted | Success: no issues found in 87 source files | 1290 passed, 10 skipped, 4 deselected | 53 passed, 0 failed, 0 skipped — 53 checks |
+| 1 cursor state | 48 passed | All checks passed! | 186 files already formatted | Success: no issues found in 85 source files | 877 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
+| 2 adapter | 48 passed | All checks passed! | 187 files already formatted | Success: no issues found in 85 source files | 891 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
+| 3 bounds | 19 passed | All checks passed! | 188 files already formatted | Success: no issues found in 85 source files | 900 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
+| 4 engine | 408 passed | All checks passed! | 190 files already formatted | Success: no issues found in 86 source files | 1274 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
+| 5 authority | 31 passed | All checks passed! | 192 files already formatted | Success: no issues found in 87 source files | 1288 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
+| 6 reads | 50 passed | All checks passed! | 195 files already formatted | Success: no issues found in 87 source files | 1323 passed, 10 skipped, 4 deselected | 49 passed, 0 failed, 0 skipped — 49 checks |
+| 7 wiring | 15 passed | All checks passed! | 197 files already formatted | Success: no issues found in 87 source files | 1333 passed, 10 skipped, 4 deselected | 53 passed, 0 failed, 0 skipped — 53 checks |
+| 8 testdc | 1 skipped | All checks passed! | 197 files already formatted | Success: no issues found in 87 source files | 1333 passed, 10 skipped, 4 deselected | 53 passed, 0 failed, 0 skipped — 53 checks |
 
 ## Owner steps (not the executor's)
 
