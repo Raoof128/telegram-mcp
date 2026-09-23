@@ -13,7 +13,7 @@ it is ``StubSigner.verify`` (pinned id read off the fixture pair), in
 production a closure over the pinned agent key with the same shape (pass
 ``pinned_key_id`` explicitly there). The broker raises fixed-code
 ``ConsentError``s and never builds MCP results: ``challenge-expired`` maps
-to ``DEADLINE_EXCEEDED``, rate-limit/unavailable states map to
+to ``CONSENT_DENIED`` (§27.1: "denied/cancelled/timed out"), rate-limit/unavailable states map to
 ``CONSENT_UNAVAILABLE``, everything else maps to ``CONSENT_DENIED`` (wiring
 lands in Task 9's vertical slice).
 
@@ -28,6 +28,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import json
 import time
 from collections import deque
 from collections.abc import Callable
@@ -66,9 +67,7 @@ class ConsentError(Exception):
 
     @property
     def dispatch_code(self) -> str:
-        """Dispatch-layer mapping (wired in Task 9; broker never builds results)."""
-        if self.code == "challenge-expired":
-            return "DEADLINE_EXCEEDED"
+        """Dispatch-layer mapping; §27.1 puts a timeout under CONSENT_DENIED."""
         if self.code in ("rate-limited", "broker-unavailable"):
             return "CONSENT_UNAVAILABLE"
         return "CONSENT_DENIED"
@@ -87,6 +86,8 @@ class ConsumedChallenge:
     security_epoch: int
     challenge_sha256: str
     key_id: str
+    nonce: str
+    exposure_snapshot_digest: str
 
 
 @dataclass
@@ -103,6 +104,8 @@ class PendingChallenge:
     security_epoch: int
     challenge: bytes
     daemon_sig: str
+    nonce: str
+    exposure_snapshot_digest: str
     expires_at: float
     consumed: bool = field(default=False)
 
@@ -225,6 +228,7 @@ class ConsentBroker:
         handle = mint_challenge_handle()
         while handle in self._pending:
             handle = mint_challenge_handle()
+        signed = json.loads(raw)
         self._pending[handle] = PendingChallenge(
             handle=handle,
             tool=params.tool,
@@ -236,6 +240,8 @@ class ConsentBroker:
             security_epoch=params.security_epoch,
             challenge=raw,
             daemon_sig=sign_challenge(raw, self._challenge_key),
+            nonce=signed["nonce"],
+            exposure_snapshot_digest=signed["exposure_snapshot_digest"],
             expires_at=self.now() + CHALLENGE_TTL_S,
         )
         return handle
@@ -309,6 +315,8 @@ class ConsentBroker:
             security_epoch=record.security_epoch,
             challenge_sha256=want_sha,
             key_id=self._pinned_key_id,
+            nonce=record.nonce,
+            exposure_snapshot_digest=record.exposure_snapshot_digest,
         )
 
     def invalidate(self, handle: str) -> bool:

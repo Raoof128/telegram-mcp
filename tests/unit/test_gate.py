@@ -37,6 +37,8 @@ def _consumed() -> ConsumedChallenge:
         security_epoch=1,
         challenge_sha256="0" * 64,
         key_id="p256:sha256:" + "f" * 64,
+        nonce="A" * 22,
+        exposure_snapshot_digest="0" * 64,
     )
 
 

@@ -284,7 +284,7 @@ async def test_expiry_45s_frozen_clock():
     with pytest.raises(ConsentError) as exc:
         await broker.consume(handle2, envelope=await _envelope_for(stub, broker, handle2))
     assert exc.value.code == "challenge-expired"
-    assert exc.value.dispatch_code == "DEADLINE_EXCEEDED"
+    assert exc.value.dispatch_code == "CONSENT_DENIED"
 
 
 async def test_rate_limits_per_client():
@@ -419,7 +419,7 @@ async def test_error_codes_map_to_dispatch():
     assert ConsentError("bad-agent-signature").dispatch_code == "CONSENT_DENIED"
     assert ConsentError("unknown-challenge").dispatch_code == "CONSENT_DENIED"
     assert ConsentError("rate-limited").dispatch_code == "CONSENT_UNAVAILABLE"
-    assert ConsentError("challenge-expired").dispatch_code == "DEADLINE_EXCEEDED"
+    assert ConsentError("challenge-expired").dispatch_code == "CONSENT_DENIED"
 
 
 # --- Step 7: frozen JCS vectors (single source of truth for Plan 2b) ---
