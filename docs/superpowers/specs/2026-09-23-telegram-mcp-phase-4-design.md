@@ -1,6 +1,6 @@
 # Telegram MCP Phase 4 Design — Allowlisted Telegram Adapter and Vertical Tool Slices
 
-**Status:** Revision 2. Four design sections were presented and reviewed one at
+**Status:** Revision 3 (§3.8 added: live admin approvals, identity bootstrap, 4a follow-ups carried into 4b). Revision 2: Four design sections were presented and reviewed one at
 a time, and every amendment was folded in. Revision 2 then gauntleted revision 1
 against the shipped code, the pinned Telethon 1.45.0 source and Telegram's
 method pages, and found sixteen defects. They are listed in §0A and fixed in
@@ -522,6 +522,82 @@ and the runtime recorder, not by stretching this field beyond what it means.
 - Pagination under concurrent sends: a page anchor is never shifted, and
   duplicates are removable by ref.
 - Flood-wait, when observed, returns `FLOOD_WAIT` with no sleep.
+
+### 3.8 Revision 3 additions for 4b (decided 2026-09-23)
+
+**Live admin approvals reuse the frozen challenge wire (owner's decision).**
+When a presence-gated admin command arrives (§2.5), the daemon itself
+prompts through the same broker and prompter used for MCP consent. The CLI
+never supplies a proof. The signed challenge is the unchanged wire:
+
+| Field | Admin value |
+|---|---|
+| `tool` | `admin.<command>`, e.g. `admin.auth_login_code`. The dotted prefix can never collide with the ten tool names (the audit chain already uses `admin.lock`). |
+| `client` | a per-install **operator sentinel** `tcl_` ref, derived as `mint`-shaped base32 of HMAC(privacy-key, "operator"). It is never an `mcp_clients` row, so it can never authenticate an MCP request. |
+| `principal` | the owner principal. |
+| `account` | the real account, or a per-install **pre-login sentinel** `tga_` ref, derived the same way from "pre-login", before any account exists. |
+| `request_hmac` | keyed HMAC of the canonical admin arguments with secrets removed (a phone number, code or password never enters a challenge, display or log). |
+| epochs, scope, exposure | current epochs; the list-projects scope digest of the empty set; the synthetic-zero exposure digest (admin actions disclose nothing). |
+
+The display reads `client_display = "Operator (admin socket)"`, the command as
+the action, and a fixed risk line. On approval the daemon injects a
+one-time, in-memory token as the request's `presence` proof; the router's
+existing verifier accepts each token exactly once. No Swift change and no
+join-gate change are needed.
+
+**Identity bootstrap.** The owner principal (`local_single_principal`, §10.5)
+is created on first daemon start. `auth login` creates the `accounts` row
+and the owner's `policy_state` row (`allowlist`, archived excluded, private,
+groups and channels included, §10.4). `client rotate --client <kind>`
+creates or re-seeds the `mcp_clients` row for `codex_local` or
+`claude_code_local` and its lease seed. These end 4a's seeded identity rows.
+
+**Carried from 4a's final review** (`docs/verification/phase-4.md` §7):
+`policy.evaluate` gains an explicit owner mode, and under `allowlist` an
+empty allowlist denies every peer; display names are rejected at
+`project create` if they contain bidi controls, LRM/RLM, U+061C or
+U+2028/2029, and the agent's renderer strips the same set; the
+coordinator re-checks authority immediately before retrieval as well as at
+step 8, so no Telegram RPC runs under authority that moved during consent.
+
+**Budget attribution follows the frozen contracts.** `get_unread` and
+`resolve_peer` items cannot carry `origin_project_refs`, so those two tools
+charge the client-global bucket only; `list_chats` and `get_messages` carry
+the field and charge the project bucket too.
+
+**Topic titles.** `topic_title` stays `null` in 4b: fetching titles needs
+`channels.GetForumTopics`, which is not on the reviewed allowlist.
+`forum_topic` is set from `reply_to.forum_topic`.
+
+**The chat universe is the project's members (refines §3.4).** `list_chats`,
+`get_unread` and `resolve_peer` read exactly the project's readable members
+through `messages.GetPeerDialogs` (100 peers per request) instead of paging
+`messages.GetDialogs` and filtering. This does three things:
+
+- It is narrower than §17.4. Metadata for chats outside the project never
+  enters memory during an MCP call, where §17.4 only requires filtering
+  before a ref is minted.
+- It pages a fixed, finite set with `seen_ids`, so a concurrent message that
+  reorders dialogs can neither duplicate nor skip a chat.
+- It makes `total_is_exact` decidable: the total is exact when every readable
+  member was found in the entity cache and fetched within budget.
+
+`GetDialogs` remains reviewed, for `scope discover` (`admin.discover`) only. The
+cursor state is therefore `seen_ids` for these tools and
+`(anchor_id, offset_id)` for `get_messages`, and `anchor_peer_ref` is not
+needed.
+
+**Pages fit the response cap.** The sensitive dispatcher refuses a response
+over 64 KiB with `RESPONSE_LIMIT`, and it does so after step 11 has committed.
+So every page's canonical `data` is fitted under 48 KiB, trailing records
+return through the cursor, and the step-3 byte bound is capped at the same
+figure. Without the cap, a long full-text page would be charged and receipted
+but never delivered, and a default 30-message full-text page would always
+prompt as elevated.
+
+**No Telegram tool prompts without a session.** With no usable session, the
+four tools refuse at step 2 with `AUTH_REQUIRED` (or `SESSION_REVOKED` after a
+revocation), before any consent prompt.
 
 ## 4. Phase 4c — context, both searches, coverage, qualification
 

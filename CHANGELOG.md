@@ -167,3 +167,31 @@
 - **Files changed:** `src/telegram_mcp/http_guards.py`, `src/telegram_mcp/consent/prompter.py`, `tests/integration/test_phase4a_end_to_end.py`, `tests/unit/test_prompter.py`, `docs/verification/phase-4.md`, `CLAUDE.md`, this file, `CHANGELOG.md`/`AGENT.md`.
 - **Verification:** pytest 706 passed / 8 skipped; smoke 45/45; join gate against the packaged agent 16 passed / 1 skipped; reviewer's probes now show pending 0 and counts (0,0,0) after a disconnect, and immediate detach after idle agent death; ruff, format and mypy clean.
 - **Follow-ups:** merge decision for `phase-4a` (owner); owner-run Touch ID test; 4b prerequisites listed in `docs/verification/phase-4.md` §7.
+
+### 2026-09-23 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase-4b implementation plan and design revision 3. Plan and design only; no product code.
+- **Summary:** Wrote `docs/superpowers/plans/2026-09-23-telegram-mcp-phase-4b-adapter-and-tools.md`: eighteen test-first tasks.
+  - **Tasks 1–6:** owner mode (an empty allowlist denies), prompt-safe names, live Touch ID admin approvals on the unchanged consent wire with sentinel refs, identity bootstrap and `client rotate`, deadlines/work budgets/fair admission, and the Keychain `api_hash` reader.
+  - **Tasks 7–11:** the ref store, the single Telethon module, dialog discovery, three-step login, and scope/allowlist handlers.
+  - **Tasks 12–16:** worst-case bounds with a page cap, the project-scoped authority snapshot, a coordinator re-check of authority before retrieval with typed retrieval refusals, history views, and the four tools.
+  - **Tasks 17–18:** an alias-resolving RPC guard with composition and the daemon, and the Test DC harness with a runtime recorder and read-state witness.
+
+  Design §3.8 records the owner's two decisions: reuse the wire with sentinel refs, and one 4b plan. It adds three refinements the planning forced:
+  - `list_chats`, `get_unread` and `resolve_peer` read only the project's members via `GetPeerDialogs`.
+  - Pages fit a 48 KiB data cap, because the 64 KiB response refusal happens after commit.
+  - Telegram tools refuse before consent when no session exists.
+
+  Before handover, the plan's code was dry-run in a scratch copy of `main`, which found eight defects, now fixed in the text:
+  - Telethon 1.45 constructor changes (2);
+  - a keyed digest at import;
+  - an open implicit transaction;
+  - an order-dependent demo-isolation test;
+  - the daemon importing a concrete backend;
+  - an unimported name;
+  - a missing runtime handler.
+
+  It also found that the existing RPC guard reads only import statements, so it would never have seen an RPC built as `functions.messages.X`; Task 17 fixes it.
+- **Files changed:** `docs/superpowers/plans/2026-09-23-telegram-mcp-phase-4b-adapter-and-tools.md` (new), `docs/superpowers/specs/2026-09-23-telegram-mcp-phase-4-design.md` (revision 3), `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** Scratch dry run: the new tests for Tasks 4–17 passed; the full suite showed 770 passed, and its failures were only those expected from unapplied Tasks 1–2 and the unrebuilt Swift agent. Telethon 1.45.0 signatures were read from the installed package. `main` suite unchanged.
+- **Follow-ups:** An owner-requested simurgh gauntlet of this plan next, then execution inline (no subagents). The owner must create the Keychain item, and supply the `api_id` and Test DC IP for the opt-in Test DC run. No Telegram access, no production claim.
