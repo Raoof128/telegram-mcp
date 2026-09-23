@@ -18,7 +18,7 @@ import os
 import stat
 from collections.abc import Callable, Iterator
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -85,16 +85,20 @@ def qualified(request: Any) -> str:
 class _Operation:
     allowed: frozenset[str]
     budget: WorkBudget
+    # Requests the session already charged; the client charges everything else
+    # (anything Telethon might send on its own), so each request pays once.
+    precharged: set[int] = field(default_factory=set)
 
 
 _CURRENT: ContextVar[_Operation | None] = ContextVar("telegram_mcp_operation", default=None)
 
 
 @contextlib.contextmanager
-def _operation(name: str, budget: WorkBudget) -> Iterator[None]:
-    token = _CURRENT.set(_Operation(OPERATIONS[name], budget))
+def _operation(name: str, budget: WorkBudget) -> Iterator[_Operation]:
+    current = _Operation(OPERATIONS[name], budget)
+    token = _CURRENT.set(current)
     try:
-        yield
+        yield current
     finally:
         _CURRENT.reset(token)
 
@@ -111,7 +115,10 @@ class _GatewayClient(TelegramClient):  # type: ignore[misc]
         name = qualified(request)
         if current is None or name not in current.allowed:
             raise PermissionError(f"unreviewed request: {name}")
-        current.budget.spend()
+        if id(request) in current.precharged:
+            current.precharged.discard(id(request))
+        else:
+            current.budget.spend()
         await request.resolve(self, utils)
         wire = functions.InvokeWithoutUpdatesRequest(request) if self._no_updates else request
         result = await sender.send(wire, ordered=ordered)
@@ -332,11 +339,9 @@ class TelethonSession:
         try:
             async with self._scheduler.slot(client_ref):
                 async with asyncio.timeout(deadline.remaining()):
-                    # The client's own _call spends the budget: one copy of the charge,
-                    # and it also covers anything the client might send on its own.
-                    with _operation(operation, budget):
-                        if not isinstance(self._client, _GatewayClient):
-                            budget.spend()  # an injected test client has no _call of ours
+                    with _operation(operation, budget) as current:
+                        budget.spend()  # the session charges its own request, always
+                        current.precharged.add(id(request))
                         return await self._client(request)
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise

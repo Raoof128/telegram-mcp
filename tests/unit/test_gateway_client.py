@@ -89,3 +89,39 @@ async def test_every_request_is_charged_to_the_operation(tmp_path):
             await client(_history())
     assert client._sender.sent == ["messages.GetHistoryRequest"]
     client.session.close()
+
+
+def test_the_real_request_path_has_no_branch_for_test_clients():
+    """CLAUDE.md: no test-only flags in production paths. Charging is uniform."""
+    import inspect
+
+    from telegram_mcp.telegram.telethon_adapter import TelethonSession
+
+    assert "isinstance(self._client" not in inspect.getsource(TelethonSession._call_reviewed)
+
+
+async def test_a_reviewed_call_is_charged_exactly_once_on_the_real_client(tmp_path):
+    from telegram_mcp.telegram.deadline import Deadline
+    from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
+
+    outcome = types.messages.Messages(messages=[], topics=[], chats=[], users=[])
+
+    def factory(*args, **kwargs):
+        client = _default_factory(*args, **kwargs)
+        client._sender = FakeSender(outcome)
+        return client
+
+    session = TelethonSession(
+        TelegramConfig(api_id=1, session_dir=tmp_path / "s"),
+        api_hash="0" * 32,
+        client_factory=factory,
+    )
+    session._prepare_dir()
+    session._build()
+    session.connected = session.authorized = True
+    budget = WorkBudget(max_rpcs=1)
+    await session._call_reviewed(
+        _history(), operation="mcp.retrieval", client_ref="c", deadline=Deadline(5), budget=budget
+    )
+    assert budget.used == 1  # the session and the client did not both charge it
+    session._client.session.close()
