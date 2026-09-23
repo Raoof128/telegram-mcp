@@ -375,3 +375,13 @@
 - **Follow-ups:**
   - The owner's review, then the 5a plan.
   - No production claim.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase 5a plan (11 tasks), gauntleted.
+- **Summary:** The operator surface and single policy engine plan. The gauntlet fixed 15 plan defects, including lock-contention handling and the degraded-recovery path.
+- **Files changed:** `docs/superpowers/plans/2026-09-24-telegram-mcp-phase-5a-operator-surface.md`, `AGENT.md`, this file.
+- **Verification:** The guards were run, the probes were executed, and every code block parses. No product code changed.
+- **Follow-ups:**
+  - The owner's review, then execution.
+  - No production claim.

@@ -396,3 +396,35 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
   - The owner's review of revision 2, then writing-plans for 5a.
   - Shipped gaps recorded for 5a/5b: G10 (no hourly cursor GC), G11 (`client rotate` re-enables), and the §3.2 `UserDeactivated` mapping.
   - No production claim.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase 5a implementation plan written, then gauntleted line by line. Plan only; no product code.
+- **Summary:** `docs/superpowers/plans/2026-09-24-telegram-mcp-phase-5a-operator-surface.md` has 11 TDD tasks:
+  1. Composable audit and storage primitives.
+  2. Transaction runners: tx, audited tx, and simulation.
+  3. Existing handlers moved onto the runners, with two AST guards; fixes the duplicate `scope mode` and `client rotate` re-enabling a disabled client.
+  4. One evaluator with traces, and the owner class rule moved into `authority/`.
+  5. `EffectiveAccess`.
+  6. `tps_` staging, and `policy explain/simulate/diff`.
+  7. Audited lock/unlock, and audit verify/checkpoint/repair-anchor.
+  8. Inspect commands and the lineage seam.
+  9. The remaining project/scope/client commands.
+  10. Touch ID summaries (G6).
+  11. Composition, completeness by name, the `serve` verb, smoke, evidence.
+
+  The gauntlet ran checks against `6680090` and found 15 defects, all fixed in place. The two high ones:
+  - **P1:** lock contention surfaced as `OperationalError` → `INTERNAL_ERROR`. Measured at about 5.2 s; now mapped to a fixed `BUSY` refusal.
+  - **P2:** after a failed anchor refresh, the audited-command recovery path (every audited command refused until repair-anchor) was untested and undocumented.
+
+  Both predicted guard results were confirmed by running the guards.
+- **Files changed:** the plan, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:**
+  - Both proposed AST guards ran against today's tree.
+  - The SAVEPOINT sequence and busy-lock behaviour were probed on the real `open_db`, along with the anchor-failure exception.
+  - All 51 python blocks parse.
+  - No tests changed.
+- **Follow-ups:**
+  - The owner's review of the plan, then native execution on branch `phase-5a` (no subagents, per the owner).
+  - 5b and 5c plans after 5a merges.
+  - No production claim.
