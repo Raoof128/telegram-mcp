@@ -9,7 +9,7 @@ under test come from the transaction, not from policy.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from tests.authority_fixtures import PROJECT_REF, seed_authority_rows
 
@@ -49,8 +49,12 @@ class Approval:
 class FakeAuthority:
     """Fixed snapshot; reports movement only when a test asks for it."""
 
-    def __init__(self, *, moved: str | None = None, worst_case: Any = None) -> None:
+    def __init__(
+        self, *, moved: str | None = None, worst_case: Any = None, moved_on_call: int = 1
+    ) -> None:
         self._moved = moved
+        self._moved_on_call = moved_on_call
+        self.revalidations = 0
         self._worst_case = worst_case
 
     def freeze_arguments(
@@ -65,7 +69,8 @@ class FakeAuthority:
         return self._worst_case
 
     def revalidate(self, snapshot: Snapshot) -> str | None:
-        return self._moved
+        self.revalidations += 1
+        return self._moved if self.revalidations >= self._moved_on_call else None
 
     def apply_egress(self, raw: dict[str, Any], snapshot: Snapshot) -> dict[str, Any]:
         return raw
@@ -103,6 +108,8 @@ def build_coordinator(
     approve: bool = True,
     diverge_times: int = 0,
     anchor_dir_mode: int = 0o700,
+    moved_on_call: int = 1,
+    authority_factory: Any = None,
 ):
     """Build a coordinator over a real database, ledger, chain and anchor."""
     from telegram_mcp.disclosure.budget import BudgetLedger, buckets_for
@@ -131,9 +138,12 @@ def build_coordinator(
     data = {"project": {"project_ref": PROJECT_REF}, "messages": payload_records}
 
     class FakeAdapter:
+        calls: ClassVar[list[str]] = []
+
         async def retrieve(
             self, *, tool_name: str, arguments: Any, snapshot: Any = None
         ) -> dict[str, Any]:
+            self.calls.append(tool_name)
             return {k: list(v) if isinstance(v, list) else v for k, v in data.items()}
 
     worst_case = {
@@ -152,7 +162,11 @@ def build_coordinator(
         disclosure_key_id=key_id("disclosure-key"),
         anchor_path=anchor_dir / "anchor.json",
         ledger=BudgetLedger(conn),
-        authority=FakeAuthority(moved=moved, worst_case=worst_case),
+        authority=(
+            authority_factory(conn)
+            if authority_factory is not None
+            else FakeAuthority(moved=moved, worst_case=worst_case, moved_on_call=moved_on_call)
+        ),
         consent=FakeConsent(approve=approve, diverge_times=diverge_times),
         transport=transport,
         crash_at=crash_at,

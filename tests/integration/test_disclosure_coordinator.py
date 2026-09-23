@@ -143,11 +143,15 @@ async def test_a_second_divergence_refuses_unretryably(tmp_path):
 
 
 async def test_authority_moving_after_retrieval_emits_nothing(tmp_path):
-    coordinator, conn, adapter = build_coordinator(tmp_path, moved="SECURITY_LOCKED")
+    coordinator, conn, adapter = build_coordinator(
+        tmp_path, moved="SECURITY_LOCKED", moved_on_call=2
+    )
+    adapter.calls.clear()
 
     outcome = await coordinator.disclose(
         tool_name="telegram_get_messages", arguments={}, adapter=adapter
     )
+    assert adapter.calls == ["telegram_get_messages"]  # step 8, after retrieval
 
     assert outcome.error_code == "SECURITY_LOCKED"
     assert outcome.data is None

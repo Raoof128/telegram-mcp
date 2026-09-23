@@ -49,6 +49,7 @@ __all__ = [
     "DisclosureCoordinator",
     "DisclosureOutcome",
     "RetrievalAdapter",
+    "RetrievalRefusal",
 ]
 
 # Frozen as a declaration the tests assert against. Production calls typed
@@ -80,7 +81,16 @@ _CATALOGUE_TOOLS = frozenset({"telegram_list_projects", "telegram_resolve_projec
 
 # Keys an adapter may return beside ``data``. They are split off after
 # egress: never measured, never signed as data, never schema-validated as data.
-_SIDECAR_KEYS = frozenset({"_coverage", "_next_cursor"})
+_SIDECAR_KEYS = frozenset({"_coverage", "_next_cursor", "_partial"})
+
+
+class RetrievalRefusal(Exception):
+    """Retrieval failed with a frozen §27.1 code (never a Telegram message)."""
+
+    def __init__(self, code: str, retry_after: int | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.retry_after = retry_after
 
 
 class AuthorityRefusal(Exception):
@@ -127,6 +137,7 @@ class DisclosureOutcome:
     disclosure_ref: str | None = None
     error_code: str | None = None
     retryable: bool = False
+    retry_after_seconds: int | None = None
 
 
 def _now_iso() -> str:
@@ -182,6 +193,7 @@ class DisclosureCoordinator:
         snapshot: Any,
         approval: Any,
         coverage: Mapping[str, Any] | None,
+        partial: bool,
     ) -> dict[str, Any]:
         records = list(data.get(RECORD_ELEMENT[tool_name], []))
         level = effective_egress_level(records)
@@ -192,7 +204,7 @@ class DisclosureCoordinator:
             "effective_egress_level": level,
             "records_disclosed": records_disclosed(tool_name, data),
             "bytes_disclosed": bytes_disclosed(data),
-            "partial": bool(snapshot.partial),
+            "partial": partial,
             "canonical_result_provenance_digest": provenance_digest(tool_name, data),
             "canonical_coverage_digest": coverage_digest(coverage),
         }
@@ -269,8 +281,8 @@ class DisclosureCoordinator:
             "principal_ref": snapshot.principal_ref,
             "client_ref": snapshot.client_ref,
             "account_ref": snapshot.account_ref,
-            "peer_ref": None,
-            "project_ref": None,
+            "peer_ref": getattr(snapshot, "peer_ref", None),
+            "project_ref": getattr(snapshot, "project_ref", None),
             "project_count": snapshot.project_count,
             "policy_epoch": snapshot.policy_epoch,
             "result_count": prepared["records_disclosed"],
@@ -405,9 +417,22 @@ class DisclosureCoordinator:
 
             # ==== SECURITY BARRIER ==========================================
             self._checkpoint("retrieve")
-            raw = await adapter.retrieve(
-                tool_name=tool_name, arguments=request.validated_args, snapshot=snapshot
-            )
+            # Authority can move while the owner looks at the prompt. Step 8
+            # would catch it, but only after Telegram was already asked; a
+            # read the owner has since revoked must not reach Telegram at all.
+            moved = self._authority.revalidate(snapshot)
+            if moved is not None:
+                return DisclosureOutcome(released=False, error_code=moved, retryable=False)
+            try:
+                raw = await adapter.retrieve(
+                    tool_name=tool_name, arguments=request.validated_args, snapshot=snapshot
+                )
+            except RetrievalRefusal as refusal:
+                return DisclosureOutcome(  # retryability comes from results.RETRYABILITY
+                    released=False,
+                    error_code=refusal.code,
+                    retry_after_seconds=refusal.retry_after,
+                )
 
             self._checkpoint("revalidate_authority")
             moved = self._authority.revalidate(snapshot)
@@ -423,9 +448,10 @@ class DisclosureCoordinator:
                 )
             coverage = side.get("_coverage") if tool_name in _SEARCH_TOOLS else None
             next_cursor = side.get("_next_cursor")
+            partial = bool(snapshot.partial) or bool(side.get("_partial"))
 
             self._checkpoint("measure_and_prepare_proof")
-            prepared = self._prepare_proof(tool_name, data, snapshot, approval, coverage)
+            prepared = self._prepare_proof(tool_name, data, snapshot, approval, coverage, partial)
             actual = buckets_for(tool_name, data, client_id=snapshot.client_id)
 
             # ==== DISCLOSURE BARRIER: steps 11 and 12 under one guard =======

@@ -59,4 +59,8 @@ class SensitiveDispatcher:
             return error_result("INTERNAL_ERROR")
         if outcome.released:
             return success_result(name, outcome.data, outcome.meta, max_response_bytes=self._max)
-        return error_result(outcome.error_code or "INTERNAL_ERROR")
+        return error_result(
+            outcome.error_code or "INTERNAL_ERROR",
+            retryable=bool(outcome.retryable),
+            retry_after_seconds=getattr(outcome, "retry_after_seconds", None),
+        )
