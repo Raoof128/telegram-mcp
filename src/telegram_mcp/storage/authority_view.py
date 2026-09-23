@@ -140,7 +140,7 @@ def load_view(conn: sqlite3.Connection, *, principal_id: int, account_id: int) -
     ):
         (allows if row[2] == "allow" else denies).add(peer_identity(row[0], row[1]))
     policy = conn.execute(
-        "SELECT policy_epoch FROM policy_state WHERE principal_id = ? AND account_id = ?",
+        "SELECT policy_epoch, mode FROM policy_state WHERE principal_id = ? AND account_id = ?",
         (principal_id, account_id),
     ).fetchone()
     security_epoch, _locked = load_security(conn)
@@ -153,4 +153,5 @@ def load_view(conn: sqlite3.Connection, *, principal_id: int, account_id: int) -
         owner_denies=denies,
         policy_epoch=int(policy[0]) if policy else 0,
         security_epoch=security_epoch,
+        owner_mode=policy[1] if policy else "allowlist",
     )

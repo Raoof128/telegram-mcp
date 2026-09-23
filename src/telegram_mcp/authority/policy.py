@@ -30,6 +30,7 @@ __all__ = [
 ]
 
 OPERATIONS = ("read", "cross_search", "discover")
+OWNER_MODES = ("allowlist", "all_cloud_chats")
 EGRESS_LEVELS = ("metadata_only", "excerpt", "full_text")
 _EGRESS_RANK = {"metadata_only": 0, "excerpt": 1, "full_text": 2}
 
@@ -135,6 +136,7 @@ class AuthorityView:
     owner_denies: frozenset[str] = frozenset()
     policy_epoch: int = 0
     security_epoch: int = 0
+    owner_mode: str = "allowlist"
 
 
 class AuthorityChanged(Exception):
@@ -156,8 +158,11 @@ def make_view(
     owner_denies: set[str] | frozenset[str] | None = None,
     policy_epoch: int = 0,
     security_epoch: int = 0,
+    owner_mode: str = "allowlist",
 ) -> AuthorityView:
     """Build a normalized abstract view from row maps and owner policy."""
+    if owner_mode not in OWNER_MODES:
+        raise ValueError("unknown owner mode")
     return AuthorityView(
         clients=dict(clients or {}),
         projects=dict(projects or {}),
@@ -167,6 +172,7 @@ def make_view(
         owner_denies=frozenset(owner_denies or ()),
         policy_epoch=policy_epoch,
         security_epoch=security_epoch,
+        owner_mode=owner_mode,
     )
 
 
@@ -214,7 +220,9 @@ def evaluate(view: AuthorityView, request: AuthorityRequest) -> AuthoritySnapsho
     else:
         if peer in view.owner_denies:
             return Denial(NOT_ACCESSIBLE, "owner denies peer")
-        if view.owner_allows and peer not in view.owner_allows:
+        # §10.4: under allowlist only listed peers are readable -- an empty
+        # list admits nothing. all_cloud_chats admits members unless denied.
+        if view.owner_mode == "allowlist" and peer not in view.owner_allows:
             return Denial(NOT_ACCESSIBLE, "owner does not allow peer")
         for ref in request.project_refs:
             if peer not in view.memberships.get(ref, frozenset()):
