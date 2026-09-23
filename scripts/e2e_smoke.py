@@ -1129,6 +1129,264 @@ def phase2_consent(ledger: Ledger) -> None:
     ledger.run(area, "real broker <-> real agent", join_scenarios)
 
 
+# --------------------------------------------------------------------------
+# Phase 4a: the authenticated catalogue, end to end
+# --------------------------------------------------------------------------
+
+
+def phase4a_catalogue(ledger: Ledger) -> None:
+    """Real ingress over TCP, real broker and prompter, the packaged agent over RV-1.
+
+    One event loop drives everything, because the SQLite connection is
+    thread-bound: uvicorn serves as a task beside the rendezvous server.
+    """
+    area = "Phase 4a — authenticated catalogue"
+    results: dict[str, Any] = {}
+
+    def drive() -> dict[str, Any]:
+        if results:
+            return results
+        if not AGENT_BIN.exists():
+            raise _Skip("agent bundle not built")
+        import asyncio
+        import secrets
+        import tempfile
+
+        import httpx
+        import uvicorn
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+        from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
+
+        sys.path.insert(0, str(REPO))
+        from telegram_mcp.disclosure.receipts import verify_proof
+        from telegram_mcp.disclosure.verify import verify_persisted_receipt
+        from telegram_mcp.ipc.leases import mint_lease
+        from telegram_mcp.keys.store import load_key, provision_lease_seed, provision_missing
+        from telegram_mcp.runtime.composition import build_runtime, serve_consent
+        from telegram_mcp.storage.db import open_db
+        from tests.agent.stub_broker import _approval_public
+        from tests.authority_fixtures import seed_authority_rows
+
+        client = "tcl_" + "a" * 26
+        runtime = secrets.token_bytes(16)
+        proof = {"method": "smoke"}
+
+        async def main() -> dict[str, Any]:
+            with tempfile.TemporaryDirectory(dir="/tmp") as short:
+                root = Path(short)
+                keys = root / "keys"
+                provision_missing(keys, phases=(2, 3))
+                seed = provision_lease_seed(keys, client)
+                conn = open_db(root / "meta.db")
+                seed_authority_rows(conn)
+                (root / "anchor").mkdir(mode=0o700)
+                approval_seed = secrets.token_bytes(32)
+                approval_public, _der, approval_id = _approval_public(approval_seed)
+
+                def verify(sig: bytes, msg: bytes) -> bool:
+                    from cryptography.hazmat.primitives import hashes
+                    from cryptography.hazmat.primitives.asymmetric import ec
+
+                    try:
+                        approval_public.verify(sig, msg, ec.ECDSA(hashes.SHA256()))
+                    except Exception:  # noqa: BLE001 -- a verifier fails closed on anything
+                        return False
+                    return True
+
+                port = free_port()
+                services = build_runtime(
+                    conn,
+                    key_dir=keys,
+                    anchor_path=root / "anchor" / "anchor.json",
+                    runtime_id=runtime,
+                    agent_verify=verify,
+                    pinned_key_id=approval_id,
+                    port=port,
+                    presence_verifier=lambda given: given == proof,
+                )
+                project = conn.execute("SELECT project_ref FROM projects").fetchone()[0]
+                granted = services.admin_router.dispatch(
+                    {
+                        "cmd": "project grant-client",
+                        "args": {
+                            "presence": proof,
+                            "project_ref": project,
+                            "client_ref": client,
+                            "egress_level": "full_text",
+                        },
+                    }
+                )
+                assert granted["ok"], granted
+                transport_seed = secrets.token_bytes(32)
+                transport_public = (
+                    ed25519.Ed25519PrivateKey.from_private_bytes(transport_seed)
+                    .public_key()
+                    .public_bytes_raw()
+                )
+                daemon_public = (
+                    ed25519.Ed25519PrivateKey.from_private_bytes(load_key("challenge-key"))
+                    .public_key()
+                    .public_bytes_raw()
+                )
+                consent = await serve_consent(
+                    services, root / "c.sock", agent_transport_public=transport_public
+                )
+                agent = await asyncio.create_subprocess_exec(
+                    str(AGENT_BIN),
+                    "selftest-rendezvous",
+                    str(root / "c.sock"),
+                    env={
+                        **os.environ,
+                        "CONSENT_NO_UI": "1",
+                        "CONSENT_SELFTEST_TRANSPORT_SEED": transport_seed.hex(),
+                        "CONSENT_SELFTEST_APPROVAL_SEED": approval_seed.hex(),
+                        "CONSENT_SELFTEST_DAEMON_PUB": daemon_public.hex(),
+                    },
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                server = uvicorn.Server(
+                    uvicorn.Config(
+                        services.ingress_app, host="127.0.0.1", port=port, log_level="warning"
+                    )
+                )
+                serving = asyncio.create_task(server.serve())
+                out: dict[str, Any] = {}
+                try:
+                    deadline = time.monotonic() + 30
+                    while not (server.started and services.prompter.connected):
+                        assert time.monotonic() < deadline, "agent never attached"
+                        await asyncio.sleep(0.05)
+
+                    async def post(name, arguments, token):
+                        params = {
+                            "name": name,
+                            "arguments": arguments,
+                            "_meta": {
+                                PROTOCOL_VERSION_META_KEY: "2026-07-28",
+                                CLIENT_CAPABILITIES_META_KEY: {},
+                            },
+                        }
+                        headers = {
+                            "Mcp-Protocol-Version": "2026-07-28",
+                            "Mcp-Method": "tools/call",
+                            "Mcp-Name": name,
+                            "Accept": "application/json, text/event-stream",
+                        }
+                        if token is not None:
+                            headers["Authorization"] = f"Bearer {token}"
+                        async with httpx.AsyncClient(
+                            base_url=f"http://127.0.0.1:{port}", timeout=60
+                        ) as http:
+                            return await http.post(
+                                "/mcp",
+                                headers=headers,
+                                json={
+                                    "jsonrpc": "2.0",
+                                    "id": 1,
+                                    "method": "tools/call",
+                                    "params": params,
+                                },
+                            )
+
+                    def lease():
+                        return mint_lease(
+                            seed=seed,
+                            client=client,
+                            epoch=1,
+                            now=int(time.time()),
+                            runtime_id=runtime,
+                        )
+
+                    ok = (await post("telegram_list_projects", {}, lease())).json()
+                    body = ok["result"]["structuredContent"]
+                    out["success"] = body
+                    if body.get("ok"):
+                        ref = body["meta"]["disclosure"]["receipt_ref"]
+                        public = conn.execute(
+                            "SELECT public_key_b64url FROM verification_keys"
+                            " WHERE purpose = 'disclosure_proof'"
+                        ).fetchone()[0]
+                        d = body["meta"]["disclosure"]
+                        out["persisted_ok"] = verify_persisted_receipt(conn, ref)
+                        out["offline_ok"] = verify_proof(
+                            d["proof_payload"],
+                            proof_signature=d["proof_signature"],
+                            proof_payload_sha256=d["proof_payload_sha256"],
+                            public_key_b64url=public,
+                        )
+                    bad = [
+                        await post("telegram_list_projects", {}, token)
+                        for token in (None, "not-a-lease")
+                    ]
+                    out["bad"] = [(r.status_code, r.content) for r in bad]
+                    other = await post("telegram_list_chats", {"project_ref": project}, lease())
+                    out["other"] = other.json()["result"]["structuredContent"]
+                finally:
+                    server.should_exit = True
+                    await serving
+                    if agent.returncode is None:
+                        agent.kill()
+                    await agent.wait()
+                    consent.close()
+                    conn.close()
+                return out
+
+        results.update(asyncio.run(main()))
+        return results
+
+    def real_success():
+        out = drive()
+        body = out["success"]
+        assert body["ok"] is True, body
+        assert out["persisted_ok"] and out["offline_ok"]
+        return f"receipt {body['meta']['disclosure']['receipt_ref'][:10]}… verifies persisted and offline"
+
+    def bad_bearers():
+        out = drive()
+        statuses = {status for status, _ in out["bad"]}
+        bodies = {content for _, content in out["bad"]}
+        assert statuses == {401} and len(bodies) == 1, out["bad"]
+        return "missing and garbage bearers: 401, identical bytes"
+
+    def others_refuse():
+        out = drive()
+        assert out["other"]["error"]["code"] == "POLICY_UNCONFIGURED", out["other"]
+        return "telegram_list_chats -> POLICY_UNCONFIGURED"
+
+    def demo_still_refuses():
+        from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
+        from starlette.testclient import TestClient
+
+        from telegram_mcp.config import DemoConfig
+        from telegram_mcp.server import create_app
+
+        params = {
+            "name": "telegram_list_projects",
+            "arguments": {},
+            "_meta": {PROTOCOL_VERSION_META_KEY: "2026-07-28", CLIENT_CAPABILITIES_META_KEY: {}},
+        }
+        with TestClient(create_app(DemoConfig()), base_url="http://127.0.0.1:8766") as http:
+            response = http.post(
+                "/mcp",
+                headers={
+                    "Mcp-Protocol-Version": "2026-07-28",
+                    "Mcp-Method": "tools/call",
+                    "Mcp-Name": "telegram_list_projects",
+                    "Accept": "application/json, text/event-stream",
+                },
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params},
+            )
+        code = response.json()["result"]["structuredContent"]["error"]["code"]
+        assert code == "POLICY_UNCONFIGURED", code
+        return "demo list_projects -> POLICY_UNCONFIGURED"
+
+    ledger.run(area, "catalogue success through ingress + real agent", real_success)
+    ledger.run(area, "bad bearers are 401, byte-identical", bad_bearers)
+    ledger.run(area, "other seven tools still refuse", others_refuse)
+    ledger.run(area, "demo server still has no sensitive route", demo_still_refuses)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Phase 1 + Phase 2 end-to-end smoke")
     parser.add_argument("--verbose", action="store_true", help="print tracebacks for failures")
@@ -1146,6 +1404,7 @@ def main() -> int:
         phase2a_ipc(ledger, sandbox, state)
         phase2a_runtime(ledger, sandbox)
         phase2_consent(ledger)
+        phase4a_catalogue(ledger)
         conn = state.get("conn")
         if conn is not None:
             conn.close()
