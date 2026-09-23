@@ -365,3 +365,13 @@
 - **Follow-ups:**
   - The owner's gauntlet of the design, then the 5a plan.
   - No production claim.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase 5 design, revision 2 (gauntlet).
+- **Summary:** 16 defects were found against the shipped code and fixed in the design. The two blockers are an FK-breaking purge order and an audit chain that cannot hold multiple epochs or a truncated prefix (the latter proven by a committed probe).
+- **Files changed:** `docs/superpowers/specs/2026-09-24-telegram-mcp-phase-5-design.md`, `docs/verification/probes/phase5_chain_epochs_probe.py`, `AGENT.md`, this file.
+- **Verification:** The probe rejects both cases, as recorded in §0B G2. Ruff is clean. No product code changed.
+- **Follow-ups:**
+  - The owner's review, then the 5a plan.
+  - No production claim.

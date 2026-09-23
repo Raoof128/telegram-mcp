@@ -1,9 +1,11 @@
 # Telegram MCP Phase 5 Design — Operator Controls, Retention and Recovery
 
-**Status:** Revision 1. Four design sections were presented and reviewed one at a
-time on 2026-09-24. Each section's amendments were checked against the frozen
-spec and the shipped code before they were folded in. §0A lists the review
-findings that changed the design.
+**Status:** Revision 2. Revision 2 gauntleted revision 1 against the shipped
+code at `1e21caf` and found 16 defects. They are listed in §0B and fixed in
+place. Two of them were proven by running a probe.
+Revision 1: four design sections were presented and reviewed one at a time on
+2026-09-24, and each section's amendments were checked against the frozen spec
+and the shipped code (§0A).
 **Date:** 2026-09-24 (Australia/Sydney)
 **Spec:** `telegram-mcp-v0.1.10-final-engineering-spec.md` (SHA-256 `36b67f488415f2ab1c44b8d906de7f192fbe0dc562a2aeac76938b24c4a61b0a`)
 **Roadmap:** [release roadmap](../plans/2026-09-22-telegram-mcp-release-roadmap.md), Phase 5 row
@@ -40,7 +42,7 @@ clients and the tunnel are Phase 6. The release gauntlet is Phase 7.
 | D6 | Policy simulate/diff/import staging runs the **real** mutation handlers inside a rolled-back SAVEPOINT (approach A). | One copy of each rule (CLAUDE.md). A separate pure model would duplicate every mutation rule. A temporary DB copy would put private metadata in a second file. |
 | D7 | The recovery **private** identity is used inside daemon memory during import and is never stored. | The daemon must verify the signed ciphertext *and* parse exactly those decrypted bytes. If the CLI decrypted, the daemon would have to trust plaintext it cannot bind to the signature. §33.3 forbids storing the key, not using it. |
 | D8 | New operator verbs outside the §33 list: `keys rotate`, `keys trust-backup`, `keys retire-backup`, `retention purge`, and the internal `transfer pull` / `transfer push` (§4.4). New closed audit events: `admin.retention_purge`, `admin.session_revoke`, `admin.account_switch`, `admin.backup_trust`. | The roadmap assigns these capabilities to Phase 5, and §33 says "SHOULD provide", which is not an upper bound. `ADMIN_EVENTS` (`disclosure/audit/chain.py:48`) is a closed vocabulary, so any new event must be added there explicitly. |
-| D9 | Deferred by name, not count: `tunnel rotate-binding` (Phase 6), `release verify` (Phase 7) and `serve`, whose CLI behaviour is pinned separately (§5.4). | A count invariant hides which command is missing. |
+| D9 | Deferred by name, not count: `tunnel rotate-binding` (Phase 6), `release verify` (Phase 7), `consent approve` (spec line 927 "MAY"; see G7), and `serve`, whose CLI behaviour is pinned separately (§5.4). | A count invariant hides which command is missing. |
 
 ## 0A. Review findings folded into revision 1
 
@@ -73,6 +75,29 @@ Every row was checked against the named artifact before adoption.
 | R23 | Rotation smoke must prove each purpose's own consequence, not only "receipts verify". | §9.6.1 consequence column | §5.3 |
 | R24 | "28 of 31 missing" was a count that coincided with `len(PRESENCE_GATED) == 31`. | `ipc/admin.py` | D9, §5.4 |
 | R25 | Found in self-review: the draft sent up to 4 MiB in one admin reply, but the single frame codec caps frames at 64 KiB. | `ipc/framing.py:31` | §4.4 chunked bulk transfer |
+
+## 0B. What revision 2 changed (gauntlet against `1e21caf`)
+
+Every row was established by executing a probe or reading the named line. None was inferred.
+
+| # | Sev | Defect in revision 1 | Evidence | Fix (normative) |
+|---|---|---|---|---|
+| G1 | **blocker** | The purge order `exposure → receipts → audit` breaks a foreign key. `audit_events.disclosure_ref` references `disclosure_receipts`, so a receipt cannot be deleted while any retained audit event names it. | `storage/migrations.py:369` | §3.5 order: exposure → audit prefix → receipts. A receipt is purged only when its exposure rows **and** its audit event are gone. Receipt retention is therefore a floor: a receipt whose event sits after the truncation root outlives `disclosure_receipt_days`. Doctor warns when `audit_events_days > disclosure_receipt_days`, because receipts would then linger by construction. |
+| G2 | **blocker** | The audit chain cannot hold more than one epoch and cannot be truncated. `verify_chain` resets `expected_seq` only on the first row and takes a single key. `append_event` always continues the current epoch. Audit-MAC rotation, restore and retention truncation all depended on this machinery. | Probe `docs/verification/probes/phase5_chain_epochs_probe.py`: three events verify; a hand-built epoch-2 genesis event → `ChainError: chain sequence is not continuous`; deleting seq 1 → the same error. `chain.py:166-268`. | §3.8 (new): `seal_and_open_epoch` and a verifier that is aware of epochs and roots. Phase 5b builds this before any rotation, restore or purge. |
+| G3 | high | Rotating `privacy-key` resets every exposure-budget bucket. `subject_digest` HMACs the bucket subject with `privacy-key`, so after rotation the rolling-window sum starts again from zero. That is a hard-limit bypass (Gate P: "hard limits unbypassable"). | `disclosure/budget.py:86-95,105-115` | §3.4: `committed_usage` sums across the digests under the active key and every privacy-key version retired within `rolling_window_minutes` (≤ 1440). Such versions keep their private material until they fall out of the window. A test rotates mid-window and still hits `EXPOSURE_BUDGET_EXCEEDED`. |
+| G4 | high | The single wrapper shape cannot hold network handlers. `auth login/status`, `scope discover`, `project drift` and `revoke-this-session` await Telegram, and revoke needs two TXs, but the §2.1 guard forbade `immediate_transaction` outside `_wrapper.py`. | `ipc/handlers/auth.py:53-103`, `scope.py:46-48` | §2.1: two handler kinds, `TxHandler` and `FlowHandler`. Guard: no `await` lexically inside any transaction scope. |
+| G5 | high | Audited admin events need the disclosure barrier: `_APPEND_GUARD`, then the TX with `append_event`, then `write_anchor` after commit, with anchor failure sending the daemon to degraded. Revision 1 called `post_commit` "cleanup only" and had no path for this. The shipped lock also appends no event at all: `set_locked` plus `save_epoch_state`, and the latter commits by itself. | `coordinator.py:472-510`, `storage/db.py:290-300`; `grep append_event src` → only `coordinator.py`, `anchor.py` | §2.1: `AuditedTxHandler`. Lock/unlock are rebuilt on it, and `save_epoch_state` stops committing on its own. |
+| G6 | high | An admin Touch ID prompt shows only the command name. `action_display = command`, so revision 1's "the prompt shows ciphertext SHA-256, signer, diff…" was false. | `consent/admin_approval.py:103-109`; the agent renders `action_display` up to 160 codepoints (`consent-agent.swift:340`) | §2.7 (new): a bounded summary per command in `action_display`, with the field set unchanged, so no wire change. Full values stay bound through `request_hmac`. |
+| G7 | medium | `consent approve` was wired with no semantics. A generic admin Touch ID showing "consent approve" would approve a **disclosure** without showing its client, project or peer, which is weaker than the agent's per-request prompt. | spec line 927 ("MAY exist only if it invokes the same OS user-presence check") | Deferred by name (D9). It stays `NOT_AVAILABLE_IN_PHASE` with that reason. |
+| G8 | medium | `project create` requires exactly one account, so `--new-account` would break it. | `ipc/handlers/projects.py:86-88` | §3.3: a durable active-account pointer and one `active_account(conn)` helper. A guard forbids unscoped `FROM accounts` outside `storage/identity.py`. |
+| G9 | medium | `key_versions` duplicated `verification_keys`, which already holds public keys with activation and retirement. Revision 1 also missed that secrets load at startup step 3, before the database opens at step 5. | `migrations.py:320-329`; `runtime/lifecycle.py:53-59` | §3.4: `verification_keys` stays the only public registry, plus a `trusted_for_import` column. A new `key_slots` table holds only the private active pointer. Step 3 loads **every** version, and step 8 (`recompute_key_ids`) selects the active one from SQL. |
+| G10 | medium | The hourly cursor GC that spec line 1310 requires does not run today. `purge_expired_cursors` has no caller; only `startup_gc` runs. | `grep "purge_expired(" src` → only its own wrapper | §3.5: the maintenance loop calls the **existing** `purge_expired_cursors`. No second copy. Recorded as closing a shipped gap. |
+| G11 | medium | `client rotate` sets `enabled = 1`, so it would silently undo `client disable`. It also writes the seed inside the TX without fsync. | `ipc/handlers/clients.py:45-58` | §3.4: rotate refuses a disabled client unless given `--enable`. The seed write follows the versioned-slot order: write, fsync, then TX. |
+| G12 | low | A bare `SAVEPOINT` opens a deferred transaction, so the write upgrade can hit `SQLITE_BUSY`. | SQLite transaction semantics | §2.3: `BEGIN IMMEDIATE → SAVEPOINT … → ROLLBACK TO; RELEASE → ROLLBACK`. |
+| G13 | low | The guard "only `_decide` reads `mode`" would fail, because `storage/authority_view.py:144` loads it into the view. | `authority_view.py:144` | §2.2: the guard targets *decisions* (comparisons and branches on `mode` / `include_*`), not loads. |
+| G14 | low | Stored `PeerFacts` are thinner than revision 1 implied. `peers` stores only `telegram_peer_type`, and archive state is never stored. | `migrations.py:183-196` | §2.2: in snapshots the archive step is always `facts_unknown`, and the class step is decided only where the stored type maps exactly. |
+| G15 | low | A canonical peer is the pair `(telegram_peer_type, telegram_peer_id)`, not a single ID. After a restore on a fresh machine, Telethon's entity cache is empty. | `migrations.py:183-226` (`peers`, `peer_policy` keys) | §4.1 carries the pair. The restore runbook runs `auth login` before import, and `project drift` after it. |
+| G16 | low | Revision 1 cited "Phase-3 lock logic" and "`admin.lock` events" as existing. Only `set_locked` exists, and nothing appends `admin.lock`. | as G5 | Wording corrected in §2.4. |
 
 ## 1. Architecture
 
@@ -109,7 +134,8 @@ policy simulate ─► parse ─► SAVEPOINT simulation ─► plan ─► appl
 Schema additions (new migrations, all append-only):
 
 - `account_lifecycle`: state, `remote_revoke`, `session_generation`, `updated_at`.
-- `key_versions`: purpose, version, key_id, state (`staged|active|retired`), activated_at, retired_at, and `trusted_for_import` for backup keys.
+- `key_slots`: purpose, version, state (`staged|active|retired`), activated_at, retired_at. This is the private-slot pointer only. Public keys stay in the existing `verification_keys`, which gains `trusted_for_import` (G9).
+- `account_lifecycle` also holds the singleton `active_account_id` (G8).
 - `restore_lineage`: §4.5.
 - `maintenance_runs`: kind, started_at, finished_at, outcome, counts. There is no content column.
 
@@ -123,9 +149,20 @@ Every mutation handler is split into three functions:
 - `plan(conn, parsed) -> Plan` runs **inside** the transaction and resolves refs, `tgl_` handles, current grants and membership against live state.
 - `apply(conn, plan) -> Result` writes rows and bumps epochs in SQL.
 
-The wrapper runs `parse → BEGIN IMMEDIATE → plan → apply → COMMIT → post_commit`. `post_commit` does **cleanup only**: every cached `tgl_` handle, staged object and authority artifact is bound to an epoch or snapshot, so the committed epoch bump alone makes stale entries unusable. If `post_commit` raises, the commit stands, the error is logged, and stale entries are still refused.
+There are three handler kinds (G4, G5):
 
-The existing handlers in `ipc/handlers/{projects,scope,clients,auth}.py` move to this shape. An architecture guard asserts that no module under `ipc/handlers/` except `_wrapper.py` calls `immediate_transaction`, `commit` or `rollback`.
+- **`TxHandler`**: `parse → BEGIN IMMEDIATE → plan → apply → COMMIT → post_commit`. It is used by every pure policy mutation.
+- **`AuditedTxHandler`**: `parse → acquire _APPEND_GUARD → BEGIN IMMEDIATE → plan → apply (includes append_event) → COMMIT → write_anchor → release`. An anchor failure after commit takes the coordinator's step-12 path: the commit stands and the daemon enters `audit_integrity_degraded`. It is used by every command that emits an `ADMIN_EVENTS` event: lock, unlock, key rotation, `audit checkpoint`, repair-anchor, retention purge, session revoke, account switch, backup trust and policy import.
+- **`FlowHandler`**: an async sequence of explicit steps. Network and file I/O happen **between** transactions, never inside one, and each DB step goes through the TX or audited-TX runner. It is used by `auth login/status/logout-local`, `auth revoke-this-session`, `scope discover`, `project drift`, `keys rotate` and `policy export/import`.
+
+For all three kinds, `post_commit` does **cleanup only**: every cached `tgl_` handle, staged object and authority artifact is bound to an epoch or snapshot, so the committed epoch bump alone makes stale entries unusable. If `post_commit` raises, the commit stands, the error is logged, and stale entries are still refused.
+
+The existing handlers in `ipc/handlers/{projects,scope,clients,auth}.py` move to the matching kind. Two architecture guards apply:
+
+- no module under `ipc/handlers/` except `_wrapper.py` calls `immediate_transaction`, `commit` or `rollback`;
+- no `await` appears lexically inside any `immediate_transaction` block in `src/`, so a transaction can never be held across a network call.
+
+`storage.save_epoch_state` stops calling `commit()` by itself. It becomes an `apply` step.
 
 ### 2.2 One evaluator, with traces
 
@@ -133,14 +170,16 @@ The existing handlers in `ipc/handlers/{projects,scope,clients,auth}.py` move to
 
 `PeerFacts` (`kind: private|group|channel`, `archived: bool`) carries the §10.4 class and archive inputs. The filter moves here from `disclosure/seams.py:154-166`, and afterwards that file has no filtering. Retrieval passes live dialog facts. `EffectiveAccess` passes stored facts where the refstore has them. With `facts=None`, the class step records `outcome: facts_unknown` and does not decide.
 
-An AST guard asserts that `_decide` is the only function in `src/` that reads `policy_state.mode` or the four `include_*` switches.
+An AST guard asserts that `_decide` is the only function in `src/` that **compares or branches on** `mode` or the four `include_*` switches. `storage/authority_view.py` may load them (G13).
+
+In a snapshot, stored facts are thin (G14). `peers` holds only `telegram_peer_type`, so the class step decides only where the stored type maps exactly to private, group or channel, and otherwise records `facts_unknown`. Archive state is never stored, so the archive step is always `facts_unknown` in snapshots.
 
 ### 2.3 `EffectiveAccess`, simulate, diff
 
 `EffectiveAccess.snapshot(conn) -> Snapshot` enumerates client × enabled project × member peer. Each row carries `client_ref, project_ref, peer_ref, decision, egress, excerpt_max, cross_search, facts_state, trace_digest`, and rows are sorted and hashed with TG-JCS. It is **metadata-effective access**: a truthful answer from stored metadata, not a live oracle. It never calls Telegram and never contains a body, a query or a raw ID.
 
 - `policy explain --client --project [--peer]` returns the matching rows, each with its full trace.
-- `policy simulate <command> [--arg K=V ...]` accepts only policy mutations: `scope *`, `project *` mutations and `client disable`. It runs `parse → SAVEPOINT simulation → plan → apply → snapshot → ROLLBACK TO simulation; RELEASE simulation`, then diffs the before and after snapshots. It returns the diff and a `tps_` handle.
+- `policy simulate <command> [--arg K=V ...]` accepts only policy mutations: `scope *`, `project *` mutations and `client disable`. It runs `parse → BEGIN IMMEDIATE → SAVEPOINT simulation → plan → apply → snapshot → ROLLBACK TO simulation; RELEASE simulation → ROLLBACK` (G12), then diffs the before and after snapshots. It returns the diff and a `tps_` handle.
 - `policy diff <tps_…>` recomputes the diff and refuses if the handle's base digest no longer matches.
 
 **`tps_` registry.** Handles live in daemon memory, expire after 10 minutes, and are bound to the admin peer credential and the active account. Each records a base digest over `(policy_epoch, every project_epoch, security_epoch, snapshot digest)` and holds only the parsed command or bundle plan and the diff. It contains no bodies and no raw IDs.
@@ -153,15 +192,14 @@ An AST guard asserts that `_decide` is the only function in `src/` that reads `p
 
 | Command | Presence | Notes |
 |---|---|---|
-| `lock`, `unlock` | yes | Phase-3 lock logic behind the wrapper; `admin.lock` / `admin.unlock` events. |
+| `lock`, `unlock` | yes | `AuditedTxHandler`. It wraps `authority.set_locked` and, **new in 5a**, appends `admin.lock` / `admin.unlock` and refreshes the anchor (G5, G16). |
 | `lock status` | no | |
 | `audit verify` | no | Also recognises truncation at a verified checkpoint (§3.5). |
-| `audit checkpoint`, `audit repair-anchor` | yes | Phase-3 logic, now reachable through the daemon. |
+| `audit checkpoint`, `audit repair-anchor` | yes | `write_checkpoint` and `repair_anchor` (`chain.py:281`, `anchor.py:175`), now reachable through the daemon. |
 | `disclosure show`, `disclosure verify` | no | `show` consults `RestoreLineageLookup` (§2.6). |
 | `disclosure key` | yes | Frozen gating kept. |
 | `exposure status` | no | |
 | `consent status` | no | |
-| `consent approve` | yes | |
 | `scope remove` | yes | |
 | `project rename`, `project remove-peer`, `project grant-cross-search`, `project revoke-cross-search` | yes | `remove-peer` takes a `tgl_` handle only. |
 | `project members` | no | Mints `tgl_` handles bound to the project and snapshot epoch. |
@@ -177,6 +215,21 @@ Every command keeps its frozen `PRESENCE_GATED` classification. Phase 5 adds gat
 ### 2.6 Restore-lineage seam
 
 `RestoreLineageLookup.affecting(receipt) -> LineageVerdict` answers `none` in 5a. `disclosure show` already renders `payload_unreconstructable` when the lookup says so, and 5c replaces the lookup with the table-backed version.
+
+### 2.7 Touch ID summaries (G6)
+
+Admin approvals keep the frozen display field set. Each gated command supplies a deterministic `action_display` summary of at most 160 codepoints: the command, then a fixed set of salient values, with long values shortened to `first8…last4`. For example:
+
+- `keys rotate audit-mac · new chain epoch 3`
+- `policy import · ct 3a9f01c2…e21c · signer ed25519:1a2b3c4d…9f0e · trust-once`
+- `policy import commit · +4/−1 grants · 2 projects disabled · 0 peers removed`
+- `retention purge · root ckp_…`
+
+The full values are bound cryptographically by `request_hmac` over the exact arguments, as they already are.
+
+Secret arguments (the age identity, like the 2FA password today) are stripped before display. They enter `request_hmac` only as `HMAC(privacy-key, value)`.
+
+A test renders every summary through the agent's own `renderableText` rule and asserts that it fits within 160 codepoints unchanged.
 
 ## 3. Phase 5b — lifecycle, rotation, retention, recovery
 
@@ -212,7 +265,7 @@ From `SESSION_REVOKED`, `LOGGED_OUT` or `ACCOUNT_UNAVAILABLE`, recovery is `auth
 If the login resolves to a different `telegram_user_id` than the active account, it refuses unless the operator passes `--new-account`. With `--new-account`, one TX:
 
 - inserts a new `accounts` row with fresh default-deny `policy_state`;
-- switches the active account binding;
+- switches the durable `active_account_id` pointer. Every "the account" read goes through one `active_account(conn)` helper, which replaces `projects.py:86`'s "exactly one account" check, and a guard forbids unscoped `FROM accounts` outside `storage/identity.py` (G8);
 - disables the old account's projects without rewriting their `account_id`;
 - inherits no scope lists or grants;
 - keeps old account rows, refs and receipts for verification;
@@ -226,7 +279,7 @@ If the login resolves to a different `telegram_user_id` than the active account,
 | Purpose (registry name) | Consequence, applied in the rotation TX |
 |---|---|
 | cursor (`cursor-key`) | All cursors invalidated. |
-| scope-digest (`privacy-key`) | Digest-bound cursors and pending consents invalidated. |
+| scope-digest (`privacy-key`) | Digest-bound cursors and pending consents invalidated. **Budget continuity (G3):** `committed_usage` sums over the bucket digest under the active key and under every `privacy-key` version retired within `rolling_window_minutes`. |
 | disclosure signing (`disclosure-key`) | New key ID. The old public key is retired and kept through receipt retention + grace. |
 | checkpoint signing (`audit-checkpoint-key`) | New key ID. The old public key is kept through checkpoint retention + grace. |
 | backup signing (`backup-key`) | New key ID. The old public key is kept and marked `trusted_for_import` (§3.5). |
@@ -234,7 +287,11 @@ If the login resolves to a different `telegram_user_id` than the active account,
 | audit MAC (`audit-chain-key`) | A signed checkpoint is sealed and a new chain epoch opened. Its first event is `admin.key_rotation`. |
 | principal (`principal-key`) | **Refused** with a documented reason (D5). |
 
-**Versioned slots.** `keys/store.py` moves from one file per name to `<name>/<version>`, where each file is immutable and 0600. SQL `key_versions` owns the active pointer. The sequence:
+**Versioned slots.** `keys/store.py` moves from one file per name to `<name>/<version>`, where each file is immutable and 0600. The SQL table `key_slots` owns the active pointer. Public halves stay in the existing `verification_keys` (G9).
+
+Startup step 3 (`load_secrets`) loads **every** version of each purpose into memory. Step 8 (`recompute_key_ids`) selects the active version from `key_slots` once the database is open. `load_key(name)` returns that selection, and retired versions are reachable only by explicit version.
+
+The rotation sequence:
 
 1. Write the new version and fsync the file and its directory.
 2. Load it back and check that its key ID recomputes.
@@ -243,23 +300,29 @@ If the login resolves to a different `telegram_user_id` than the active account,
 
 If the process crashes before step 3, the new version is an orphan, which doctor reports and `keys rotate` cleans up on the next run. If it crashes after step 3, both versions exist and SQL picks the new one unambiguously.
 
-Retired **private** material is deleted only when its purpose allows. Signing keys can go immediately, because what they need to keep is public. Cursor and scope-digest keys go at once (their consequence is invalidation). The audit-MAC key is kept until every retained event in its epoch sits behind a verified truncation checkpoint (§3.5).
+Retired **private** material is deleted only when its purpose allows:
+
+- **Signing keys** can go immediately, because what they need to keep is public.
+- **The cursor key** goes at once, because its consequence is invalidation.
+- **A scope-digest (`privacy-key`) version** is kept until it falls out of `rolling_window_minutes`, for budget continuity (G3). The audit-MAC key is kept until every retained event in its epoch sits behind a verified truncation checkpoint (§3.5).
 
 A one-time migration moves each existing single file to version `1` and registers it as active.
+
+**Client seeds (G11).** `client rotate` refuses a disabled client unless given `--enable`. Today it sets `enabled = 1` unconditionally, which would undo `client disable`. Its seed write follows the same order as the key rotation: write the file and fsync it, then run the TX. Today the seed is written inside the TX without fsync.
 
 ### 3.5 Retention and maintenance
 
 There are two maintenance cadences:
 
-- **Cursor GC** runs at startup and hourly, deleting only cursors past `expires_at` (spec line 1310).
+- **Cursor GC** runs at startup and hourly, deleting only cursors past `expires_at` (spec line 1310). It calls the **existing** `storage.purge_expired_cursors`, which has no caller today, so this closes a shipped gap (G10).
 - **The retention purge** runs at startup and every 6h while idle, and on `retention purge --now` (Touch ID).
 
 The retention purge runs under the audit append guard in this fixed order:
 
 1. Exposure rows older than `exposure_ledger_days`.
-2. Receipts older than `disclosure_receipt_days` whose exposure rows are all gone. The FK enforces this too.
-3. The audit prefix: choose the **newest verified signed checkpoint at or before** the `audit_events_days` cutoff as the truncation root, keep it, and delete only events strictly before it. Checkpoints themselves are purged past `audit_checkpoint_days`, but never the current root.
-4. `message_ref` rows older than `message_ref_days` **and** not referenced by any live cursor.
+2. The audit prefix: choose the **newest verified signed checkpoint at or before** the `audit_events_days` cutoff as the truncation root. Keep the root checkpoint and its `last_event` row, and delete only events strictly before that row (§3.8). Checkpoints themselves are purged past `audit_checkpoint_days`, but never the current root or an epoch-sealing checkpoint that still has retained events after it.
+3. Receipts older than `disclosure_receipt_days` whose exposure rows **and** audit event are gone. Both foreign keys (`migrations.py:316,369`) enforce this, so the order is mechanical, not a convention (G1). Receipt retention is a floor.
+4. `message_ref` rows whose `last_used_at` is older than `message_ref_days` **and** that no live cursor references. Cursor `state_json` holds no message refs (`ALLOWED_STATE_KEYS`), so the second condition is checked but is currently vacuous.
 5. Public keys:
    - disclosure keys after receipt retention + grace;
    - checkpoint keys after checkpoint retention + grace;
@@ -289,6 +352,25 @@ These checks replace phase-skips:
 
 `tunnel.tls_trust` stays skipped until Phase 6. Nothing prints secrets, phone numbers, raw IDs or content.
 
+### 3.8 Chain epochs and truncation (G2)
+
+Today `disclosure/audit/chain.py` supports one epoch from genesis and nothing else, as the probe showed. 5b adds the following, test-first, **before** any rotation, restore or purge code:
+
+- **`seal_and_open_epoch(conn, *, new_epoch_event)`.** Inside the caller's TX:
+  1. write a signed checkpoint at the current head (the *sealing* checkpoint);
+  2. append `new_epoch_event` at `(epoch + 1, seq 1)` with `prev = genesis_mac(epoch + 1)`, MACed under the key for the new epoch.
+
+  `append_event` is unchanged and continues whatever epoch the head is in.
+- **`verify_chain(conn, keys_by_epoch, *, root=None)`:**
+  - The sequence resets at each new epoch: seq 1 with `prev = genesis_mac(epoch)`.
+  - Epoch numbers must be contiguous from the first retained epoch.
+  - Every epoch except the last must end exactly at a sealing checkpoint whose signature verifies and whose `last_event_id` / `last_event_mac` equal the epoch's last retained event.
+  - With `root` (the truncation checkpoint), verification starts at the root's `last_event` row: its signature must verify and its MAC must equal the row's `event_mac`. The walk continues from there, and no genesis is required for the root's epoch.
+  - Anything else is a `ChainError`.
+- **Why contiguity plus sealing checkpoints is enough.** Deleting a whole middle epoch leaves an epoch-number gap. Deleting an epoch's tail leaves its sealing checkpoint mismatched. Deleting the newest events is caught by the existing external anchor. `genesis_mac` stays frozen, and no cross-epoch MAC field is added: `audit_events` columns are §12.2 and must not change.
+- **Keys by epoch.** Each epoch's MAC key version is recorded in `key_slots`, and verification uses exactly that version (§3.4).
+- **Probe as regression.** `docs/verification/probes/phase5_chain_epochs_probe.py` becomes `tests/disclosure/test_chain_epochs.py`. Its two rejections must turn into acceptances for legitimate epochs and roots, and a family of negatives covers the attacks: a missing middle epoch, a truncated tail, a forged root, a root without its row, and an epoch number that skips.
+
 ## 4. Phase 5c — backup, import, runbooks
 
 ### 4.1 Payload `tg-mcp-policy-bundle/v1`
@@ -298,8 +380,8 @@ The payload is TG-JCS bytes produced by the single encoder and read back through
 - `schema`, `created_at`
 - `account_binding` = lowercase hex of `SHA256("tg-mcp-account-binding/v1" || 0x00 || u64_be(telegram_user_id))`
 - `policy_state`: `mode` and the four `include_*` switches
-- `owner_allow`, `owner_deny`: canonical peer identifiers, which §33.3 permits inside the ciphertext
-- `projects`: slug, display name, enabled, and members with `shared`
+- `owner_allow`, `owner_deny`: canonical peers as `(telegram_peer_type, telegram_peer_id)` pairs, which §33.3 permits inside the ciphertext (G15)
+- `projects`: slug, display name, enabled, and members as canonical pairs with `shared`
 - `grants`: `client_kind` (one of `openai_tunnel`, `codex_local`, `claude_code_local`), project slug, egress, `excerpt_max`, `cross_search`
 - `settings`: non-secret rows only
 
@@ -351,17 +433,17 @@ Tests:
 
 **Import** (`policy import <file> --signature <file.sig> --identity <path|->  [--trust-key ed25519:sha256:…]`):
 
-1. **Touch ID #1**, before any other work. The prompt shows ciphertext SHA-256, sidecar digest, signer fingerprint, the `--trust-key` fingerprint if given, and `HMAC(privacy-key, identity)` truncated for display. It never shows the identity.
+1. **Touch ID #1**, before any other work. The `request_hmac` binds the pushed ciphertext's SHA-256, the sidecar digest, the signer fingerprint, the `--trust-key` fingerprint if given, and `HMAC(privacy-key, identity)`. The prompt shows the §2.7 summary: shortened ciphertext digest, signer, and `trust-once` when `--trust-key` is given. It never shows the identity.
 2. **Trust check:** `recompute(public_key) == key_id`, and either `key_id` is registered with `trusted_for_import` or `key_id == --trust-key`. `--trust-key` authorises **this staged import only** and writes nothing to the registry. Permanent trust is the separate `keys trust-backup <key_id>` (Touch ID; `admin.backup_trust`).
 3. Verify the signature, then decrypt in daemon memory.
 4. Strict-decode the payload, and check `account_binding` against the active account. A mismatch refuses.
 5. `parse → SAVEPOINT → plan → apply → snapshot → ROLLBACK TO / RELEASE`. Stage a `tps_` handle (§2.3) and return the diff.
-6. `policy import --commit tps_…`: **Touch ID #2**, then one `BEGIN IMMEDIATE`:
+6. `policy import --commit tps_…`: **Touch ID #2**, whose §2.7 summary gives the diff counts. Then one audited `BEGIN IMMEDIATE`:
    - base-digest recheck;
    - `plan → apply` as a replace;
    - bump the policy epoch, every project epoch, every grant epoch and the security epoch;
    - insert a `restore_lineage` row;
-   - seal a checkpoint and open a new audit chain epoch whose first event is `admin.policy_import`;
+   - `seal_and_open_epoch` (§3.8), with `admin.policy_import` as the new epoch's first event;
    - `COMMIT`.
 
 **Bulk transfer.** Admin frames are capped at 64 KiB (`ipc/framing.py:31`), and that codec exists once and is not changed. Ciphertext therefore moves as a sequence of ordinary frames through two internal admin commands, `transfer pull <id> <n>` and `transfer push <id> <n>`. Each carries at most 32 KiB of base64 payload. A transfer:
@@ -391,7 +473,7 @@ For import, the CLI pushes the ciphertext first. The `policy import` request the
 
 - `install.md`
 - `uninstall.md`, with a state-ownership table: what is deleted, what is kept, and which Keychain items are involved
-- `restore-from-backup.md` (lost or replaced Mac)
+- `restore-from-backup.md` (lost or replaced Mac): install, then `auth login` (an active account must exist), then `policy import`, then `project drift` so the empty Telethon entity cache gets filled (G15)
 - `session-compromise.md` (revoke)
 - `key-compromise.md` (one section per purpose)
 - `audit-degraded.md` (repair-anchor)
@@ -420,7 +502,7 @@ Each of 5a, 5b and 5c gets a plan (writing-plans), a `phase-5x` branch, the stag
 
 **Formal model** (`formal/model.py`, bounded, with the state count recorded):
 
-- **New durable states:** lifecycle `REVOKING`; key versions `staged / registered / active`; restore `committed` with stale caches; truncation `root_installed` / `event_appended`.
+- **New durable states:** chain epochs and sealing checkpoints (§3.8); lifecycle `REVOKING`; key versions `staged / registered / active`; restore `committed` with stale caches; truncation `root_installed` / `event_appended`.
 - **New transitions:** `revoke`, `rotate_audit_mac`, `retention_truncate`, `restore_commit`, `Crash`, `Restart`.
 - **New assertions:**
   - `CommittedRevokingSurvivesRestart`: no disclosure handoff after a committed `REVOKING`, across any crash and restart.
@@ -443,6 +525,12 @@ Each of 5a, 5b and 5c gets a plan (writing-plans), a `phase-5x` branch, the stag
 - the content-leak sweep extended to purge events, lineage rows, `maintenance_runs`, doctor output and the bundle plaintext;
 - the runbook command-existence test;
 - the signature golden vector;
+- the chain-epoch and truncation family (§3.8), grown from the G2 probe;
+- a budget test that rotates `privacy-key` mid-window (G3);
+- the no-`await`-in-transaction guard (G4);
+- an anchor-failure test for every audited admin command (G5);
+- a test fitting every §2.7 summary into 160 codepoints (G6);
+- the purge FK order: a receipt whose audit event is retained is not purged (G1);
 - the age vector and negative suites.
 
 **Smoke rows** drive the shipped artifacts:
@@ -463,7 +551,7 @@ Each of 5a, 5b and 5c gets a plan (writing-plans), a `phase-5x` branch, the stag
 
 ### 5.4 Command completeness, by name
 
-A test computes the §33 command list, subtracts the deferred set `{tunnel rotate-binding, release verify}`, and requires that every remaining command is either an `AdminRouter` command with a registered handler or a top-level CLI verb that works. It asserts both deferred commands answer `NOT_AVAILABLE_IN_PHASE` by name.
+A test computes the §33 command list, subtracts the deferred set `{tunnel rotate-binding, release verify, consent approve}`, and requires that every remaining command is either an `AdminRouter` command with a registered handler or a top-level CLI verb that works. It subtracts `consent approve` too (G7) and asserts all three deferred commands answer `NOT_AVAILABLE_IN_PHASE` by name.
 
 `serve` is a CLI concern, not an `AdminRouter` handler. Its CLI behaviour is pinned separately: it prints the pointer to `start` / `demo` and exits with `EXIT_NOT_IN_PHASE`. Phase 6 decides whether `serve` becomes a real alias.
 

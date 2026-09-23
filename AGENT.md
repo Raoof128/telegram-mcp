@@ -377,3 +377,22 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
   - The owner's line-by-line gauntlet of the design.
   - Then writing-plans for 5a.
   - No production claim.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Gauntlet of the Phase 5 design (simurgh-arise), producing revision 2. Design only.
+- **Summary:** Checked revision 1 (`1e21caf`) against the shipped code by reading the named lines and running one probe. Found 16 defects (2 blockers, 5 high, 5 medium, 4 low), each fixed in place and listed in §0B.
+  - **G1 (blocker):** the purge order broke `audit_events.disclosure_ref → disclosure_receipts` (`migrations.py:369`). The audit prefix now goes before receipts, and receipt retention becomes a floor.
+  - **G2 (blocker):** `verify_chain` cannot accept a second epoch or a truncated prefix, proven by `docs/verification/probes/phase5_chain_epochs_probe.py` (both are rejected with "chain sequence is not continuous"). New §3.8 adds epoch sealing and a root-aware verifier, to be built before rotation, restore or purge.
+  - **High:** G3, `privacy-key` rotation would reset exposure-budget buckets, a hard-limit bypass; G4, network handlers cannot live inside one transaction wrapper; G5, audited admin events need the append guard and an anchor refresh, and lock/unlock append nothing today; G6, admin Touch ID prompts show only the command name.
+  - **Medium and low:** `consent approve` deferred as a spec "MAY"; an active-account pointer; `key_slots` next to the existing `verification_keys`; the hourly cursor GC, which has no caller today; `client rotate` re-enabling a disabled client; plus four precision fixes.
+- **Files changed:** `docs/superpowers/specs/2026-09-24-telegram-mcp-phase-5-design.md`, `docs/verification/probes/phase5_chain_epochs_probe.py`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:**
+  - The probe was run from the repo: epoch 1 verifies, and cases (a) and (b) are both rejected.
+  - Ruff check and format are clean on the probe.
+  - Every §0B row cites a file:line or the probe.
+  - No product code changed.
+- **Follow-ups:**
+  - The owner's review of revision 2, then writing-plans for 5a.
+  - Shipped gaps recorded for 5a/5b: G10 (no hourly cursor GC), G11 (`client rotate` re-enables), and the §3.2 `UserDeactivated` mapping.
+  - No production claim.
