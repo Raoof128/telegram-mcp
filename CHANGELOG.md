@@ -341,3 +341,17 @@
   - A forum read-marker witness.
   - The merge decision (owner).
   - No production claim.
+
+### 2026-09-23 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase 4c landed on `main`.
+- **Summary:** Branch `phase-4c` was pushed, merged into `main` with `--no-ff` as `0a11bb9` (11 commits since `cd1434e`), and `main` was pushed. The merged tree is identical to the gated branch head `1741ff9`. There are 9 sensitive tools and all are served on the fake transport. Real Telegram behaviour is owner-pending. `CLAUDE.md` and `docs/verification/phase-4.md` now say 4b and 4c are on `main`. The decisions and claims are recorded in Zurvan under the tag `telegram-mcp`.
+- **Files changed:** `CLAUDE.md`, `docs/verification/phase-4.md`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** the full gate on the merged tree (below): pytest 1337 passed, 10 skipped; smoke 53/53; formal 624/624; ruff, format and mypy clean (87 files); contracts check and build OK.
+- **Follow-ups:**
+  - Owner-run: the Test DC run (forum, edges, real paging and exhaustion), the dedicated-account qualification, the Touch ID test, and the installed-host check.
+  - Re-package the signed agent.
+  - A forum read-marker witness.
+  - Deferred minors: the conservative ten-page check; the exposure test's in-place `_rehome`; the candidate-universe digest.
+  - Next: Phase 5 per the roadmap.
+  - No production claim until Gates A–R pass for the exact artifact.

@@ -4,11 +4,11 @@
 `telegram_resolve_project` succeed for real: authenticated loopback ingress,
 a daemon-delivered consent prompt answered by the packaged agent, the Phase-3
 coordinator, a signed receipt that verifies persisted and offline, ledger
-rows, one audit event, and a refreshed anchor. **Phase 4b is implemented on
-branch `phase-4b`** (see "Phase 4b" below): a daemon, Touch ID admin approvals,
+rows, one audit event, and a refreshed anchor. **Phase 4b is on `main`**
+(merged at `cd1434e`; see "Phase 4b" below): a daemon, Touch ID admin approvals,
 raw reviewed login, and `list_chats`, `resolve_peer`, `get_messages` and
 `get_unread` through the same chain, against a fake Telegram transport. **Phase
-4c is implemented on branch `phase-4c`** (see "Phase 4c" below):
+4c is on `main`** (merged at `0a11bb9`; see "Phase 4c" below):
 `telegram_get_context`, `telegram_search_messages` and
 `telegram_cross_project_search`, with signed §23D coverage. All nine sensitive
 tools are now served, on the fake transport.

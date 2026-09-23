@@ -13,13 +13,13 @@ chain and anchor). **Phase 4a is complete:** `telegram_list_projects` and
 loopback ingress (`runtime/ingress.py`), a daemon-delivered consent prompt
 (`consent/prompter.py`), live SQLite authority and the Phase-3 coordinator,
 with receipts that verify persisted and offline. `runtime/composition.py` is
-the only wiring point. **Phase 4b is implemented on branch `phase-4b`:**
+the only wiring point. **Phase 4b is on `main`** (merged at `cd1434e`):
 `telegram-mcp daemon`, Touch-ID-approved admin commands bound to their exact
 request, raw reviewed Telegram login, and `list_chats`, `resolve_peer`,
 `get_messages` and `get_unread` against a fake transport. The adapter owns
 the MTProto boundary (`telegram/telethon_adapter.py`: one send per request,
 per-operation allowlist and work budget; Telethon's login helpers are never
-used). **Phase 4c is implemented on branch `phase-4c`:** `get_context` and both
+used). **Phase 4c is on `main`** (merged at `0a11bb9`): `get_context` and both
 searches, so all nine sensitive tools are served on the fake transport. The
 searches are per peer only, with a pure continuation engine
 (`telegram/search.py`) and signed §23D coverage whose counters are measured.
