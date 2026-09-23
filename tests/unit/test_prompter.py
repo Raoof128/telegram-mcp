@@ -137,3 +137,34 @@ async def test_agent_death_mid_prompt_is_a_denial_and_detaches():
     await helper
     await asyncio.wait_for(session, timeout=1)
     assert prompter.connected is False
+
+
+async def test_agent_death_while_idle_detaches_and_a_new_agent_can_attach():
+    (d_reader, d_writer), (_a_reader, a_writer) = await _pair()
+    prompter = Prompter()
+    session = asyncio.create_task(prompter.attach(d_reader, d_writer))
+    await asyncio.sleep(0)
+    a_writer.close()  # the agent dies with no prompt in flight
+    await asyncio.wait_for(session, timeout=1)
+    assert prompter.connected is False
+
+    (d_reader, d_writer), (a_reader, a_writer) = await _pair()
+    session = asyncio.create_task(prompter.attach(d_reader, d_writer))
+    await asyncio.sleep(0)
+
+    async def agent():
+        frame = decode_json_frame(await read_frame(a_reader))
+        await write_frame(
+            a_writer,
+            encode_json_frame(
+                {"type": "APPROVAL", "handle": frame["handle"], "envelope": ENVELOPE}
+            ),
+        )
+
+    helper = asyncio.create_task(agent())
+    envelope = await prompter.prompt(
+        handle=H1, challenge=b"{}", signature="s", display={}, timeout=5
+    )
+    assert envelope == ENVELOPE
+    await helper
+    session.cancel()

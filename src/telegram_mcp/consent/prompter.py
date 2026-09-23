@@ -90,12 +90,25 @@ def parse_answer(frame: Mapping[str, Any]) -> tuple[str, dict[str, Any] | None, 
 
 
 class Prompter:
-    """Holds the live RV-1 session and runs one prompt at a time over it."""
+    """Holds the live RV-1 session and runs one prompt at a time over it.
+
+    ``attach`` owns the only reader of the session. It notices agent loss the
+    moment the stream ends, even when no prompt is in flight, so the
+    rendezvous slot frees immediately and a restarted agent can attach.
+    Answers are delivered to the waiting prompt by handle; an answer for any
+    other handle (a late tap after a timeout) is discarded. No read is ever
+    cancelled mid-frame, so the stream cannot desynchronise.
+    """
+
+    # The reader waits indefinitely between frames; each prompt has its own
+    # deadline. This is only the ceiling for one idle read before re-arming.
+    _IDLE_READ_S = 3600.0
 
     def __init__(self) -> None:
         self._conn: tuple[asyncio.StreamReader, asyncio.StreamWriter] | None = None
         self._closed: asyncio.Event | None = None
         self._lock = asyncio.Lock()
+        self._waiting: dict[str, asyncio.Future[tuple[dict[str, Any] | None, str | None]]] = {}
 
     @property
     def connected(self) -> bool:
@@ -106,14 +119,37 @@ class Prompter:
         self._conn = (reader, writer)
         self._closed = asyncio.Event()
         try:
-            await self._closed.wait()
+            while True:
+                try:
+                    raw = await read_frame(reader, idle_s=self._IDLE_READ_S)
+                except FrameError as exc:
+                    if str(exc) == ERR_IDLE:
+                        continue  # nothing arrived; the header was never started
+                    return
+                except (OSError, ConnectionError):
+                    return
+                if not raw:
+                    return  # the agent went away
+                try:
+                    handle, envelope, reason = parse_answer(decode_json_frame(raw))
+                except (FrameError, ValueError):
+                    return  # a malformed answer ends the session: fail closed
+                waiter = self._waiting.get(handle)
+                if waiter is not None and not waiter.done():
+                    waiter.set_result((envelope, reason))
+                # otherwise: a late answer to an earlier prompt, discarded
         finally:
             self._conn = None
+            self._closed.set()
+            for waiter in self._waiting.values():
+                if not waiter.done():
+                    waiter.set_exception(PromptDenied("agent-lost"))
 
     def _drop(self) -> None:
-        self._conn = None
-        if self._closed is not None:
-            self._closed.set()
+        """Detach now and close the stream so the reader loop ends."""
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            conn[1].close()
 
     async def prompt(
         self,
@@ -136,41 +172,28 @@ class Prompter:
         try:
             if self._conn is None:
                 raise PromptUnavailable
-            reader, writer = self._conn
-            frame = prompt_frame(
-                handle=handle, challenge=challenge, signature=signature, display=display
-            )
+            _reader, writer = self._conn
+            waiter: asyncio.Future[tuple[dict[str, Any] | None, str | None]] = loop.create_future()
+            self._waiting[handle] = waiter
             try:
-                await write_frame(writer, encode_json_frame(frame))
-            except (FrameError, OSError, ConnectionError):
-                self._drop()
-                raise PromptUnavailable from None
-            while True:
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    raise PromptDenied("timeout")
+                frame = prompt_frame(
+                    handle=handle, challenge=challenge, signature=signature, display=display
+                )
                 try:
-                    raw = await read_frame(reader, idle_s=remaining)
-                except FrameError as exc:
-                    if str(exc) == ERR_IDLE:
-                        raise PromptDenied("timeout") from None
+                    await write_frame(writer, encode_json_frame(frame))
+                except (FrameError, OSError, ConnectionError):
                     self._drop()
-                    raise PromptDenied("agent-lost") from None
-                except (OSError, ConnectionError):
-                    self._drop()
-                    raise PromptDenied("agent-lost") from None
-                if not raw:
-                    self._drop()
-                    raise PromptDenied("agent-lost")
+                    raise PromptUnavailable from None
                 try:
-                    answer_handle, envelope, reason = parse_answer(decode_json_frame(raw))
-                except (FrameError, ValueError):
-                    self._drop()
-                    raise PromptDenied("malformed") from None
-                if answer_handle != handle:
-                    continue  # a late answer to an earlier prompt: discard
-                if envelope is None:
-                    raise PromptDenied(reason or "denied")
-                return envelope
+                    envelope, reason = await asyncio.wait_for(
+                        waiter, timeout=max(0.0, deadline - loop.time())
+                    )
+                except TimeoutError:
+                    raise PromptDenied("timeout") from None
+            finally:
+                self._waiting.pop(handle, None)
+            if envelope is None:
+                raise PromptDenied(reason or "denied")
+            return envelope
         finally:
             self._lock.release()
