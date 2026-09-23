@@ -44,6 +44,8 @@ from telegram_mcp.storage.settings import get_setting, set_setting
 
 __all__ = [
     "DISCLOSURE_STEPS",
+    "AuthorityRefusal",
+    "ConsentRefusal",
     "DisclosureCoordinator",
     "DisclosureOutcome",
     "RetrievalAdapter",
@@ -74,11 +76,43 @@ _APPEND_GUARD = threading.Lock()
 
 _SEARCH_TOOLS = frozenset({"telegram_search_messages", "telegram_cross_project_search"})
 
+_CATALOGUE_TOOLS = frozenset({"telegram_list_projects", "telegram_resolve_project"})
+
+# Keys an adapter may return beside ``data``. They are split off after
+# egress: never measured, never signed as data, never schema-validated as data.
+_SIDECAR_KEYS = frozenset({"_coverage", "_next_cursor"})
+
+
+class AuthorityRefusal(Exception):
+    """A seam refused before consent, with a frozen §27.1 code."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class ConsentRefusal(Exception):
+    """Consent could not be obtained, with a frozen §27.1 code."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def _split_sidecar(raw: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Separate adapter side keys from ``data``; an unknown one is an error."""
+    side = {k: v for k, v in raw.items() if k.startswith("_")}
+    if set(side) - _SIDECAR_KEYS:
+        raise ValueError("unknown adapter side key")
+    return {k: v for k, v in raw.items() if not k.startswith("_")}, side
+
 
 class RetrievalAdapter(Protocol):
-    """The Phase-4 seam. Faked in Phase 3, exactly as Phase 2 faked its own."""
+    """The Phase-4 seam: typed retrieval under an authority snapshot."""
 
-    async def retrieve(self, *, tool_name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    async def retrieve(
+        self, *, tool_name: str, arguments: Mapping[str, Any], snapshot: Any
+    ) -> dict[str, Any]:
         """Return the raw records for this call."""
         ...  # pragma: no cover - protocol shape only
 
@@ -142,11 +176,15 @@ class DisclosureCoordinator:
     # -- step 10 assembly ---------------------------------------------------
 
     def _prepare_proof(
-        self, tool_name: str, data: Mapping[str, Any], snapshot: Any, approval: Any
+        self,
+        tool_name: str,
+        data: Mapping[str, Any],
+        snapshot: Any,
+        approval: Any,
+        coverage: Mapping[str, Any] | None,
     ) -> dict[str, Any]:
         records = list(data.get(RECORD_ELEMENT[tool_name], []))
         level = effective_egress_level(records)
-        coverage = data.get("_coverage") if tool_name in _SEARCH_TOOLS else None
         prepared: dict[str, Any] = {
             "disclosure_ref": mint_disclosure_ref(),
             "committed_at": _now_iso(),
@@ -243,14 +281,18 @@ class DisclosureCoordinator:
             "disclosure_ref": prepared["disclosure_ref"],
         }
 
-    def _build_meta(self, prepared: Mapping[str, Any], data: Mapping[str, Any]) -> dict[str, Any]:
-        coverage = data.get("_coverage") if prepared["tool_name"] in _SEARCH_TOOLS else None
+    def _build_meta(
+        self, prepared: Mapping[str, Any], coverage: Any, next_cursor: str | None
+    ) -> dict[str, Any]:
+        catalogue = prepared["tool_name"] in _CATALOGUE_TOOLS
         return {
-            "source": "telegram",
-            "content_trust": "untrusted_external_content",
+            "source": "gateway" if catalogue else "telegram",
+            "content_trust": (
+                "non_instructional_gateway_metadata" if catalogue else "untrusted_external_content"
+            ),
             "truncated": False,
             "partial": bool(prepared["partial"]),
-            "next_cursor": None,
+            "next_cursor": next_cursor,
             "disclosure": {
                 "receipt_ref": prepared["disclosure_ref"],
                 "proof_key_id": prepared["signed"]["proof_key_id"],
@@ -269,13 +311,15 @@ class DisclosureCoordinator:
     # -- the transaction ----------------------------------------------------
 
     async def disclose(
-        self, *, tool_name: str, arguments: Mapping[str, Any], adapter: RetrievalAdapter
+        self,
+        *,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        adapter: RetrievalAdapter,
+        principal: Any = None,
     ) -> DisclosureOutcome:
         """Run the twelve steps. Returns a payload with its receipt, or a refusal."""
         if get_setting(self._conn, "audit.integrity_degraded"):
-            # Degraded refuses before retrieval, and appends nothing: while the
-            # anchor cannot advance, a further append would put the chain more
-            # than one ahead and make it unrecoverable at startup (design §6.6).
             return DisclosureOutcome(
                 released=False, error_code="AUDIT_INTEGRITY_UNAVAILABLE", retryable=False
             )
@@ -283,15 +327,20 @@ class DisclosureCoordinator:
         reservation = None
         try:
             # ---- steps 1-6: nothing has been retrieved ----------------------
-            self._checkpoint("freeze_arguments")
-            request = self._authority.freeze_arguments(tool_name, arguments)
+            try:
+                self._checkpoint("freeze_arguments")
+                request = self._authority.freeze_arguments(
+                    tool_name, arguments, principal=principal
+                )
 
-            self._checkpoint("snapshot_authority")
-            snapshot = self._authority.snapshot(tool_name, request)
+                self._checkpoint("snapshot_authority")
+                snapshot = self._authority.snapshot(tool_name, request)
+            except AuthorityRefusal as refusal:
+                return DisclosureOutcome(released=False, error_code=refusal.code, retryable=False)
 
             self._checkpoint("estimate_exposure")
             worst_case = self._authority.worst_case_buckets(tool_name, snapshot)
-            decision, _projected = self._ledger.consult(worst_case)
+            decision, projected = self._ledger.consult(worst_case)
             if decision == "refuse":
                 return DisclosureOutcome(
                     released=False, error_code="EXPOSURE_BUDGET_EXCEEDED", retryable=True
@@ -299,24 +348,47 @@ class DisclosureCoordinator:
 
             approval = None
             for _attempt in range(2):  # exactly one automatic restart (design §5.5)
-                self._checkpoint("consent_issue")
-                challenge = self._consent.issue(tool_name=tool_name, snapshot=snapshot)
+                try:
+                    self._checkpoint("consent_issue")
+                    challenge = await self._consent.issue(
+                        tool_name=tool_name,
+                        snapshot=snapshot,
+                        request=request,
+                        tier=decision,
+                        projected=projected,
+                        worst_case=worst_case,
+                    )
 
-                self._checkpoint("consent_consume")
-                approval = await self._consent.consume(challenge)
+                    self._checkpoint("consent_consume")
+                    approval = await self._consent.consume(challenge)
+                except ConsentRefusal as refusal:
+                    return DisclosureOutcome(
+                        released=False, error_code=refusal.code, retryable=False
+                    )
                 if approval is None:
                     return DisclosureOutcome(
                         released=False, error_code="CONSENT_DENIED", retryable=False
                     )
 
                 self._checkpoint("reserve_budget")
+                # consult and reserve run back to back with no await between
+                # them: on the daemon's single asyncio thread nothing can
+                # interleave, which is what "under the reservation lock"
+                # means here (Phase-3 design §5.4).
+                decision, projected = self._ledger.consult(worst_case)
+                if decision == "refuse":
+                    return DisclosureOutcome(
+                        released=False, error_code="EXPOSURE_BUDGET_EXCEEDED", retryable=True
+                    )
+                if not self._consent.snapshot_matches(approval, tier=decision, projected=projected):
+                    continue  # conditions moved: re-prompt with the new quantities
                 try:
                     reservation = self._ledger.reserve(
                         client_id=snapshot.client_id,
                         security_epoch=snapshot.security_epoch,
                         project_scope_digest=snapshot.project_scope_digest,
                         consent_challenge_digest=approval.challenge_sha256,
-                        request_nonce=request.nonce,
+                        request_nonce=approval.nonce,
                         worst_case=worst_case,
                         ttl_seconds=60,
                     )
@@ -324,10 +396,7 @@ class DisclosureCoordinator:
                     return DisclosureOutcome(
                         released=False, error_code="EXPOSURE_BUDGET_EXCEEDED", retryable=True
                     )
-                if self._consent.snapshot_matches(approval, worst_case):
-                    break
-                self._ledger.release(reservation.reservation_ref)
-                reservation = None
+                break
             else:
                 # Second divergence: stop an agent spinning through prompts.
                 return DisclosureOutcome(
@@ -336,7 +405,9 @@ class DisclosureCoordinator:
 
             # ==== SECURITY BARRIER ==========================================
             self._checkpoint("retrieve")
-            raw = await adapter.retrieve(tool_name=tool_name, arguments=arguments)
+            raw = await adapter.retrieve(
+                tool_name=tool_name, arguments=request.validated_args, snapshot=snapshot
+            )
 
             self._checkpoint("revalidate_authority")
             moved = self._authority.revalidate(snapshot)
@@ -344,10 +415,17 @@ class DisclosureCoordinator:
                 return DisclosureOutcome(released=False, error_code=moved, retryable=False)
 
             self._checkpoint("transform_egress")
-            data = self._authority.apply_egress(raw, snapshot)
+            try:
+                data, side = _split_sidecar(self._authority.apply_egress(raw, snapshot))
+            except ValueError:
+                return DisclosureOutcome(
+                    released=False, error_code="INTERNAL_ERROR", retryable=False
+                )
+            coverage = side.get("_coverage") if tool_name in _SEARCH_TOOLS else None
+            next_cursor = side.get("_next_cursor")
 
             self._checkpoint("measure_and_prepare_proof")
-            prepared = self._prepare_proof(tool_name, data, snapshot, approval)
+            prepared = self._prepare_proof(tool_name, data, snapshot, approval, coverage)
             actual = buckets_for(tool_name, data, client_id=snapshot.client_id)
 
             # ==== DISCLOSURE BARRIER: steps 11 and 12 under one guard =======
@@ -398,7 +476,7 @@ class DisclosureCoordinator:
                     )
 
             # ==== only now may a byte cross the boundary ====================
-            meta = self._build_meta(prepared, data)
+            meta = self._build_meta(prepared, coverage, next_cursor)
             if self._transport is not None:
                 self._transport.write(prepared["disclosure_ref"].encode("ascii"))
             return DisclosureOutcome(

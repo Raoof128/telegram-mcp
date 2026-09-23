@@ -8,7 +8,7 @@ under test come from the transaction, not from policy.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from tests.authority_fixtures import PROJECT_REF, seed_authority_rows
@@ -20,7 +20,8 @@ CLIENT_REF = "tcl_" + "a" * 26
 
 @dataclass(frozen=True)
 class FrozenRequest:
-    nonce: str
+    canonical_request_hmac: str = "f" * 64
+    validated_args: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class Snapshot:
 class Approval:
     key_id: str = "p256:sha256:" + "1" * 64
     challenge_sha256: str = "2" * 64
+    nonce: str = "N" * 22
 
 
 class FakeAuthority:
@@ -51,8 +53,10 @@ class FakeAuthority:
         self._moved = moved
         self._worst_case = worst_case
 
-    def freeze_arguments(self, tool_name: str, arguments: Any) -> FrozenRequest:
-        return FrozenRequest(nonce="n" * 32)
+    def freeze_arguments(
+        self, tool_name: str, arguments: Any, *, principal: Any = None
+    ) -> FrozenRequest:
+        return FrozenRequest(validated_args=dict(arguments))
 
     def snapshot(self, tool_name: str, request: FrozenRequest) -> Snapshot:
         return Snapshot()
@@ -73,14 +77,16 @@ class FakeConsent:
     def __init__(self, *, approve: bool = True, diverge_times: int = 0) -> None:
         self._approve = approve
         self._diverge_times = diverge_times
+        self.issued: list[dict[str, Any]] = []
 
-    def issue(self, *, tool_name: str, snapshot: Snapshot) -> str:
+    async def issue(self, *, tool_name, snapshot, request, tier, projected, worst_case) -> str:
+        self.issued.append({"tool_name": tool_name, "tier": tier, "projected": dict(projected)})
         return "tgu_" + "a" * 26
 
     async def consume(self, challenge: str) -> Approval | None:
         return Approval() if self._approve else None
 
-    def snapshot_matches(self, approval: Approval, worst_case: Any) -> bool:
+    def snapshot_matches(self, approval: Approval, *, tier: str, projected: Any) -> bool:
         if self._diverge_times > 0:
             self._diverge_times -= 1
             return False
@@ -125,7 +131,9 @@ def build_coordinator(
     data = {"project": {"project_ref": PROJECT_REF}, "messages": payload_records}
 
     class FakeAdapter:
-        async def retrieve(self, *, tool_name: str, arguments: Any) -> dict[str, Any]:
+        async def retrieve(
+            self, *, tool_name: str, arguments: Any, snapshot: Any = None
+        ) -> dict[str, Any]:
             return {k: list(v) if isinstance(v, list) else v for k, v in data.items()}
 
     worst_case = {
