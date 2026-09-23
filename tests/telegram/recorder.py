@@ -48,6 +48,8 @@ ALLOWED: dict[str, frozenset[str]] = {
             "messages.GetHistoryRequest",
             "messages.GetMessagesRequest",
             "channels.GetMessagesRequest",
+            "messages.GetRepliesRequest",
+            "messages.SearchRequest",
         }
     ),
 }

@@ -32,6 +32,8 @@ REVIEWED_RPCS: frozenset[str] = frozenset(
         "account.GetPasswordRequest",
         "auth.CheckPasswordRequest",
         "help.GetConfigRequest",
+        "messages.GetRepliesRequest",
+        "messages.SearchRequest",
     }
 )
 
