@@ -43,6 +43,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 from telegram_mcp.consent.broker import ConsentBroker, ConsentError
 from telegram_mcp.consent.challenge import display_digest, synthetic_exposure_digest
+from telegram_mcp.consent.prompter import prompt_frame
 from telegram_mcp.ipc.framing import (
     FrameError,
     decode_json_frame,
@@ -253,13 +254,9 @@ class _Run:
         await write_frame(
             writer,
             encode_json_frame(
-                {
-                    "type": "PROMPT",
-                    "handle": handle,
-                    "challenge": _b64url(wire_challenge),
-                    "sig": signature,
-                    "display": display,
-                }
+                prompt_frame(
+                    handle=handle, challenge=wire_challenge, signature=signature, display=display
+                )
             ),
         )
         if self.scenario == "broker-death-mid-prompt":

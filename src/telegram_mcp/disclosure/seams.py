@@ -10,6 +10,7 @@ In 4a only the two catalogue tools are served. The other seven refuse with
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
 import hmac
@@ -32,9 +33,13 @@ from telegram_mcp.authority.cursors import (
     project_scope_digest,
 )
 from telegram_mcp.authority.policy import AuthorityRequest, Denial, evaluate
-from telegram_mcp.consent.challenge import jcs_dumps
+from telegram_mcp.consent.broker import ConsentBroker, ConsentError, ConsumedChallenge
+from telegram_mcp.consent.challenge import display_digest, jcs_dumps
+from telegram_mcp.consent.display import build_display
+from telegram_mcp.consent.prompter import PromptDenied, Prompter, PromptUnavailable
 from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, Usage, subject_digest
-from telegram_mcp.disclosure.coordinator import AuthorityRefusal
+from telegram_mcp.disclosure.coordinator import AuthorityRefusal, ConsentRefusal
+from telegram_mcp.disclosure.exposure import exposure_digest
 from telegram_mcp.runtime.identity import PrincipalContext
 from telegram_mcp.storage.authority_view import load_security, load_view, project_labels
 
@@ -42,7 +47,9 @@ __all__ = [
     "CATALOGUE_TOOLS",
     "CatalogueSnapshot",
     "CoordinatorAuthority",
+    "CoordinatorConsent",
     "FrozenRequest",
+    "IssuedConsent",
     "VisibleProject",
 ]
 
@@ -332,3 +339,98 @@ class CoordinatorAuthority:
     def apply_egress(self, raw: Mapping[str, Any], snapshot: CatalogueSnapshot) -> dict[str, Any]:
         # Catalogue records carry no text field: nothing to transform.
         return dict(raw)
+
+
+@dataclass(frozen=True)
+class IssuedConsent:
+    handle: str
+    display: dict[str, Any]
+
+
+def _global(buckets: Mapping[BucketKey, Usage]) -> Usage:
+    for key, usage in buckets.items():
+        if key.kind == GLOBAL:
+            return usage
+    return Usage(0, 0)
+
+
+class CoordinatorConsent:
+    """Issue, prompt, consume: the coordinator's consent seam over real parts."""
+
+    def __init__(self, broker: ConsentBroker, prompter: Prompter, *, wait_s: float = 45.0) -> None:
+        self._broker = broker
+        self._prompter = prompter
+        self._wait_s = wait_s
+
+    async def issue(
+        self,
+        *,
+        tool_name: str,
+        snapshot: Any,
+        request: Any,
+        tier: str,
+        projected: Mapping[BucketKey, Usage],
+        worst_case: Mapping[BucketKey, Usage],
+    ) -> IssuedConsent:
+        after = _global(projected)
+        increment = _global(worst_case)
+        display = build_display(
+            tool_name=tool_name,
+            client_kind=snapshot.client_kind,
+            project_names=[],
+            peer_name=None,
+            egress_level=snapshot.egress_level,
+            tier=tier,
+            current=Usage(after.records - increment.records, after.bytes - increment.bytes),
+            projected=after,
+        )
+        try:
+            handle = await self._broker.issue(
+                tool=tool_name,
+                request_hmac=request.canonical_request_hmac,
+                principal=snapshot.principal_ref,
+                client=snapshot.client_ref,
+                account=snapshot.account_ref,
+                policy_epoch=snapshot.policy_epoch,
+                project_scope_digest=snapshot.scope_hex,
+                security_epoch=snapshot.security_epoch,
+                display_digest=display_digest(display),
+                exposure_snapshot_digest=exposure_digest(tier, projected),
+            )
+        except ConsentError as exc:
+            raise ConsentRefusal(exc.dispatch_code) from None
+        return IssuedConsent(handle=handle, display=display)
+
+    async def consume(self, issued: IssuedConsent) -> ConsumedChallenge | None:
+        handle = issued.handle
+        try:
+            envelope = await self._prompter.prompt(
+                handle=handle,
+                challenge=self._broker.challenge_bytes(handle),
+                signature=self._broker.daemon_signature(handle),
+                display=issued.display,
+                timeout=self._wait_s,
+            )
+        except PromptUnavailable:
+            self._broker.invalidate(handle)
+            raise ConsentRefusal("CONSENT_UNAVAILABLE") from None
+        except PromptDenied:
+            self._broker.invalidate(handle)
+            return None
+        except asyncio.CancelledError:
+            self._broker.invalidate(handle)
+            raise
+        try:
+            return await self._broker.consume(handle, envelope)
+        except ConsentError as exc:
+            self._broker.invalidate(handle)
+            if exc.dispatch_code == "CONSENT_DENIED":
+                return None
+            raise ConsentRefusal(exc.dispatch_code) from None
+
+    def snapshot_matches(
+        self, approval: ConsumedChallenge, *, tier: str, projected: Mapping[BucketKey, Usage]
+    ) -> bool:
+        return hmac.compare_digest(
+            approval.exposure_snapshot_digest, exposure_digest(tier, projected)
+        )
