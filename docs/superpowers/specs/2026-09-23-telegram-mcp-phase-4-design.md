@@ -802,6 +802,27 @@ Forcing `peer_budget` organically would need more than 250 authorised peers on
 throwaway accounts. The spec requires the behaviour, and the fault-injection
 suite proves it.
 
+### 4.7 Revision 5 refinements for 4c (decided 2026-09-23, from executing the plan)
+
+Every item below came from running the 4c code, not from reading it.
+
+- **The `get_context` window is two requests, one per side (refines §4.1 steps 3–4).** Telegram caps `GetHistory` and `GetReplies` at `limit=100`, and `before+after+1` can reach 101. The edge semantics of `add_offset` are also undocumented. So:
+  - The older side reads `offset_id=anchor`, `max_id=anchor`, `limit=before`.
+  - The newer side reads `offset_id=anchor`, `add_offset=-(after+1)`, `limit=after+1`, `min_id=anchor`.
+  - Each side is sorted nearest-first and trimmed.
+
+  The result is exact whether or not Telegram's window includes `offset_id`. A test serves both semantics and gets identical output, and the first version of the walk failed that test, so the refinement is load-bearing. Ordinary chats and named topics take at most two window requests plus the anchor. `before=0` or `after=0` skips its side. The page cap keeps the anchor first, then the nearest neighbours alternately, so a cut never drops the anchor. The Test DC run still checks the edges on the real server.
+- **Owner chat-kind switches are enforced at retrieval for search.** They need dialog data that step 2 cannot fetch. Before a peer is first searched, one batched `GetPeerDialogs` checks it. An excluded peer is never searched. A peer the entity cache cannot reach is never searched either, and it makes the result `telegram_partial`, never `complete`.
+- **A search page is held under the response cap by counting bytes, not by dropping records.** Each hit's real encoded size is checked before it is taken. On the first hit that would not fit, that peer resumes *at* the hit (`offset_id = id + 1`), and the page ends with `response_limit`. Nothing examined is lost or repeated. A single hit always fits, because the bounds guarantee it.
+- **The hit budget bounds each request.** A per-peer request asks for at most the hits the page, Telegram's 100 ceiling, and the remaining examined-hit budget allow. So `hits_examined` never exceeds 500 (§13.2).
+- **The adapter never attributes a response to the wrong peer.** Messages whose `peer_id` is not the requested chat are dropped, and `GetPeerDialogs` returns only the peers that were requested and resolved. Otherwise a response could re-admit an unreachable peer, or put one chat's message into another's results.
+- **The coordinator refuses to sign dishonest coverage.** For both searches, the coverage object must exist and match its own §23D chain, the cursor and `meta.partial`, and `hits_returned` must equal the records disclosed. Otherwise the result is `PROOF_GENERATION_FAILED` and nothing is signed.
+- **The cursor state has one value rule per key, as a table.** A `per_peer` entry holds only `offset_id`.
+- **Smaller decisions:**
+  - `has_context` is `true` for every search hit: its ref resolves through `get_context` in any origin project.
+  - `search_scope` is `"peer"` when `peer_ref` narrows the search.
+  - The cross-project prompt's risk line begins "results may enter this AI session's context".
+
 ## 5. Continuation state-machine tests
 
 The Appendix-L formal model covers the coordinator protocol, and continuation

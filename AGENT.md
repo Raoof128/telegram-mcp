@@ -299,3 +299,14 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
   - The owner decides the merge and push; a self-review is weaker than a fresh reviewer.
   - Owner-run: the Test DC run, the Touch ID test, and the installed-host boundary check.
   - Re-package the signed agent bundle.
+
+### 2026-09-23 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase-4c implementation plan and design revision 5 (§4.7), on branch `phase-4c`.
+- **Summary:** The plan (`docs/superpowers/plans/2026-09-23-telegram-mcp-phase-4c-context-and-search.md`) covers `get_context`, `search_messages`, `cross_project_search`, the continuation engine, §23D coverage and the Test DC qualification harness, in 8 tasks. It is a transcription of code that already ran. The code was written and tested in a scratch copy of `main` at `cd1434e` (1290 passed, 10 skipped; smoke 53/53). It was then replayed task by task onto a fresh export, with each task's tests, ruff, format, mypy, the full suite and the smoke run at every stage; all 8 stages were green. The plan text itself was then replayed mechanically onto a third export: 34 blocks applied with zero fuzz, and the 33 files are byte-identical to the tested tree. Design §4.7 records the 11 refinements that execution forced (nearest-neighbour context windows, byte-accounted search pages, response attribution checks and others).
+- **Files changed:** `docs/superpowers/plans/2026-09-23-telegram-mcp-phase-4c-context-and-search.md` (new), `docs/superpowers/specs/2026-09-23-telegram-mcp-phase-4-design.md`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** the staged proof table is in the plan. Full gate on this commit (docs only): pytest 862 passed, 10 skipped; smoke 49/49; formal 624/624; ruff, format and mypy clean; contracts check and build OK.
+- **Follow-ups:**
+  - The line-by-line gauntlet of the plan (owner request).
+  - Inline execution.
+  - Owner-run: the Test DC run, including the 4c forum and search cases; the dedicated-account qualification; the Touch ID test; the installed-host check; re-packaging the signed agent.
