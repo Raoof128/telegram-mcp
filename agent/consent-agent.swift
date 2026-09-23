@@ -343,8 +343,10 @@ func renderableText(_ text: String, limit: Int = 160) -> String {
         let v = scalar.value
         let isControl = v < 0x20 || (0x7F ... 0x9F).contains(v)
         let isBidi = (0x20_2A ... 0x20_2E).contains(v) || (0x20_66 ... 0x20_69).contains(v)
+            || v == 0x20_0E || v == 0x20_0F || v == 0x06_1C
         let isInvisible = v == 0x20_0B || v == 0x20_0C || v == 0x20_0D || v == 0xFE_FF
-        if isControl || isBidi || isInvisible { continue }
+        let isSeparator = v == 0x20_28 || v == 0x20_29
+        if isControl || isBidi || isInvisible || isSeparator { continue }
         out.append(scalar)
         if out.count >= limit { break }
     }
@@ -1613,6 +1615,26 @@ func runCommand(socketPath: String?) -> Int32 {
 // mode and rejects `@main` without `-parse-as-library`; the frozen build
 // line (`swiftc -O agent/consent-agent.swift -o ...`) carries no such flag.
 
+/// `selftest-render <hex-utf8>`: print renderableText(input) as hex UTF-8.
+/// Headless check of prompt sanitisation; the production path never calls it.
+func selfTestRender(_ hex: String?) -> Int32 {
+    guard let hex = hex, hex.count % 2 == 0 else {
+        eprint("selftest-render: expected hex UTF-8")
+        return 2
+    }
+    var bytes: [UInt8] = []
+    var index = hex.startIndex
+    while index < hex.endIndex {
+        let next = hex.index(index, offsetBy: 2)
+        guard let byte = UInt8(hex[index ..< next], radix: 16) else { return 2 }
+        bytes.append(byte)
+        index = next
+    }
+    guard let text = String(bytes: bytes, encoding: .utf8) else { return 2 }
+    print(Data(renderableText(text).utf8).map { String(format: "%02x", $0) }.joined())
+    return 0
+}
+
 struct ConsentAgent {
     static let usage = """
     usage: telegram-mcp-consent <command> [arguments]
@@ -1662,6 +1684,8 @@ struct ConsentAgent {
             exit(pairingStatus())
         case "selftest-jcs":
             exit(selfTestJCS(vectorsPath: path))
+        case "selftest-render":
+            exit(selfTestRender(path))
         case "selftest-verify":
             exit(selfTestVerify(vectorsPath: path))
         case "selftest-jcs-rejects-nonascii-key":
