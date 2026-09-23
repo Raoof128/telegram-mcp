@@ -1,4 +1,4 @@
-# Telegram RPC side-effect review (Phase 4b)
+# Telegram RPC side-effect review (Phases 4b and 4c)
 
 Every request class the gateway can put on the wire, per operation. This is
 the reviewer's record behind `OPERATIONS` in
@@ -20,8 +20,10 @@ never called: in 1.45.0 they retry on `AuthRestartError`, send
 |---|---|---|---|---|
 | `mcp.retrieval` | `messages.GetPeerDialogsRequest` | https://core.telegram.org/method/messages.getPeerDialogs | none | Reads dialog fields, including unread counts. Acknowledges nothing. |
 | `mcp.retrieval` | `messages.GetHistoryRequest` | https://core.telegram.org/method/messages.getHistory | none | Does not mark messages read (`messages.readHistory` does, and it is prohibited). Does not increment views. |
-| `mcp.retrieval` | `messages.GetMessagesRequest` | https://core.telegram.org/method/messages.getMessages | none | By id; private chats and basic groups. Reserved for 4c context. |
+| `mcp.retrieval` | `messages.GetMessagesRequest` | https://core.telegram.org/method/messages.getMessages | none | By id; private chats and basic groups. The `get_context` anchor (4c). |
 | `mcp.retrieval` | `channels.GetMessagesRequest` | https://core.telegram.org/method/channels.getMessages | none | By id; supergroups and channels. Does not increment views (`messages.getMessagesViews` does, and it is prohibited). |
+| `mcp.retrieval` | `messages.SearchRequest` | https://core.telegram.org/method/messages.search | none | One peer per request, `InputMessagesFilterEmpty`; `min_date`/`max_date` strict, 0 = unbounded (design §4.2). Never `messages.searchGlobal`. |
+| `mcp.retrieval` | `messages.GetRepliesRequest` | https://core.telegram.org/method/messages.getReplies | none | The thread of one forum topic for `get_context`; it cannot cross into another topic (design §4.1). |
 | `admin.discover` | `messages.GetDialogsRequest` | https://core.telegram.org/method/messages.getDialogs | none | Operator discovery only; never used by an MCP tool. |
 | `admin.status` | `updates.GetStateRequest` | https://core.telegram.org/method/updates.getState | none | Authorisation probe. Returns counters only; pulls no content. |
 | `admin.status` | `users.GetUsersRequest` | https://core.telegram.org/method/users.getUsers | none | Only with `[InputUserSelf]`, for the account's own id. |

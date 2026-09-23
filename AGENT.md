@@ -330,3 +330,20 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
   - Inline execution.
   - Deferred minors: the exposure-invariant `_rehome` truncates a shared list in place; the universe digest binds the candidate universe.
   - Owner-run: the Test DC run (now including real paging), the dedicated-account qualification, the Touch ID test, the installed-host check, and re-packaging the signed agent.
+
+### 2026-09-23 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase 4c executed inline from the revision-6 plan, on branch `phase-4c` (8 tasks).
+- **Summary:** `telegram_get_context`, `telegram_search_messages` and `telegram_cross_project_search` are served through ingress, consent and the coordinator on the fake transport; all nine sensitive tools are now served. Each task's red and green outputs, and its full-gate counts, matched the plan exactly, with no rulings needed. Control runs: the estimator weakening (3 invariant cases failed), and a planted query log line and query `INSERT` (the canary test failed in the log and in `meta.db-wal`). Evidence is in `docs/verification/phase-4.md` §4c; the two new RPC reviews are in `telegram-rpc-review.md`.
+- **Files changed:**
+  - **src:** `authority/{cursors,policy}.py`, `telegram/{telethon_adapter,search,reads}.py`, `disclosure/{bounds,search_authority,seams,coordinator}.py`, `storage/refstore.py`, `validation.py`, `consent/display.py`, `runtime/composition.py`.
+  - **Tests:** new and updated tests under `tests/`, including `tests/telegram/`.
+  - **Other:** `scripts/e2e_smoke.py`, `docs/verification/{phase-4,telegram-rpc-review}.md`, `CLAUDE.md`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** pytest 1337 passed, 10 skipped; smoke 53/53; formal 624/624; ruff, format and mypy clean (87 files); contracts check and build OK.
+- **Follow-ups:**
+  - The final whole-branch review (self-review; no subagents, per the owner).
+  - Owner-run: the Test DC run (forum, edges, real paging and exhaustion), the dedicated-account qualification, the Touch ID test, and the installed-host check.
+  - Re-package the signed agent.
+  - A forum read-marker witness.
+  - The merge decision (owner).
+  - No production claim.

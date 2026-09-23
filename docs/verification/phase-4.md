@@ -7,25 +7,28 @@ coordinator, a signed receipt that verifies persisted and offline, ledger
 rows, one audit event, and a refreshed anchor. **Phase 4b is implemented on
 branch `phase-4b`** (see "Phase 4b" below): a daemon, Touch ID admin approvals,
 raw reviewed login, and `list_chats`, `resolve_peer`, `get_messages` and
-`get_unread` through the same chain, against a fake Telegram transport. 4c is
-not started.
+`get_unread` through the same chain, against a fake Telegram transport. **Phase
+4c is implemented on branch `phase-4c`** (see "Phase 4c" below):
+`telegram_get_context`, `telegram_search_messages` and
+`telegram_cross_project_search`, with signed §23D coverage. All nine sensitive
+tools are now served, on the fake transport.
 
 **NOT production.** Nothing here has touched Telegram. The Test DC harness
 exists but has not been run (owner credentials). No Telegram login, session
-file, service account, LaunchAgent or tunnel ingress is claimed.
-`get_context` and both searches still return `POLICY_UNCONFIGURED`.
+file, service account, LaunchAgent or tunnel ingress is claimed. Telegram's
+real paging, forum and search behaviour is owner-pending (the Test DC run).
 
 ## Reproducibility
 
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                      # 860 passed, 10 skipped (4b)
-uv run python scripts/e2e_smoke.py                    # 49 passed, 0 failed (4b)
+uv run pytest -q                                      # 1337 passed, 10 skipped (4c)
+uv run python scripts/e2e_smoke.py                    # 53 passed, 0 failed (4c)
 uv run pytest tests/formal -q -s                      # 624 states, 18 assertions
 uv run ruff check src tests scripts                   # clean
 uv run ruff format --check src tests scripts          # clean
-uv run mypy src/telegram_mcp                          # clean, 85 files (4b)
+uv run mypy src/telegram_mcp                          # clean, 87 files (4c)
 uv build                                              # sdist + wheel
 uv run pytest tests/integration/test_phase4a_touch_id.py --run-platform-gated -q -s   # owner-run, Touch ID
 ```
@@ -195,3 +198,88 @@ full gate. The ledger is in the plan's workspace.
 | O (provable disclosure) | receipts for Telegram-shaped disclosures (fake transport) | a real Telegram disclosure |
 | P (egress/exposure) | egress levels on message text; a reservation proven to dominate the measurement | — |
 | R (read-only) | the owned wire boundary, the reviewed set, AST and runtime guards | the Test DC witness and recorder run |
+
+# Phase 4c — context, both searches, coverage and qualification
+
+Plan: `docs/superpowers/plans/2026-09-23-telegram-mcp-phase-4c-context-and-search.md`
+(revision 6: execution-first, a line-by-line gauntlet, and an external
+review). Design: revision 5/6, §4.7. It was executed inline, task by task and
+test first: every red step was watched failing, and every commit was made on a
+green full gate. The ledger is in the plan's workspace.
+
+## 4c.1 Scope, as delivered
+
+- **Tools.** `telegram_get_context`, `telegram_search_messages` and `telegram_cross_project_search` run through the 4a ingress, consent and coordinator.
+- **`get_context`.** A historical `message_ref` resolves to its canonical peer, which must pass *current* owner policy and membership. The window is two bounded requests, one per side, exact under either `add_offset` edge semantics. A named forum topic reads through `GetReplies` only, and General drops named-topic messages. The page cap never drops the anchor. The forum flag comes from the dialog as well as the by-id response.
+- **Searches.** Per peer only, never `messages.searchGlobal`. A pure continuation engine (`telegram/search.py`) walks a canonical, digest-bound universe through a 64-peer window, round-robin. Cross-project search is capped at 250 peers with `peer_budget`. Each record takes the most restrictive grant among its own origin projects.
+- **Refinements (design §4.7), each named:**
+  - two-request context windows;
+  - owner chat-kind switches enforced at retrieval, in one batched dialog request per call;
+  - byte- and codepoint-accounted pages (`PageBudget`, one copy of both §13.2 caps, also serving the 4b tools);
+  - requests bounded by the hit budget;
+  - attribution checks: no foreign-chat entry, no unrequested dialog;
+  - the coverage consistency gate at the coordinator;
+  - one value rule per cursor key;
+  - a page ends on Telegram's own signal, never on a short page (`_page_end`, also correcting 4b's `fetch_history`);
+  - sticky uncertainty;
+  - measured coverage counters, including owner-excluded peers leaving the eligible set;
+  - 10 search pages per call;
+  - one RFC 3339 parser, with a fractional `until` rounded up;
+  - the epoch edge.
+
+## 4c.2 Evidence (default suite and smoke; fake transport)
+
+| Claim (plan Review Focus) | Test |
+|---|---|
+| Deleted/edited messages between pages: nothing lost or repeated | `test_exhaustively_every_hit_arrives_exactly_once_and_it_ends` (every universe of up to three peers, three limits, three RPC budgets), `test_a_page_held_under_the_cap_loses_and_repeats_nothing` |
+| The context window never leaves a topic or shifts by one | `test_an_ordinary_window_is_exact_under_either_edge_semantics`, `test_a_named_topic_window_uses_replies_and_never_history`, `test_general_never_includes_a_named_topic_message`, `test_forum_classification_comes_from_the_dialog` |
+| A shared peer removed mid-flight is discarded, with no receipt | `test_a_shared_peer_removed_mid_flight_is_discarded`, `test_a_shared_peer_removed_between_retrieve_and_commit_is_discarded`, a smoke row |
+| Long hits held under both caps | `test_a_long_page_is_held_under_the_cap_without_losing_hits`, `test_a_search_page_holds_combined_text_under_32000_codepoints`, `test_a_page_holds_both_caps_for_every_script` (ASCII, Persian, combining mark, emoji, ZWNJ) |
+| Unreachable peer or foreign-chat entry never claimed complete | `test_an_unreachable_member_is_never_claimed_complete`, `test_messages_from_another_chat_are_never_attributed`, `test_a_foreign_message_never_steers_the_offset_and_is_never_complete` |
+| Continuation after policy, grant, egress or membership change | `test_the_cursor_hierarchy_then_the_universe_digest` |
+| Inconsistent coverage is never signed | `test_inconsistent_coverage_is_never_signed`, `test_search_carries_coverage_bound_into_the_signed_proof` |
+| A short page is not the end (Telethon 1.45.0 `messages.py:213-225`) | `test_the_last_page_is_telegrams_own_signal_not_a_short_page`, `test_history_keeps_paging_past_a_short_slice` |
+| Uncertainty sticks to the whole continuation | `test_telegram_uncertainty_sticks_to_the_whole_continuation`, `test_telegram_uncertainty_survives_the_cursor` |
+| Measured counters; owner scope shapes eligibility; ten pages | `test_telegram_rpcs_and_hits_examined_are_measured_not_guessed`, `test_coverage_counts_every_telegram_request_the_call_made`, `test_an_owner_excluded_peer_leaves_the_eligible_set`, `test_an_owner_excluded_peer_is_not_eligible`, `test_search_pages_are_bounded_at_ten_per_call` (9, 10, 11) |
+| Query text never leaves memory | `test_query_text_never_reaches_the_database`, `test_the_query_text_never_leaves_memory` (every file under the runtime directory and every log line, on success and failure) |
+| Reservation dominates the Phase-3 measurement | `test_actual_charge_never_exceeds_the_reservation` (4c, every egress mode) |
+
+The smoke's four Phase-4c rows:
+- `search_messages` with signed coverage;
+- `get_context` through ingress;
+- the cross-project race discarded at step 8;
+- never a global search.
+
+**Staged proof.** Before the plan was written, each task was replayed onto a fresh `main` export with its own tests, lint, types, the full suite and the smoke; all 48 checks were green. The plan text was then replayed mechanically: 38 blocks, 36 files, byte-identical to the tested tree. During execution, every task's red and green outputs and its full-gate counts matched the plan exactly.
+
+## 4c.3 Control runs (each observed failing, then restored)
+
+- **Estimator.** Weakening `bounds._W` from U+0001 to `a` made all three 4c exposure-invariant cases fail.
+- **Query leak.** A planted debug log of the query made the canary test fail in the captured log. A planted `INSERT` of the query made it fail in `meta.db-wal`.
+
+## 4c.4 Owner-pending (not run here; no claim made)
+
+1. **Test DC run.** See §4b.4 for the Keychain item and variables. The harness now also covers:
+   - forum topic isolation and General filtering;
+   - the `before=0`/`after=0` edges on the real server;
+   - real search exhaustion across the project;
+   - Telegram's own paging: `search_peer` two hits a page over the forum's nine marker messages.
+
+   The witness does not read the forum's markers; a forum witness is a follow-up.
+2. **Dedicated non-primary account** (design §4.6): a re-run of the same harness.
+3. **Carried from §4b.4:** the Touch ID test, the installed-host boundary, and re-packaging the signed agent bundle.
+
+## 4c.5 Recorded deviations
+
+- **The universe digest binds the candidate universe** (authority-derived). Owner scope is applied live, as each peer is reached, and re-checked on every call. A peer excluded when reached, then unarchived, stays counted as excluded for that continuation.
+- **The ten-page bound reports `rpc_budget`,** because §23D's closed reason list has no page reason.
+
+## 4c.6 Gate contributions — all still PARTIAL
+
+| Gate | 4c contribution | Missing |
+|---|---|---|
+| E (scope) | cross-project isolation, per-record egress intersection, owner scope in eligibility | the live Test DC run |
+| O (provable disclosure) | signed §23D coverage, a consistency gate, measured counters | a real Telegram search |
+| P (egress/exposure) | both §13.2 response caps enforced before commit, for every read | — |
+| Q (continuation) | the continuation state machine, exhaustive over small universes | the dedicated-account qualification |
+| R (read-only) | two more reviewed reads (`messages.Search`, `messages.GetReplies`); still no global search | the Test DC witness and recorder run |
