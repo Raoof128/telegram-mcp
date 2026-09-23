@@ -1,0 +1,155 @@
+"""Project, grant and scope handlers; the presence set (design §2.5)."""
+
+import pytest
+
+from telegram_mcp.ipc.admin import ADMIN_COMMANDS, PRESENCE_GATED, AdminRouter
+from telegram_mcp.ipc.handlers.leases import auth_headers_handler
+from telegram_mcp.ipc.handlers.projects import project_handlers
+from telegram_mcp.ipc.leases import verify_lease
+from telegram_mcp.storage.db import open_db
+from tests.authority_fixtures import seed_authority_rows
+
+PROOF = {"method": "stub"}
+CLIENT = "tcl_" + "a" * 26
+
+MUTATING = {
+    "auth login",
+    "auth logout-local",
+    "auth revoke-this-session",
+    "client rotate",
+    "client disable",
+    "consent approve",
+    "tunnel rotate-binding",
+    "scope discover",
+    "scope allow",
+    "scope deny",
+    "scope remove",
+    "scope mode",
+    "project create",
+    "project rename",
+    "project enable",
+    "project disable",
+    "project add-peer",
+    "project remove-peer",
+    "project grant-client",
+    "project set-egress",
+    "project revoke-client",
+    "project grant-cross-search",
+    "project revoke-cross-search",
+    "project instruction",
+    "policy export",
+    "policy import",
+    "disclosure key",
+    "audit repair-anchor",
+    "audit checkpoint",
+    "lock",
+    "unlock",
+}
+
+
+@pytest.fixture
+def router(tmp_path):
+    conn = open_db(tmp_path / "meta.db")
+    seed_authority_rows(conn)
+    conn.execute("DELETE FROM projects")
+    conn.commit()
+    return conn, AdminRouter(project_handlers(conn), presence_verifier=lambda proof: proof == PROOF)
+
+
+def _call(router, cmd, **args):
+    return router.dispatch({"cmd": cmd, "args": {"presence": PROOF, **args}})
+
+
+def test_the_presence_set_is_exactly_the_mutating_set():
+    assert set(PRESENCE_GATED) == MUTATING
+    assert set(PRESENCE_GATED) <= set(ADMIN_COMMANDS)
+
+
+def test_every_handler_that_writes_refuses_without_presence(router):
+    conn, admin = router
+    before = conn.total_changes
+    for cmd in ("project create", "project enable", "project grant-client", "scope mode"):
+        response = admin.dispatch({"cmd": cmd, "args": {}})
+        assert response["code"] == "PRESENCE_REQUIRED"
+    assert conn.total_changes == before
+
+
+def test_create_grant_and_list(router):
+    _conn, admin = router
+    created = _call(admin, "project create", slug="ops", display_name="Ops")
+    ref = created["data"]["project_ref"]
+    granted = _call(
+        admin,
+        "project grant-client",
+        project_ref=ref,
+        client_ref=CLIENT,
+        egress_level="excerpt",
+        excerpt_max_codepoints=200,
+    )
+    assert granted["ok"], granted
+    listed = admin.dispatch({"cmd": "project list", "args": {}})
+    assert listed["data"]["projects"][0]["project_ref"] == ref
+
+
+def test_enable_and_disable_bump_the_project_epoch(router):
+    conn, admin = router
+    ref = _call(admin, "project create", slug="ops", display_name="Ops")["data"]["project_ref"]
+    _call(admin, "project disable", project_ref=ref)
+    _call(admin, "project enable", project_ref=ref)
+    epoch = conn.execute(
+        "SELECT project_epoch FROM projects WHERE project_ref = ?", (ref,)
+    ).fetchone()[0]
+    assert epoch == 3
+
+
+def test_invalid_input_is_refused_without_writing(router):
+    conn, admin = router
+    ref = _call(admin, "project create", slug="ops", display_name="Ops")["data"]["project_ref"]
+    before = conn.total_changes
+    for cmd, args in (
+        ("project create", {"slug": "Bad Slug", "display_name": "x"}),
+        ("project create", {"slug": "ok", "display_name": "line\nbreak"}),
+        (
+            "project grant-client",
+            {"project_ref": ref, "client_ref": CLIENT, "egress_level": "excerpt"},
+        ),
+        (
+            "project set-egress",
+            {"project_ref": ref, "client_ref": CLIENT, "egress_level": "full_text"},
+        ),
+        ("scope mode", {"mode": "everything"}),
+    ):
+        assert _call(admin, cmd, **args)["code"] == "MALFORMED_REQUEST", (cmd, args)
+    assert conn.total_changes == before
+
+
+def test_scope_mode_bumps_the_policy_epoch(router):
+    conn, admin = router
+    assert _call(admin, "scope mode", mode="all_cloud_chats")["ok"]
+    assert conn.execute("SELECT mode, policy_epoch FROM policy_state").fetchone() == (
+        "all_cloud_chats",
+        2,
+    )
+
+
+def test_auth_headers_mints_a_verifiable_lease(router):
+    conn, _admin = router
+    seed = b"\x09" * 32
+    handler = auth_headers_handler(
+        conn,
+        seed_for=lambda ref: seed if ref == CLIENT else None,
+        runtime_id=b"\x05" * 16,
+        clock=lambda: 1_000_000,
+    )
+    header = handler({"client_ref": CLIENT})["authorization"]
+    assert header.startswith("Bearer tgml1.")
+    claims = verify_lease(
+        header.removeprefix("Bearer "),
+        seeds={CLIENT: seed},
+        epoch=1,
+        now=1_000_000,
+        runtime_id=b"\x05" * 16,
+    )
+    assert claims.client == CLIENT
+    with pytest.raises(PermissionError):
+        handler({"client_ref": "tcl_" + "z" * 26})

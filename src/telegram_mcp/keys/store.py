@@ -38,6 +38,7 @@ __all__ = [
     "load_key",
     "provision_lease_seed",
     "provision_missing",
+    "read_lease_seed",
     "set_store_dir",
 ]
 
@@ -291,3 +292,22 @@ def provision_lease_seed(store_dir: str | Path, client_ref: str) -> bytes:
     if len(data) != _SEED_LEN:
         raise KeyStoreError(f"{ERR_MATERIAL}: {path.name}")
     return data
+
+
+def read_lease_seed(store_dir: str | Path, client_ref: str) -> bytes | None:
+    """Read one client's lease seed; never mint. ``None`` when absent or unsafe.
+
+    The ingress verifies bearers with this. ``provision_lease_seed`` mints
+    on a miss, which would let an unknown ``cid`` create its own key.
+    """
+    if not _CLIENT_REF_RE.fullmatch(client_ref):
+        return None
+    path = Path(store_dir) / f"lease-seed.{client_ref}"
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return None
+    if stat.S_IMODE(st.st_mode) != 0o600 or st.st_uid != os.geteuid():
+        return None
+    data = path.read_bytes()
+    return data if len(data) == _SEED_LEN else None

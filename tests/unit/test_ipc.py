@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from telegram_mcp.ipc.admin import (
     ADMIN_COMMANDS,
+    PRESENCE_GATED,
     AdminRouter,
     serve_admin,
     verify_peer,
@@ -383,7 +384,7 @@ def test_every_spec_command_is_routed_and_unknown_names_are_refused():
     router, _ = _router()
     assert len(ADMIN_COMMANDS) == 51
     for command in ADMIN_COMMANDS:
-        args = {"presence": {"method": "stub"}} if command in ("lock", "unlock") else {}
+        args = {"presence": {"method": "stub"}} if command in PRESENCE_GATED else {}
         response = router.dispatch({"cmd": command, "args": args})
         assert response["ok"] is True or response["code"] == "NOT_AVAILABLE_IN_PHASE"
     for bad in ("", "telegram-mcp lock", "rm -rf", "LOCK", "lock  status"):

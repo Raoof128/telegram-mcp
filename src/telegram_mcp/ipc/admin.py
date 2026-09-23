@@ -124,10 +124,44 @@ ADMIN_COMMANDS: tuple[str, ...] = (
     "serve",
 )
 
-# Commands whose effect is a security-state mutation: presence-gated. Spec
-# §9.3 demands presence for `unlock`; Plan 2a Task 8 requires a presence
-# proof for `lock` too, which is the stricter choice and the one taken here.
-PRESENCE_GATED: frozenset[str] = frozenset({"lock", "unlock"})
+# §33: "mutations remain separate user-presence-gated commands". Two reads are
+# gated too because they expose private metadata: ``scope discover`` (§10.2)
+# and ``policy export``. The test pins this set against an explicit list.
+PRESENCE_GATED: frozenset[str] = frozenset(
+    {
+        "auth login",
+        "auth logout-local",
+        "auth revoke-this-session",
+        "client rotate",
+        "client disable",
+        "consent approve",
+        "tunnel rotate-binding",
+        "scope discover",
+        "scope allow",
+        "scope deny",
+        "scope remove",
+        "scope mode",
+        "project create",
+        "project rename",
+        "project enable",
+        "project disable",
+        "project add-peer",
+        "project remove-peer",
+        "project grant-client",
+        "project set-egress",
+        "project revoke-client",
+        "project grant-cross-search",
+        "project revoke-cross-search",
+        "project instruction",
+        "policy export",
+        "policy import",
+        "disclosure key",
+        "audit repair-anchor",
+        "audit checkpoint",
+        "lock",
+        "unlock",
+    }
+)
 
 # Bootstrap control requests, outside the §33 surface (design §2).
 CONTROL_REQUESTS: tuple[str, ...] = ("stop",)
