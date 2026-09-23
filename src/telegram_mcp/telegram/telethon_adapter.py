@@ -19,6 +19,7 @@ import stat
 from collections.abc import Callable, Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,7 @@ from telegram_mcp.telegram.errors import GatewayError
 __all__ = [
     "OPERATIONS",
     "REVIEWED_REQUESTS",
+    "DialogView",
     "TelegramConfig",
     "TelethonSession",
     "qualified",
@@ -477,3 +479,154 @@ class TelethonSession:
             return self._client.session.get_input_entity(utils.get_peer_id(peer))
         except (ValueError, KeyError, TypeError):
             raise GatewayError("NOT_ACCESSIBLE") from None
+
+    async def scan_dialogs(
+        self, *, client_ref: str, deadline: Deadline, budget: WorkBudget, page_size: int = 100
+    ) -> tuple[list[DialogView], bool]:
+        """Page GetDialogs until exhaustion or the budget ends (discovery)."""
+        views: list[DialogView] = []
+        offset_date, offset_id, offset_peer = None, 0, types.InputPeerEmpty()
+        seen: set[str] = set()
+        while True:
+            try:
+                result = await self._call_reviewed(
+                    functions.messages.GetDialogsRequest(
+                        offset_date=offset_date,
+                        offset_id=offset_id,
+                        offset_peer=offset_peer,
+                        limit=page_size,
+                        hash=0,
+                    ),
+                    operation="admin.discover",
+                    client_ref=client_ref,
+                    deadline=deadline,
+                    budget=budget,
+                )
+            except GatewayError as exc:
+                if exc.code == "WORK_BUDGET_EXCEEDED" and views:
+                    return views, False
+                raise
+            page = [v for v in _views(result) if v.identity not in seen]
+            seen.update(v.identity for v in page)
+            views.extend(page)
+            if len(result.dialogs) < page_size or not page:
+                return views, True
+            last = result.dialogs[-1]
+            last_message = next(
+                (
+                    m
+                    for m in result.messages
+                    if m.id == last.top_message
+                    and TelethonSession.identity_of(m.peer_id)
+                    == TelethonSession.identity_of(last.peer)
+                ),
+                None,
+            )
+            offset_date = getattr(last_message, "date", None)
+            offset_id = int(last.top_message or 0)
+            offset_peer = self.input_peer(*TelethonSession.identity_of(last.peer))
+
+    async def peer_dialogs(
+        self,
+        identities: list[tuple[str, int]],
+        *,
+        client_ref: str,
+        deadline: Deadline,
+        budget: WorkBudget,
+    ) -> dict[str, DialogView]:
+        """GetPeerDialogs for known peers, 100 at a time; cache misses are skipped."""
+        wanted = []
+        for peer_type, peer_id in identities:
+            try:
+                wanted.append(types.InputDialogPeer(peer=self.input_peer(peer_type, peer_id)))
+            except GatewayError:
+                continue  # not in the entity cache: never looked up over the network
+        out: dict[str, DialogView] = {}
+        for start in range(0, len(wanted), 100):
+            result = await self._call_reviewed(
+                functions.messages.GetPeerDialogsRequest(peers=wanted[start : start + 100]),
+                operation="mcp.retrieval",
+                client_ref=client_ref,
+                deadline=deadline,
+                budget=budget,
+            )
+            for view in _views(result):
+                out[view.identity] = view
+        return out
+
+
+@dataclass(frozen=True)
+class DialogView:
+    peer_type: str
+    peer_id: int
+    chat_type: str
+    display_name: str
+    username: str | None
+    unread_count: int
+    is_archived: bool
+    is_muted: bool
+    last_message_at: str | None
+    read_outbox_max_id: int
+    top_message_id: int
+
+    @property
+    def identity(self) -> str:
+        return f"{self.peer_type}:{self.peer_id}"
+
+
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _chat_type(entity: Any) -> str:
+    if isinstance(entity, types.User):
+        return "private"
+    if isinstance(entity, types.Chat | types.ChatForbidden):
+        return "group"
+    if isinstance(entity, types.Channel) and entity.megagroup:
+        return "supergroup"
+    return "channel"
+
+
+def _display_name(entity: Any) -> str:
+    if isinstance(entity, types.User):
+        if entity.deleted:
+            return "Deleted Account"
+        name = " ".join(part for part in (entity.first_name, entity.last_name) if part)
+        return name or "(no name)"
+    return getattr(entity, "title", None) or "(no title)"
+
+
+def _views(result: Any) -> list[DialogView]:
+    entities: dict[tuple[str, int], Any] = {}
+    for entity in [*result.users, *result.chats]:
+        entities[TelethonSession.identity_of(entity)] = entity
+    tops = {(TelethonSession.identity_of(m.peer_id), m.id): m for m in result.messages}
+    views: list[DialogView] = []
+    for dialog in result.dialogs:
+        if not isinstance(dialog, types.Dialog):
+            continue  # folder entries are not chats
+        key = TelethonSession.identity_of(dialog.peer)
+        entity = entities.get(key)
+        if entity is None:
+            continue
+        top = tops.get((key, dialog.top_message))
+        mute_until = getattr(dialog.notify_settings, "mute_until", None)
+        views.append(
+            DialogView(
+                peer_type=key[0],
+                peer_id=key[1],
+                chat_type=_chat_type(entity),
+                display_name=_display_name(entity),
+                username=getattr(entity, "username", None),
+                unread_count=int(dialog.unread_count or 0),
+                is_archived=dialog.folder_id == 1,
+                is_muted=bool(mute_until and mute_until > datetime.now(UTC)),
+                last_message_at=_iso(getattr(top, "date", None)),
+                read_outbox_max_id=int(dialog.read_outbox_max_id or 0),
+                top_message_id=int(dialog.top_message or 0),
+            )
+        )
+    return views
