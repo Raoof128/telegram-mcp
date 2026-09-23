@@ -1471,6 +1471,139 @@ def phase4b_reads(ledger: Ledger) -> None:
     ledger.run(area, "only reviewed RPCs reached the transport", only_reviewed_calls)
 
 
+def phase4c_reads(ledger: Ledger) -> None:
+    """get_context and both searches through real ingress + coordinator, fake transport."""
+    area = "Phase 4c — context and search (fake transport)"
+    results: dict[str, Any] = {}
+
+    def drive() -> dict[str, Any]:
+        if results:
+            return results
+        import asyncio
+        import hashlib
+        import tempfile
+
+        sys.path.insert(0, str(REPO))
+        from telethon.tl import types
+
+        from telegram_mcp.consent.challenge import jcs_dumps
+        from telegram_mcp.storage.refstore import RefStore
+        from tests.authority_fixtures import BETA_REF, PROJECT_REF, seed_second_project
+        from tests.integration.test_phase4a_end_to_end import CODEX, call
+        from tests.integration.test_phase4b_end_to_end import _close, _world
+        from tests.integration.test_phase4c_end_to_end import BASE, _hits
+
+        class _Patch:  # _world only needs chdir from monkeypatch
+            def chdir(self, path: Any) -> None:
+                os.chdir(path)
+
+        async def main() -> dict[str, Any]:
+            here = os.getcwd()
+            out: dict[str, Any] = {}
+            with tempfile.TemporaryDirectory(dir="/tmp") as short:
+                world = await _world(Path(short), _Patch())
+                try:
+                    conn, fake = world["conn"], world["fake"]
+                    fake.script["messages.SearchRequest"] = lambda r: _hits(
+                        r, {"user:100": [3, 2, 1]}
+                    )
+                    body = await call(
+                        world,
+                        CODEX,
+                        "telegram_search_messages",
+                        {"project_ref": PROJECT_REF, "query": "needle"},
+                    )
+                    out["search"] = body
+                    if body.get("ok"):
+                        out["digest_ok"] = (
+                            body["meta"]["disclosure"]["proof_payload"]["canonical_coverage_digest"]
+                            == hashlib.sha256(jcs_dumps(body["meta"]["coverage"])).hexdigest()
+                        )
+                    refs = RefStore(conn, account_id=1)
+                    anchor = refs.message_ref(refs.peer_by_identity("user:100").row_id, 1)
+                    conn.commit()
+                    fake.script["messages.GetMessagesRequest"] = types.messages.Messages(
+                        messages=[
+                            types.Message(
+                                id=1, peer_id=types.PeerUser(100), date=BASE, message="anchor"
+                            )
+                        ],
+                        topics=[],
+                        chats=[],
+                        users=[],
+                    )
+                    out["context"] = await call(
+                        world,
+                        CODEX,
+                        "telegram_get_context",
+                        {
+                            "project_ref": PROJECT_REF,
+                            "message_ref": anchor,
+                            "before": 1,
+                            "after": 1,
+                        },
+                    )
+                    seed_second_project(conn)
+                    conn.execute("UPDATE policy_state SET include_archived = 1")
+                    conn.commit()
+
+                    def search_then_unshare(request):
+                        conn.execute(
+                            "DELETE FROM project_peers WHERE project_id = 2 AND peer_id ="
+                            " (SELECT id FROM peers WHERE telegram_peer_id = 7)"
+                        )
+                        conn.commit()
+                        return _hits(request, {"channel:7": [5]})
+
+                    fake.script["messages.SearchRequest"] = search_then_unshare
+                    before = conn.execute("SELECT count(*) FROM disclosure_receipts").fetchone()[0]
+                    out["race"] = await call(
+                        world,
+                        CODEX,
+                        "telegram_cross_project_search",
+                        {"project_refs": [PROJECT_REF, BETA_REF], "query": "needle"},
+                    )
+                    out["race_receipts"] = (
+                        conn.execute("SELECT count(*) FROM disclosure_receipts").fetchone()[0]
+                        - before
+                    )
+                    out["calls"] = set(fake.calls)
+                finally:
+                    await _close(world)
+                    os.chdir(here)
+            return out
+
+        results.update(asyncio.run(main()))
+        return results
+
+    def search_with_coverage():
+        out = drive()
+        body = out["search"]
+        assert body["ok"] and body["meta"]["coverage"]["complete"] is True, body
+        assert out["digest_ok"] is True
+        return f"{len(body['data']['results'])} hits, coverage complete, digest signed"
+
+    def context_window():
+        body = drive()["context"]
+        assert body["ok"] and body["meta"]["coverage"] is None, body
+        return f"anchor + {len(body['data']['messages']) - 1} neighbours, receipt"
+
+    def race_discarded():
+        out = drive()
+        assert out["race"]["error"]["code"] == "POLICY_CHANGED" and out["race_receipts"] == 0
+        return "shared peer removed mid-flight -> POLICY_CHANGED, no receipt"
+
+    def never_global():
+        calls = drive()["calls"]
+        assert "messages.SearchGlobalRequest" not in calls and "messages.SearchRequest" in calls
+        return "per-peer messages.Search only"
+
+    ledger.run(area, "search_messages with signed coverage", search_with_coverage)
+    ledger.run(area, "get_context through ingress", context_window)
+    ledger.run(area, "cross-project race discarded at step 8", race_discarded)
+    ledger.run(area, "never a global search", never_global)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Phase 1 + Phase 2 end-to-end smoke")
     parser.add_argument("--verbose", action="store_true", help="print tracebacks for failures")
@@ -1490,6 +1623,7 @@ def main() -> int:
         phase2_consent(ledger)
         phase4a_catalogue(ledger)
         phase4b_reads(ledger)
+        phase4c_reads(ledger)
         conn = state.get("conn")
         if conn is not None:
             conn.close()

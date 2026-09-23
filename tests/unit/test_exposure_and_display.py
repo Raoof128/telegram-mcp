@@ -68,3 +68,22 @@ def test_unknown_client_kind_is_refused():
             current=Usage(0, 0),
             projected=Usage(1, 10),
         )
+
+
+def test_a_cross_project_prompt_warns_about_context_insertion():
+    from telegram_mcp.consent.display import build_display
+    from telegram_mcp.disclosure.budget import Usage
+
+    display = build_display(
+        tool_name="telegram_cross_project_search",
+        client_kind="codex_local",
+        project_names=["Alpha", "Beta"],
+        peer_name=None,
+        egress_level="full_text",
+        tier="elevated",
+        current=Usage(1200, 1_400_000),
+        projected=Usage(1250, 1_450_000),
+    )
+    assert display["risk_class"].startswith("results may enter this AI session's context")
+    assert "ELEVATED" in display["risk_class"] and len(display["risk_class"]) <= 160
+    assert display["project_display"] == ["Alpha", "Beta"]

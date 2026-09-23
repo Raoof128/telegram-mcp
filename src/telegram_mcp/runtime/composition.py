@@ -143,13 +143,21 @@ def build_runtime(
         "telegram_resolve_project": metadata.resolve_project,
     }
     if telegram is not None:
-        reads = TelegramReads(telegram, conn, mint_cursor=authority.mint_project_cursor)
+        reads = TelegramReads(
+            telegram,
+            conn,
+            mint_cursor=authority.mint_project_cursor,
+            mint_search_cursor=authority.mint_search_cursor,
+        )
         routes.update(
             {
                 "telegram_list_chats": reads.list_chats,
                 "telegram_resolve_peer": reads.resolve_peer,
                 "telegram_get_messages": reads.get_messages,
                 "telegram_get_unread": reads.get_unread,
+                "telegram_get_context": reads.get_context,
+                "telegram_search_messages": reads.search_messages,
+                "telegram_cross_project_search": reads.cross_project_search,
             }
         )
     routed = RoutedRetrieval(routes)
