@@ -102,23 +102,35 @@ _CURSOR_CODES = (INVALID_CURSOR, CURSOR_EXPIRED, CURSOR_POLICY_CHANGED, CURSOR_P
 _HEX64_RE = re.compile(r"[0-9a-f]{64}\Z")
 _ISO_Z_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 
-# spec §23.5: pagination identifiers/offsets, bounded seen-ID sets, anchors.
-ALLOWED_STATE_KEYS = frozenset(
-    {
-        "add_offset",
-        "anchor_date",
-        "anchor_id",
-        "max_id",
-        "min_id",
-        "offset_date",
-        "offset_id",
-        "offset_peer_ref",
-        "page",
-        "per_peer",
-        "remaining",
-        "seen_ids",
-    }
-)
+# spec §23.5: pagination identifiers/offsets, bounded seen-ID sets, anchors,
+# and (4c) the search continuation window of design §4.3. Every allowed key has
+# exactly one value rule; the table is the single source of both.
+STATE_VALUE_RULES: dict[str, str] = {
+    "add_offset": "int",
+    "anchor_date": "date",
+    "anchor_id": "int",
+    "excluded_counts": "counts",
+    "max_id": "int",
+    "min_id": "int",
+    "next_unstarted_index": "int",
+    "offset_date": "date",
+    "offset_id": "int",
+    "offset_peer_ref": "peer_ref",
+    "page": "int",
+    "per_peer": "per_peer",
+    "remaining": "int",
+    "scanned_counts": "counts",
+    "seen_ids": "seen_ids",
+    "uncertain": "flag",
+    "universe_digest": "hmac",
+    "upper_date": "date",
+    "window_start": "int",
+}
+ALLOWED_STATE_KEYS = frozenset(STATE_VALUE_RULES)
+# A per_peer entry holds only its own search offset (design §4.3): exhaustion is
+# encoded by absence, so there is no flag to spoof.
+_PER_PEER_ENTRY_KEYS = frozenset({"offset_id"})
+_HMAC_RE = re.compile(r"hmac-sha256:[0-9a-f]{64}\Z")
 _INT_MAX = 2**63 - 1
 _SEEN_IDS_MAX = 1024
 _PER_PEER_MAX = 64
@@ -335,30 +347,46 @@ def list_projects_scope_entries(
 
 
 def _check_state_value(key: str, value: Any, *, nested: bool = False) -> None:
-    if key == "seen_ids":
+    rule = STATE_VALUE_RULES[key]
+    if rule == "seen_ids":
         if not isinstance(value, list) or len(value) > _SEEN_IDS_MAX:
             raise ValueError("invalid cursor state: seen_ids")
         for item in value:
             if not isinstance(item, int) or isinstance(item, bool) or not 0 <= item <= _INT_MAX:
                 raise ValueError("invalid cursor state: seen_ids")
         return
-    if key == "per_peer":
+    if rule == "per_peer":
         if nested:
             raise ValueError("invalid cursor state: per_peer nesting")
         if not isinstance(value, dict) or len(value) > _PER_PEER_MAX:
             raise ValueError("invalid cursor state: per_peer")
         for peer_ref, sub in value.items():
             validate_ref_format(peer_ref, expect="tgp_")
-            if not isinstance(sub, dict):
-                raise ValueError("invalid cursor state: per_peer")  # noqa: TRY004 -- uniform ValueError on state validation
+            if not isinstance(sub, dict) or set(sub) != _PER_PEER_ENTRY_KEYS:
+                raise ValueError("invalid cursor state: per_peer")
             _check_state(sub, nested=True)
         return
-    if key.endswith("_date"):
+    if rule == "date":
         if not isinstance(value, str) or _ISO_Z_RE.fullmatch(value) is None:
             raise ValueError(f"invalid cursor state: {key}")
         return
-    if key == "offset_peer_ref":
+    if rule == "peer_ref":
         validate_ref_format(value, expect="tgp_")
+        return
+    if rule == "hmac":
+        if not isinstance(value, str) or _HMAC_RE.fullmatch(value) is None:
+            raise ValueError(f"invalid cursor state: {key}")
+        return
+    if rule == "counts":  # [global, *one per selected project]: 1..9 counters
+        if not isinstance(value, list) or not 1 <= len(value) <= 9:
+            raise ValueError(f"invalid cursor state: {key}")
+        for item in value:
+            if not isinstance(item, int) or isinstance(item, bool) or not 0 <= item <= _INT_MAX:
+                raise ValueError(f"invalid cursor state: {key}")
+        return
+    if rule == "flag":
+        if isinstance(value, bool) or value not in (0, 1):
+            raise ValueError(f"invalid cursor state: {key}")
         return
     if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= _INT_MAX:
         raise ValueError(f"invalid cursor state: {key}")

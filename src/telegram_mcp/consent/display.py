@@ -59,9 +59,15 @@ def build_display(
     if client_kind not in CLIENT_DISPLAY:
         raise ValueError("unknown client kind")
     warning = "ELEVATED " if tier == "elevated" else ""
+    # §21A.4: a cross-project prompt warns that results may enter the AI's context.
+    crossing = (
+        "results may enter this AI session's context; "
+        if tool_name == "telegram_cross_project_search"
+        else ""
+    )
     risk = (
-        f"{egress_level}; {warning}budget {current.records}->{projected.records} records,"
-        f" {current.bytes}->{projected.bytes} bytes"
+        f"{crossing}{egress_level}; {warning}budget {current.records}->{projected.records}"
+        f" records, {current.bytes}->{projected.bytes} bytes"
     )
     return {
         "action_display": ACTION_DISPLAY[tool_name],

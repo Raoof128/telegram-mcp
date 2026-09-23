@@ -55,11 +55,15 @@ async def _fetch(session, peer_type, peer_id, limit=20):
 
 
 async def test_a_full_page_reports_the_oldest_raw_id_even_when_deleted(tmp_path):
-    result = _history(
-        [
+    # A page of a longer history: Telegram sends a slice (plain messages means "everything").
+    result = types.messages.MessagesSlice(
+        count=99,
+        messages=[
             types.Message(id=10, peer_id=types.PeerUser(100), date=WHEN, message="a"),
             types.MessageEmpty(id=9, peer_id=types.PeerUser(100)),
         ],
+        topics=[],
+        chats=[],
         users=[ALI],
     )
     session, _fake = await _session(tmp_path, {"messages.GetHistoryRequest": result}, ALI)

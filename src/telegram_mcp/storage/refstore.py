@@ -94,6 +94,14 @@ class RefStore:
             ).fetchone()
         )
 
+    def peer_by_row(self, row_id: int) -> PeerRow | None:
+        return _row(
+            self._conn.execute(
+                f"SELECT {_COLUMNS} FROM peers WHERE account_id = ? AND id = ?",
+                (self._account, row_id),
+            ).fetchone()
+        )
+
     def peer_by_identity(self, identity: str) -> PeerRow | None:
         peer_type, _, raw = identity.partition(":")
         if peer_type not in PEER_TYPES or not raw.lstrip("-").isdigit():

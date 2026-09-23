@@ -27,6 +27,7 @@ __all__ = [
     "check_pre_serialize",
     "evaluate",
     "make_view",
+    "readable_members",
 ]
 
 OPERATIONS = ("read", "cross_search", "discover")
@@ -259,3 +260,17 @@ def check_pre_serialize(
         raise AuthorityChanged(POLICY_CHANGED, "grant changed")
     if snapshot.effective_egress != fresh.effective_egress:
         raise AuthorityChanged(POLICY_CHANGED, "effective egress changed")
+
+
+def readable_members(view: AuthorityView, client_ref: str, project_ref: str) -> frozenset[str]:
+    """A project's members that pass every layer for ``read``: owner mode, deny, membership."""
+    return frozenset(
+        identity
+        for identity in view.memberships.get(project_ref, frozenset())
+        if not isinstance(
+            evaluate(
+                view, AuthorityRequest("read", client_ref, (project_ref,), peer_identity=identity)
+            ),
+            Denial,
+        )
+    )

@@ -41,6 +41,7 @@ __all__ = [
     "REVIEWED_REQUESTS",
     "DialogView",
     "MessageView",
+    "SearchPage",
     "TelegramConfig",
     "TelethonSession",
     "qualified",
@@ -68,6 +69,8 @@ OPERATIONS: dict[str, frozenset[str]] = {
             "messages.GetHistoryRequest",
             "messages.GetMessagesRequest",
             "channels.GetMessagesRequest",
+            "messages.GetRepliesRequest",  # 4c: get_context inside a forum topic
+            "messages.SearchRequest",  # 4c: per-peer search, never SearchGlobal
         }
     ),
 }
@@ -542,9 +545,11 @@ class TelethonSession:
     ) -> dict[str, DialogView]:
         """GetPeerDialogs for known peers, 100 at a time; cache misses are skipped."""
         wanted = []
+        requested: set[str] = set()
         for peer_type, peer_id in identities:
             try:
                 wanted.append(types.InputDialogPeer(peer=self.input_peer(peer_type, peer_id)))
+                requested.add(f"{peer_type}:{peer_id}")
             except GatewayError:
                 continue  # not in the entity cache: never looked up over the network
         out: dict[str, DialogView] = {}
@@ -557,8 +562,23 @@ class TelethonSession:
                 budget=budget,
             )
             for view in _views(result):
-                out[view.identity] = view
+                if view.identity in requested:  # a dialog nobody asked for is never admitted
+                    out[view.identity] = view
         return out
+
+    def _message_views(
+        self, result: Any, chat: tuple[str, int]
+    ) -> tuple[list[MessageView], dict[tuple[str, int], Any]]:
+        entities = {
+            TelethonSession.identity_of(entity): entity for entity in [*result.users, *result.chats]
+        }
+        views = [
+            _message_view(message, chat, entities)
+            for message in result.messages
+            if not isinstance(message, types.MessageEmpty)
+            and _belongs(message, chat)  # never attribute another chat's message to this one
+        ]
+        return views, entities
 
     async def fetch_history(
         self,
@@ -571,6 +591,8 @@ class TelethonSession:
         client_ref: str,
         deadline: Deadline,
         budget: WorkBudget,
+        add_offset: int = 0,
+        min_id: int = 0,
     ) -> tuple[list[MessageView], int | None]:
         """One GetHistory page, newest first; deleted entries dropped.
 
@@ -583,9 +605,117 @@ class TelethonSession:
                 peer=peer,
                 offset_id=offset_id,
                 offset_date=None,
-                add_offset=0,
+                add_offset=add_offset,
                 limit=limit,
                 max_id=max_id,
+                min_id=min_id,
+                hash=0,
+            ),
+            operation="mcp.retrieval",
+            client_ref=client_ref,
+            deadline=deadline,
+            budget=budget,
+        )
+        views, _entities = self._message_views(result, (peer_type, peer_id))
+        below, _foreign = _page_end(result, limit, (peer_type, peer_id))
+        return views, below
+
+    async def fetch_by_ids(
+        self,
+        peer_type: str,
+        peer_id: int,
+        ids: list[int],
+        *,
+        client_ref: str,
+        deadline: Deadline,
+        budget: WorkBudget,
+    ) -> tuple[list[MessageView], bool]:
+        """Messages by id (the get_context anchor), and whether the chat is a forum."""
+        peer = self.input_peer(peer_type, peer_id)
+        wanted = [types.InputMessageID(int(i)) for i in ids]
+        request = (
+            functions.channels.GetMessagesRequest(peer, wanted)
+            if peer_type == "channel"
+            else functions.messages.GetMessagesRequest(wanted)
+        )
+        result = await self._call_reviewed(
+            request,
+            operation="mcp.retrieval",
+            client_ref=client_ref,
+            deadline=deadline,
+            budget=budget,
+        )
+        chat = (peer_type, peer_id)
+        views, entities = self._message_views(result, chat)
+        return views, bool(getattr(entities.get(chat), "forum", False))
+
+    async def fetch_replies(
+        self,
+        peer_type: str,
+        peer_id: int,
+        topic_id: int,
+        *,
+        offset_id: int,
+        add_offset: int,
+        limit: int,
+        min_id: int,
+        max_id: int,
+        client_ref: str,
+        deadline: Deadline,
+        budget: WorkBudget,
+    ) -> list[MessageView]:
+        """messages.GetReplies inside one forum topic: it never crosses into another."""
+        peer = self.input_peer(peer_type, peer_id)
+        result = await self._call_reviewed(
+            functions.messages.GetRepliesRequest(
+                peer=peer,
+                msg_id=topic_id,
+                offset_id=offset_id,
+                offset_date=None,
+                add_offset=add_offset,
+                limit=limit,
+                max_id=max_id,
+                min_id=min_id,
+                hash=0,
+            ),
+            operation="mcp.retrieval",
+            client_ref=client_ref,
+            deadline=deadline,
+            budget=budget,
+        )
+        views, _entities = self._message_views(result, (peer_type, peer_id))
+        return views
+
+    async def search_peer(
+        self,
+        peer_type: str,
+        peer_id: int,
+        query: str,
+        *,
+        min_date: datetime | None,
+        max_date: datetime | None,
+        offset_id: int,
+        limit: int,
+        client_ref: str,
+        deadline: Deadline,
+        budget: WorkBudget,
+    ) -> SearchPage:
+        """One messages.Search page in one peer (never SearchGlobal).
+
+        ``None`` bounds are sent as 0, which Telegram reads as unbounded.
+        """
+        peer = self.input_peer(peer_type, peer_id)
+        result = await self._call_reviewed(
+            functions.messages.SearchRequest(
+                peer=peer,
+                q=query,
+                filter=types.InputMessagesFilterEmpty(),
+                min_date=min_date,
+                max_date=max_date,
+                offset_id=offset_id,
+                add_offset=0,
+                limit=limit,
+                max_id=0,
                 min_id=0,
                 hash=0,
             ),
@@ -594,17 +724,16 @@ class TelethonSession:
             deadline=deadline,
             budget=budget,
         )
-        entities = {
-            TelethonSession.identity_of(entity): entity for entity in [*result.users, *result.chats]
-        }
-        chat = (peer_type, peer_id)
-        views = [
-            _message_view(message, chat, entities)
-            for message in result.messages
-            if not isinstance(message, types.MessageEmpty)
-        ]
-        full = len(result.messages) >= limit and bool(result.messages)
-        return views, (min(int(m.id) for m in result.messages) if full else None)
+        views, _entities = self._message_views(result, (peer_type, peer_id))
+        next_offset, foreign = _page_end(result, limit, (peer_type, peer_id))
+        return SearchPage(
+            views=views,
+            exhausted=next_offset is None,
+            # A response naming another chat is not a response we can vouch for.
+            inexact=bool(getattr(result, "inexact", False)) or foreign,
+            next_offset=next_offset,
+            examined=len(result.messages),  # raw, before any filtering
+        )
 
 
 @dataclass(frozen=True)
@@ -620,6 +749,7 @@ class DialogView:
     last_message_at: str | None
     read_outbox_max_id: int
     top_message_id: int
+    is_forum: bool = False
 
     @property
     def identity(self) -> str:
@@ -679,6 +809,7 @@ def _views(result: Any) -> list[DialogView]:
                 last_message_at=_iso(getattr(top, "date", None)),
                 read_outbox_max_id=int(dialog.read_outbox_max_id or 0),
                 top_message_id=int(dialog.top_message or 0),
+                is_forum=bool(getattr(entity, "forum", False)),
             )
         )
     return views
@@ -699,6 +830,10 @@ class MessageView:
     has_media: bool
     media_kind: str | None
     edited: bool
+    # Topic classification for get_context (design §4.1). Never exposed: the
+    # contract carries only forum_topic, and raw topic ids must not leave.
+    reply_to_top_id: int | None = None
+    topic_root: bool = False
 
 
 def _media_kind(media: Any) -> str | None:
@@ -737,11 +872,17 @@ def _message_view(
     service = isinstance(message, types.MessageService)
     reply = getattr(message, "reply_to", None)
     reply_to_id = None
+    reply_to_top_id = None
     forum_topic = False
     if isinstance(reply, types.MessageReplyHeader):
         forum_topic = bool(reply.forum_topic)
         if reply.reply_to_peer_id is None and reply.reply_to_msg_id:
             reply_to_id = int(reply.reply_to_msg_id)
+        if reply.reply_to_top_id:
+            reply_to_top_id = int(reply.reply_to_top_id)
+    topic_root = service and isinstance(
+        getattr(message, "action", None), types.MessageActionTopicCreate
+    )
     media_kind = None if service else _media_kind(getattr(message, "media", None))
     entity = entities.get(sender) if sender is not None else None
     return MessageView(
@@ -758,4 +899,41 @@ def _message_view(
         has_media=media_kind is not None,
         media_kind=media_kind,
         edited=bool(getattr(message, "edit_date", None)) and not bool(message.edit_hide),
+        reply_to_top_id=reply_to_top_id,
+        topic_root=topic_root,
     )
+
+
+@dataclass(frozen=True)
+class SearchPage:
+    """One per-peer search page: views plus Telegram's own completeness signals."""
+
+    views: list[MessageView]
+    exhausted: bool
+    inexact: bool
+    next_offset: int | None
+    examined: int = 0  # entries Telegram returned, before dropping deleted or foreign ones
+
+
+def _page_end(result: Any, limit: int, chat: tuple[str, int]) -> tuple[int | None, bool]:
+    """``(next offset, or None on the last page; whether another chat's entry appeared)``.
+
+    One copy of the stop rule, for history and search alike. A short page is
+    *not* the end: Telethon 1.45.0 (``client/messages.py:213-225``) documents
+    that channels withhold messages, so it stops only on an empty page, a
+    non-slice ``messages.Messages`` (everything), or a highest id within the
+    limit (ids start at 1). The offset comes from this chat's own entries
+    only, so a foreign entry can never steer it past hits.
+    """
+    raw = list(result.messages)
+    foreign = any(getattr(m, "peer_id", None) is not None and not _belongs(m, chat) for m in raw)
+    own = [int(m.id) for m in raw if getattr(m, "peer_id", None) is None or _belongs(m, chat)]
+    last = not own or isinstance(result, types.messages.Messages) or max(own) <= limit
+    return (None if last else min(own)), foreign
+
+
+def _belongs(message: Any, chat: tuple[str, int]) -> bool:
+    try:
+        return TelethonSession.identity_of(message.peer_id) == chat
+    except GatewayError:
+        return False

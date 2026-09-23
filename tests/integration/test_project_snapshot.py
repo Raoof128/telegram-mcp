@@ -115,8 +115,8 @@ def test_a_project_cursor_carries_state_and_dies_with_policy(world):
     assert exc.value.code == "CURSOR_POLICY_CHANGED"
 
 
-def test_4c_tools_still_refuse_before_any_prompt(world):
+def test_a_tool_the_coordinator_does_not_serve_refuses_before_any_prompt(world):
     _conn, authority, principal, _refs = world
     with pytest.raises(AuthorityRefusal) as exc:
-        authority.freeze_arguments("telegram_get_context", {}, principal=principal)
+        authority.freeze_arguments("telegram_status", {}, principal=principal)
     assert exc.value.code == "POLICY_UNCONFIGURED"

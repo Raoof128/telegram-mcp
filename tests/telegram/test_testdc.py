@@ -15,7 +15,7 @@ from telegram_mcp.keys.store import load_key, provision_missing
 from telegram_mcp.runtime.identity import resolve_principal
 from telegram_mcp.storage.db import bind_cursor_store, open_db
 from telegram_mcp.storage.identity import ensure_owner_principal
-from telegram_mcp.telegram.deadline import Deadline
+from telegram_mcp.telegram.deadline import Deadline, WorkBudget
 from telegram_mcp.telegram.discovery import DiscoveryStore
 from telegram_mcp.telegram.reads import TelegramReads
 from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
@@ -90,7 +90,7 @@ async def test_the_four_tools_on_the_test_dc(tmp_path):
         "project_ref"
     ]
     # allow + add every chat kind the fixture made: each is touched by the read tools
-    for kind in ("private", "group", "channel"):
+    for kind in ("private", "group", "channel", "supergroup"):  # supergroup: the 4c forum
         found = await scope["scope discover"]({})
         handle = next(s["handle"] for s in found["selections"] if s["chat_type"] == kind)
         scope["scope allow"]({"handle": handle})
@@ -116,7 +116,12 @@ async def test_the_four_tools_on_the_test_dc(tmp_path):
         cursor_store=bind_cursor_store(conn),
         runtime_id=b"\x05" * 16,
     )
-    reads = TelegramReads(session, conn, mint_cursor=authority.mint_project_cursor)
+    reads = TelegramReads(
+        session,
+        conn,
+        mint_cursor=authority.mint_project_cursor,
+        mint_search_cursor=authority.mint_search_cursor,
+    )
     principal = resolve_principal(conn, client_ref)
 
     def snap(tool, **args):
@@ -127,7 +132,7 @@ async def test_the_four_tools_on_the_test_dc(tmp_path):
     chats = await reads.list_chats(
         *snap("telegram_list_chats", limit=20, chat_type="any", archived="include")
     )
-    assert {c["chat_type"] for c in chats["chats"]} == {"private", "group", "channel"}
+    assert {c["chat_type"] for c in chats["chats"]} == {"private", "group", "channel", "supergroup"}
     unread_before = await reads.get_unread(
         *snap("telegram_get_unread", limit=30, include_muted=True, chat_type="any")
     )
@@ -145,6 +150,75 @@ async def test_the_four_tools_on_the_test_dc(tmp_path):
             assert from_c and from_c[0]["sender_peer_ref"] is None  # C's DM is not in the project
         if chat["chat_type"] == "private":
             assert any(marker in (m["text"] or "") for m in page["messages"])
+
+    # ---- 4c: forum isolation, real search exhaustion, the before=0 window ----
+    forum = next(c for c in chats["chats"] if c["chat_type"] == "supergroup")
+    page = await reads.get_messages(
+        *snap("telegram_get_messages", peer_ref=forum["peer_ref"], limit=30)
+    )
+    by_text = {m["text"]: m["message_ref"] for m in page["messages"] if m["text"]}
+    for name, other in (("alpha", "beta"), ("beta", "alpha")):
+        anchor = by_text[f"topic-{name} 1 {marker}"]
+        ctx = await reads.get_context(
+            *snap("telegram_get_context", message_ref=anchor, before=5, after=5)
+        )
+        texts = [m["text"] or "" for m in ctx["messages"]]
+        assert all(f"topic-{other}" not in t and "general" not in t for t in texts), texts
+        assert f"topic-{name} 0 {marker}" in texts and f"topic-{name} 2 {marker}" in texts
+    general = await reads.get_context(
+        *snap("telegram_get_context", message_ref=by_text[f"general 1 {marker}"], before=5, after=5)
+    )
+    assert all("topic-" not in (m["text"] or "") for m in general["messages"])
+    for before, after in (
+        (0, 0),
+        (0, 2),
+        (2, 0),
+    ):  # design §4.1: the edge cases, on the real server
+        ctx = await reads.get_context(
+            *snap(
+                "telegram_get_context",
+                message_ref=by_text[f"general 1 {marker}"],
+                before=before,
+                after=after,
+            )
+        )
+        assert ctx["anchor_message_ref"] in [m["message_ref"] for m in ctx["messages"]]
+    found, cursor = [], None
+    for _page in range(20):  # real search exhaustion across the whole project
+        extra = {"cursor": cursor} if cursor else {}
+        out = await reads.search_messages(
+            *snap("telegram_search_messages", query=marker, limit=50, **extra)
+        )
+        found += [r["message_ref"] for r in out["results"]]
+        cursor = out.get("_next_cursor")
+        if cursor is None:
+            assert out["_coverage"]["complete"] is True, out["_coverage"]
+            break
+    assert (
+        len(found) == len(set(found)) and len(found) >= 12
+    )  # 3+3 topic, 3 General, DM, group, post
+    # Telegram's own paging, observed on the real server (design §4.7): two
+    # hits a page over the forum's nine marker messages. Only Telegram's own
+    # end signal stops the walk, and every hit arrives exactly once.
+    ids, offset = [], 0
+    for _page in range(10):
+        page = await session.search_peer(
+            "channel",
+            seeded["forum_id"],
+            marker,
+            min_date=None,
+            max_date=None,
+            offset_id=offset,
+            limit=2,
+            client_ref=client_ref,
+            deadline=Deadline(15),
+            budget=WorkBudget(),
+        )
+        ids += [view.message_id for view in page.views]
+        if page.exhausted:
+            break
+        offset = page.next_offset
+    assert len(ids) == len(set(ids)) == 9, ids  # 3+3 topic, 3 General
 
     # Independent: markers Telegram reports from B's side (DM, group, channel views).
     assert witness() == before, "a read tool moved a read marker or a view counter"

@@ -15,10 +15,16 @@ class ArgumentError(ValueError):
         super().__init__(code)
 
 
-def _parse_offset(value: str) -> datetime:
-    # Already format-validated date-time with offset. Python cannot represent
-    # an RFC 3339 leap second; that yields INVALID_TIME by contract decision.
-    text = value.replace("Z", "+00:00")
+def parse_time(value: str) -> datetime:
+    """The one parser for tool date-times: RFC 3339 with an offset, any case.
+
+    RFC 3339 §5.6 allows a lowercase ``t`` and ``z`` and jsonschema accepts
+    them, but ``datetime.fromisoformat`` does not, so the text is upper-cased
+    first (digits, signs and separators are unaffected). Python cannot
+    represent an RFC 3339 leap second; that yields INVALID_TIME by contract
+    decision.
+    """
+    text = value.upper().replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
@@ -44,6 +50,6 @@ def validate_arguments(contract: ToolContract, arguments: object) -> dict[str, A
             value[name] = deepcopy(property_schema["default"])
     if isinstance(value, dict) and "since" in value and "until" in value:
         since, until = value["since"], value["until"]
-        if since is not None and until is not None and _parse_offset(since) >= _parse_offset(until):
+        if since is not None and until is not None and parse_time(since) >= parse_time(until):
             raise ArgumentError("INVALID_TIME")
     return value

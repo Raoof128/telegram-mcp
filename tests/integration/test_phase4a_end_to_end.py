@@ -311,14 +311,14 @@ class _Exploding:
         raise AssertionError("retrieval ran after a cancelled consent")
 
 
-async def test_the_4c_tools_still_refuse_honestly(world):
+async def test_without_a_session_telegram_tools_refuse_before_any_prompt(world):
     body = await call(
         world,
         CODEX,
         "telegram_get_context",
         {"project_ref": world["ops"], "message_ref": "tgm_" + "a" * 26},
     )
-    assert body["error"]["code"] == "POLICY_UNCONFIGURED"
+    assert body["error"]["code"] == "AUTH_REQUIRED"  # this world has no Telegram session
     assert world["agent"].prompts == 0
 
 

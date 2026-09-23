@@ -66,8 +66,8 @@ DEFAULT_DIALOGS = [
 ]
 
 
-@pytest.fixture
-async def world(tmp_path):
+async def make_reads_world(tmp_path):
+    """Shared by the 4b and 4c read tests (a plain helper, so importing it is lint-clean)."""
     provision_missing(tmp_path / "keys", phases=(2, 3))
     conn = open_db(tmp_path / "meta.db")
     seed_authority_rows(conn)
@@ -97,6 +97,11 @@ async def world(tmp_path):
         return request.validated_args, authority.snapshot(tool, request)
 
     return conn, fake, reads, snap, refs
+
+
+@pytest.fixture
+async def world(tmp_path):
+    return await make_reads_world(tmp_path)
 
 
 async def test_list_chats_is_the_project_newest_first_without_archived(world):
@@ -298,6 +303,13 @@ def _history(*messages, users=(ALI, ZED), chats=(TEAM,)):
     )
 
 
+def _slice(*messages, users=(ALI, ZED), chats=(TEAM,)):
+    """A page of a longer history: Telegram answers with a slice, never plain messages."""
+    return types.messages.MessagesSlice(
+        count=99, messages=list(messages), topics=[], chats=list(chats), users=list(users)
+    )
+
+
 async def test_sender_outside_project_gets_null_ref(world):
     """Review Focus 2."""
     conn, fake, reads, snap, refs = world
@@ -332,7 +344,7 @@ async def test_get_messages_pages_below_its_anchor(world):
     def history(request):
         seen.append((request.offset_id, request.max_id))
         top = request.offset_id - 1 if request.offset_id else 50
-        return _history(
+        return _slice(
             *(
                 types.Message(id=i, peer_id=types.PeerUser(100), date=WHEN, message=str(i))
                 for i in range(top, top - 2, -1)
@@ -352,7 +364,7 @@ async def test_get_messages_pages_below_its_anchor(world):
 
 async def test_a_deleted_message_does_not_end_paging(world):
     _conn, fake, reads, snap, refs = world
-    fake.script["messages.GetHistoryRequest"] = _history(
+    fake.script["messages.GetHistoryRequest"] = _slice(
         types.Message(id=10, peer_id=types.PeerUser(100), date=WHEN, message="a"),
         types.MessageEmpty(id=9, peer_id=types.PeerUser(100)),
     )

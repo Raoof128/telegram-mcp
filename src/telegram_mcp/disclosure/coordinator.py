@@ -27,7 +27,7 @@ from telegram_mcp.disclosure.audit.chain import (
     mint_event_id,
 )
 from telegram_mcp.disclosure.budget import BudgetError, buckets_for
-from telegram_mcp.disclosure.coverage import coverage_digest
+from telegram_mcp.disclosure.coverage import CoverageError, coverage_digest, validate_coverage
 from telegram_mcp.disclosure.egress import effective_egress_level
 from telegram_mcp.disclosure.measure import (
     RECORD_ELEMENT,
@@ -449,6 +449,20 @@ class DisclosureCoordinator:
             coverage = side.get("_coverage") if tool_name in _SEARCH_TOOLS else None
             next_cursor = side.get("_next_cursor")
             partial = bool(snapshot.partial) or bool(side.get("_partial"))
+            if tool_name in _SEARCH_TOOLS:
+                # §23D and §14.1A: a search result must carry a coverage object
+                # that agrees with itself, with the cursor, with meta.partial and
+                # with the records actually disclosed; otherwise nothing is signed.
+                try:
+                    if coverage is None or coverage["hits_returned"] != records_disclosed(
+                        tool_name, data
+                    ):
+                        raise CoverageError("coverage does not describe this result")
+                    validate_coverage(coverage, next_cursor=next_cursor, partial=partial)
+                except (CoverageError, KeyError, TypeError):
+                    return DisclosureOutcome(
+                        released=False, error_code="PROOF_GENERATION_FAILED", retryable=False
+                    )
 
             self._checkpoint("measure_and_prepare_proof")
             prepared = self._prepare_proof(tool_name, data, snapshot, approval, coverage, partial)

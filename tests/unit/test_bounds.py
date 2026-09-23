@@ -108,7 +108,7 @@ def test_every_project_tool_has_a_bound(tool):
 def test_an_unbounded_tool_is_refused():
     with pytest.raises(ValueError):
         worst_case(
-            "telegram_search_messages",
+            "telegram_list_projects",
             limit=1,
             project_ref=P,
             project_display_name="A",

@@ -19,7 +19,12 @@ request, raw reviewed Telegram login, and `list_chats`, `resolve_peer`,
 `get_messages` and `get_unread` against a fake transport. The adapter owns
 the MTProto boundary (`telegram/telethon_adapter.py`: one send per request,
 per-operation allowlist and work budget; Telethon's login helpers are never
-used). `get_context` and both searches still return `POLICY_UNCONFIGURED`.
+used). **Phase 4c is implemented on branch `phase-4c`:** `get_context` and both
+searches, so all nine sensitive tools are served on the fake transport. The
+searches are per peer only, with a pure continuation engine
+(`telegram/search.py`) and signed §23D coverage whose counters are measured.
+`bounds.PageBudget` holds every read to both §13.2 caps (bytes and 32,000
+codepoints). A page ends only on Telegram's own signal (`_page_end`).
 Evidence: `docs/verification/phase-4.md`, `telegram-rpc-review.md`.
 Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 
@@ -48,8 +53,8 @@ Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 860 passed, 10 skipped
-uv run python scripts/e2e_smoke.py                # 49 checks, end to end
+uv run pytest -q                                  # 1337 passed, 10 skipped
+uv run python scripts/e2e_smoke.py                # 53 checks, end to end
 uv run pytest tests/formal -q -s                  # 624 states, 18 assertions
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
