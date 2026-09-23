@@ -43,7 +43,7 @@ from telegram_mcp.ipc.framing import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Awaitable, Callable, Mapping
 
 __all__ = [
     "ADMIN_COMMANDS",
@@ -223,6 +223,7 @@ class AdminRouter:
         *,
         presence_verifier: Callable[[Any], bool] | None = None,
         control_handlers: Mapping[str, Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
+        request_verifier: Callable[[Any, str, dict[str, Any]], bool] | None = None,
     ) -> None:
         unknown = set(handlers or {}) - set(ADMIN_COMMANDS)
         if unknown:
@@ -232,6 +233,7 @@ class AdminRouter:
             raise ValueError("handler for an unknown control request")
         self._handlers = dict(handlers or {})
         self._presence = presence_verifier
+        self._request_verifier = request_verifier
         self._control = dict(control_handlers or {})
 
     @staticmethod
@@ -280,7 +282,14 @@ class AdminRouter:
             return self._error(UNKNOWN_COMMAND, "unknown command")
         if command in PRESENCE_GATED:
             proof = args.get("presence")
-            if proof is None or self._presence is None or not self._presence(proof):
+            bare = {k: v for k, v in args.items() if k != "presence"}
+            if self._request_verifier is not None:
+                verified = proof is not None and self._request_verifier(proof, command, bare)
+            else:
+                verified = (
+                    proof is not None and self._presence is not None and self._presence(proof)
+                )
+            if not verified:
                 return self._error(PRESENCE_REQUIRED, "user presence is required")
         handler = self._handlers.get(command)
         if handler is None:
@@ -295,6 +304,35 @@ class AdminRouter:
             _logger.exception("admin handler failed", extra={"cmd": command})
             return self._error(INTERNAL_ERROR, "handler failed")
         return {"ok": True, "data": data}
+
+    def has_handler(self, command: Any) -> bool:
+        return isinstance(command, str) and command in self._handlers
+
+    async def adispatch(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """``dispatch``, awaiting handlers that are coroutines (network commands).
+
+        A routed command with no handler in this phase is refused before the
+        presence check: asking the owner for Touch ID to run nothing would
+        train them to approve blind (design D8: ``auth revoke-this-session``).
+        """
+        command = request.get("cmd")  # a decoded strict-JSON object (framing guarantees it)
+        if isinstance(command, str) and command in ADMIN_COMMANDS and not self.has_handler(command):
+            return self._error(NOT_AVAILABLE_IN_PHASE, "command is not implemented in this phase")
+        response = self.dispatch(request)
+        data = response.get("data") if response.get("ok") else None
+        if not asyncio.iscoroutine(data):
+            return response
+        try:
+            return {"ok": True, "data": await data}
+        except PermissionError:
+            return self._error(PERMISSION_DENIED, "operation refused")
+        except ValueError as exc:
+            return self._error(MALFORMED_REQUEST, str(exc))
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            raise
+        except Exception:
+            _logger.exception("admin handler failed", extra={"cmd": request.get("cmd")})
+            return self._error(INTERNAL_ERROR, "handler failed")
 
 
 def _prepare_socket_path(socket_path: Path) -> None:
@@ -313,6 +351,7 @@ async def serve_admin(
     allow_uid: int | None = None,
     allow_gids: tuple[int, ...] = (),
     idle_s: float = IDLE_TIMEOUT_S,
+    approver: Callable[[str, dict[str, Any]], Awaitable[str | None]] | None = None,
 ) -> asyncio.Server:
     """Serve the admin socket; caller owns the returned server's lifetime."""
     target = Path(socket_path)
@@ -344,7 +383,19 @@ async def serve_admin(
                     _logger.warning("admin frame refused", extra={"reason": str(exc)})
                     await _refuse(writer, MALFORMED_REQUEST, str(exc))
                     return
-                await write_frame(writer, encode_json_frame(router.dispatch(request)))
+                command = request.get("cmd")
+                args = request.get("args", {})
+                if (
+                    approver is not None
+                    and isinstance(command, str)
+                    and command in PRESENCE_GATED
+                    and router.has_handler(command)
+                    and isinstance(args, dict)
+                ):
+                    token = await approver(command, args)
+                    if token is not None:
+                        request = {**request, "args": {**args, "presence": {"token": token}}}
+                await write_frame(writer, encode_json_frame(await router.adispatch(request)))
         finally:
             writer.close()
 

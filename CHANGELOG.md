@@ -241,3 +241,55 @@
   - session-file ignores: checked in the real repository
   - `main` suite unchanged.
 - **Follow-ups:** Execute revision 4 inline, per the owner. The Test DC run and the installed-host boundary check remain owner-run.
+
+### 2026-09-23 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Execute the Phase-4b plan (revision 4) inline on branch `phase-4b`, Tasks 1–18.
+- **Summary:** All eighteen tasks were done test first, each watched red before green and each committed on a green full gate.
+  - **Authority:** an empty owner allowlist now denies. Prompt-unsafe names are refused at creation and stripped by the agent's renderer.
+  - **Admin approvals:** gated admin commands are approved with Touch ID on the consent wire, with secrets bound by keyed digest and tokens bound to their exact request.
+  - **Identity:** principal, account and clients are bootstrapped for real.
+  - **Telegram boundary:** deadlines, work budgets and fair admission; the Keychain `api_hash`; the ref store. A Telethon adapter owns the wire: one send per request, per-operation allowlist and budget, raw reviewed login, no Telethon helpers.
+  - **Operator commands:** dialog discovery; three-step login; scope and allowlist.
+  - **Exposure:** worst-case bounds with a 48 KiB page cap.
+  - **Authority and coordinator:** the project-scoped authority snapshot; an authority re-check before retrieval with typed refusals and the §27.1 retryability registry.
+  - **Reads:** history views, and the four reads with keyset pagination.
+  - **Runtime:** the alias-resolving RPC guard, composition, `telegram-mcp daemon` with a production-shape admin-socket mode, the Test DC harness, the runtime recorder, the widened read-state witness, smoke rows and evidence.
+
+  Control runs: a planted `ReadHistoryRequest` made both RPC guards fail, and a weakened estimator made all four exposure-invariant cases fail.
+- **Files changed:**
+  - **src — authority, consent, IPC:** `authority/policy.py`, `storage/{authority_view,identity,refstore}.py`, `ipc/admin.py`, `ipc/handlers/{projects,clients,auth,scope}.py`, `consent/admin_approval.py`.
+  - **src — Telegram and disclosure:** `telegram/{deadline,errors,telethon_adapter,discovery,reads}.py`, `keys/keychain.py`, `disclosure/{bounds,seams,coordinator}.py`, `results.py`, `sensitive_dispatch.py`.
+  - **src — runtime:** `runtime/{composition,daemon}.py`, `cli.py`.
+  - **Agent:** `agent/consent-agent.swift`.
+  - **Tests:** the new tests under `tests/`, plus `tests/telegram/`.
+  - **Other:** `scripts/e2e_smoke.py`, `pyproject.toml`, `docs/verification/{phase-4,telegram-rpc-review}.md`, `CLAUDE.md`, this file, `CHANGELOG.md`/`AGENT.md`.
+- **Verification:**
+  - pytest: 860 passed, 10 skipped (the Test DC and host-gated tests skip honestly).
+  - smoke: 49/49.
+  - join gate: 16 passed, 1 skipped.
+  - formal model: 624/624.
+  - ruff and format: clean.
+  - mypy: clean over 85 files.
+  - `uv build`: OK.
+- **Follow-ups:**
+  - The final whole-branch review (self-review; no subagents, per the owner).
+  - Owner-run: the Test DC run, the Touch ID test, and the installed-host boundary check.
+  - Re-package the signed agent bundle with the renderer fix.
+  - The merge decision (owner).
+  - No production claim.
+
+### 2026-09-23 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase-4b final whole-branch review and its fix pass, on branch `phase-4b`.
+- **Summary:** This was a self-review, because the owner's rule is no subagents: the code-reviewer checklist over the whole branch diff, plus executed probes. The shipped daemon CLI fails closed when unpaired, before it creates state or reads the Keychain.
+
+  One Important finding was fixed test first. `_call_reviewed` carried an `isinstance(self._client, _GatewayClient)` branch that existed only for injected test clients, which breaks the "no test-only flags in production paths" rule. Charging is now uniform: the session always charges its own request and marks it pre-charged, and the client charges anything else.
+
+  Five minors are deferred to the owner and listed in the ledger.
+- **Files changed:** `src/telegram_mcp/telegram/telethon_adapter.py`, `tests/unit/test_gateway_client.py`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** the new source guard went red, then green. Full gate: pytest 862 passed, 10 skipped; smoke 49/49; formal 624/624; ruff, format and mypy clean; build OK.
+- **Follow-ups:**
+  - The owner decides the merge and push; a self-review is weaker than a fresh reviewer.
+  - Owner-run: the Test DC run, the Touch ID test, and the installed-host boundary check.
+  - Re-package the signed agent bundle.

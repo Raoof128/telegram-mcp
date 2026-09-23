@@ -153,3 +153,27 @@ def test_auth_headers_mints_a_verifiable_lease(router):
     assert claims.client == CLIENT
     with pytest.raises(PermissionError):
         handler({"client_ref": "tcl_" + "z" * 26})
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Ops\u202e",
+        "\u2067Ops\u2069",
+        "Ops\u200e",
+        "Ops\u200f",
+        "Ops\u061c",
+        "Ops\u2028x",
+        "Ops\u2029x",
+    ],
+)
+def test_prompt_unsafe_names_are_refused(router, name):
+    _conn, admin = router
+    assert (
+        _call(admin, "project create", slug="ops", display_name=name)["code"] == "MALFORMED_REQUEST"
+    )
+
+
+def test_persian_names_with_zwnj_are_accepted(router):
+    _conn, admin = router
+    assert _call(admin, "project create", slug="fa", display_name="انجمن\u200cها")["ok"]

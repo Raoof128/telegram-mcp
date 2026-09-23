@@ -13,10 +13,15 @@ chain and anchor). **Phase 4a is complete:** `telegram_list_projects` and
 loopback ingress (`runtime/ingress.py`), a daemon-delivered consent prompt
 (`consent/prompter.py`), live SQLite authority and the Phase-3 coordinator,
 with receipts that verify persisted and offline. `runtime/composition.py` is
-the only wiring point. The other seven sensitive tools still return
-`POLICY_UNCONFIGURED`; identity rows are seeded until 4b's login creates the
-account. Evidence: `docs/verification/phase-4.md`.
-Nothing here has ever touched Telegram.
+the only wiring point. **Phase 4b is implemented on branch `phase-4b`:**
+`telegram-mcp daemon`, Touch-ID-approved admin commands bound to their exact
+request, raw reviewed Telegram login, and `list_chats`, `resolve_peer`,
+`get_messages` and `get_unread` against a fake transport. The adapter owns
+the MTProto boundary (`telegram/telethon_adapter.py`: one send per request,
+per-operation allowlist and work budget; Telethon's login helpers are never
+used). `get_context` and both searches still return `POLICY_UNCONFIGURED`.
+Evidence: `docs/verification/phase-4.md`, `telegram-rpc-review.md`.
+Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 
 ## Non-negotiables
 
@@ -43,8 +48,8 @@ Nothing here has ever touched Telegram.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 706 passed, 8 skipped
-uv run python scripts/e2e_smoke.py                # 45 checks, end to end
+uv run pytest -q                                  # 860 passed, 10 skipped
+uv run python scripts/e2e_smoke.py                # 49 checks, end to end
 uv run pytest tests/formal -q -s                  # 624 states, 18 assertions
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
@@ -56,6 +61,7 @@ Host-touching tests are opt-in and never run by default:
 
 ```bash
 uv run pytest -q --run-platform-gated             # real pairing, Touch ID, host probes
+uv run pytest tests/telegram/test_testdc.py --run-telegram-testdc -q -s   # Test DC (TG_TESTDC_* + Keychain)
 bash scripts/package_agent.sh                     # rebuild the consent-agent bundle
 ```
 
@@ -78,6 +84,7 @@ broker — and prints one ledger. Both must pass before any claim of done.
 | Admin socket, leases, RV-1, tunnel pins | `ipc/` |
 | Disclosure coordinator, budgets, receipts, audit chain | `disclosure/` |
 | Bounded formal model | `formal/`, `SECURITY-MANIFEST.json` |
+| Telegram adapter (only Telethon importer), reads, daemon | `telegram/`, `runtime/daemon.py` |
 | Health checks | `doctor.py` |
 | Swift consent agent | `agent/consent-agent.swift` |
 | Plans and design | `docs/superpowers/` |

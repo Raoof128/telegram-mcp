@@ -671,7 +671,8 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
                         "lock status": lambda args: {
                             "locked": False,
                             "security_epoch": state.get("security_epoch", 1),
-                        }
+                        },
+                        "lock": lambda args: {"locked": True},
                     },
                     presence_verifier=lambda proof: proof == {"method": "smoke"},
                     control_handlers={"stop": lambda args: seen.append("stop") or {"ok": 1}},
@@ -697,7 +698,9 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
                             {"cmd": "lock", "args": {"presence": {"method": "smoke"}}}
                         )
                     )
-                    assert allowed["code"] == "NOT_AVAILABLE_IN_PHASE", allowed
+                    assert allowed["ok"] is True, allowed
+                    unrouted = await call(encode_json_frame({"cmd": "project rename"}))
+                    assert unrouted["code"] == "NOT_AVAILABLE_IN_PHASE", unrouted
                     unknown = await call(encode_json_frame({"cmd": "drop everything"}))
                     assert unknown["code"] == "UNKNOWN_COMMAND", unknown
                     duplicate = await call(b'{"cmd": "lock status", "cmd": "lock"}')
@@ -1320,7 +1323,11 @@ def phase4a_catalogue(ledger: Ledger) -> None:
                         for token in (None, "not-a-lease")
                     ]
                     out["bad"] = [(r.status_code, r.content) for r in bad]
-                    other = await post("telegram_list_chats", {"project_ref": project}, lease())
+                    other = await post(
+                        "telegram_get_context",
+                        {"project_ref": project, "message_ref": "tgm_" + "a" * 26},
+                        lease(),
+                    )
                     out["other"] = other.json()["result"]["structuredContent"]
                 finally:
                     server.should_exit = True
@@ -1352,7 +1359,7 @@ def phase4a_catalogue(ledger: Ledger) -> None:
     def others_refuse():
         out = drive()
         assert out["other"]["error"]["code"] == "POLICY_UNCONFIGURED", out["other"]
-        return "telegram_list_chats -> POLICY_UNCONFIGURED"
+        return "telegram_get_context -> POLICY_UNCONFIGURED"
 
     def demo_still_refuses():
         from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
@@ -1383,8 +1390,85 @@ def phase4a_catalogue(ledger: Ledger) -> None:
 
     ledger.run(area, "catalogue success through ingress + real agent", real_success)
     ledger.run(area, "bad bearers are 401, byte-identical", bad_bearers)
-    ledger.run(area, "other seven tools still refuse", others_refuse)
+    ledger.run(area, "4c tools still refuse", others_refuse)
     ledger.run(area, "demo server still has no sensitive route", demo_still_refuses)
+
+
+def phase4b_reads(ledger: Ledger) -> None:
+    """The four Telegram tools through real ingress + coordinator, on a fake transport."""
+    area = "Phase 4b — Telegram reads (fake transport)"
+    results: dict[str, Any] = {}
+
+    def drive() -> dict[str, Any]:
+        if results:
+            return results
+        import asyncio
+        import tempfile
+
+        sys.path.insert(0, str(REPO))
+        from tests.authority_fixtures import PROJECT_REF
+        from tests.integration.test_phase4a_end_to_end import CODEX, call
+        from tests.integration.test_phase4b_end_to_end import MARKER, _close, _world
+
+        class _Patch:  # _world only needs chdir from monkeypatch
+            def chdir(self, path: Any) -> None:
+                os.chdir(path)
+
+        async def main() -> dict[str, Any]:
+            here = os.getcwd()
+            out: dict[str, Any] = {}
+            with tempfile.TemporaryDirectory(dir="/tmp") as short:
+                world = await _world(Path(short), _Patch())
+                try:
+                    out["chats"] = await call(
+                        world, CODEX, "telegram_list_chats", {"project_ref": PROJECT_REF}
+                    )
+                    out["messages"] = await call(
+                        world,
+                        CODEX,
+                        "telegram_get_messages",
+                        {"project_ref": PROJECT_REF, "peer_ref": world["refs"]["user:100"]},
+                    )
+                    out["unread"] = await call(
+                        world, CODEX, "telegram_get_unread", {"project_ref": PROJECT_REF}
+                    )
+                    world["conn"].commit()
+                    out["at_rest"] = any(
+                        MARKER.encode() in p.read_bytes() for p in Path(short).glob("meta.db*")
+                    )
+                    out["calls"] = list(world["fake"].calls)
+                finally:
+                    await _close(world)
+                    os.chdir(here)
+            return out
+
+        results.update(asyncio.run(main()))
+        return results
+
+    def list_and_read():
+        out = drive()
+        assert out["chats"]["ok"] and out["messages"]["ok"], (out["chats"], out["messages"])
+        assert out["messages"]["meta"]["disclosure"]["receipt_ref"].startswith("tdr_")
+        return f"{len(out['chats']['data']['chats'])} chats, {len(out['messages']['data']['messages'])} messages, receipts"
+
+    def unread_exact():
+        body = drive()["unread"]
+        assert body["ok"] and body["data"]["total_is_exact"] is True, body
+        return f"total_unread_visible={body['data']['total_unread_visible']}, exact"
+
+    def no_body_at_rest():
+        assert drive()["at_rest"] is False
+        return "message marker absent from meta.db, -wal, -shm"
+
+    def only_reviewed_calls():
+        calls = set(drive()["calls"])
+        assert calls <= {"messages.GetPeerDialogsRequest", "messages.GetHistoryRequest"}, calls
+        return ", ".join(sorted(calls))
+
+    ledger.run(area, "list_chats + get_messages through ingress with receipts", list_and_read)
+    ledger.run(area, "get_unread total is exact over the project", unread_exact)
+    ledger.run(area, "no message body at rest", no_body_at_rest)
+    ledger.run(area, "only reviewed RPCs reached the transport", only_reviewed_calls)
 
 
 def main() -> int:
@@ -1405,6 +1489,7 @@ def main() -> int:
         phase2a_runtime(ledger, sandbox)
         phase2_consent(ledger)
         phase4a_catalogue(ledger)
+        phase4b_reads(ledger)
         conn = state.get("conn")
         if conn is not None:
             conn.close()

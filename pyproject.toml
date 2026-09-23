@@ -22,6 +22,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "platform_gated: mutates or interrogates the host; needs --run-platform-gated",
+    "telegram_testdc: talks to Telegram's test servers; needs --run-telegram-testdc",
 ]
 
 [tool.ruff]
@@ -36,6 +37,10 @@ mypy_path = "src"
 
 [[tool.mypy.overrides]]
 module = "jsonschema.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "telethon.*"
 ignore_missing_imports = true
 
 [tool.hatch.build.targets.wheel]

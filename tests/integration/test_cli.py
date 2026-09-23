@@ -168,7 +168,10 @@ def test_admin_verb_rejects_malformed_arguments(monkeypatch, capsys, tmp_path):
 async def test_admin_verb_proxies_to_a_live_socket(monkeypatch, capsys, tmp_path):
     monkeypatch.chdir(tmp_path)
     router = AdminRouter(
-        {"lock status": lambda args: {"locked": False, "security_epoch": 1}},
+        {
+            "lock status": lambda args: {"locked": False, "security_epoch": 1},
+            "lock": lambda args: {"locked": True},
+        },
         presence_verifier=lambda proof: proof == {"method": "stub"},
     )
     server = await serve_admin(Path("run") / "admin.sock", router)

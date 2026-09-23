@@ -311,8 +311,13 @@ class _Exploding:
         raise AssertionError("retrieval ran after a cancelled consent")
 
 
-async def test_the_other_seven_tools_still_refuse_honestly(world):
-    body = await call(world, CODEX, "telegram_list_chats", {"project_ref": world["ops"]})
+async def test_the_4c_tools_still_refuse_honestly(world):
+    body = await call(
+        world,
+        CODEX,
+        "telegram_get_context",
+        {"project_ref": world["ops"], "message_ref": "tgm_" + "a" * 26},
+    )
     assert body["error"]["code"] == "POLICY_UNCONFIGURED"
     assert world["agent"].prompts == 0
 

@@ -63,3 +63,41 @@ def insert_committed_receipt(conn, *, disclosure_ref: str, records: int, size: i
         (disclosure_ref, records, size),
     )
     conn.commit()
+
+
+def seed_project_world(conn) -> dict[str, str]:
+    """A granted project with three member chats and one allowed non-member."""
+    from telegram_mcp.storage.refstore import RefStore
+
+    now = "2026-09-23T00:00:00Z"
+    conn.execute(
+        "INSERT INTO client_projects (client_id, project_id, can_read, can_cross_search,"
+        " egress_level, excerpt_max_codepoints, created_at, updated_at)"
+        " VALUES (1, 1, 1, 0, 'full_text', NULL, ?, ?)",
+        (now, now),
+    )
+    conn.commit()
+    refs = RefStore(conn, account_id=1)
+    out: dict[str, str] = {}
+    for peer_type, peer_id, name, member in (
+        ("user", 100, "Ali", True),
+        ("user", 101, "Bob", False),
+        ("channel", 7, "News", True),
+        ("chat", 9, "Team", True),
+    ):
+        row = refs.ensure_peer(peer_type, peer_id, display_name=name, username=None)
+        out[row.identity] = row.peer_ref
+        conn.execute(
+            "INSERT INTO peer_policy (principal_id, account_id, telegram_peer_type,"
+            " telegram_peer_id, decision, created_at, updated_at)"
+            " VALUES (1, 1, ?, ?, 'allow', ?, ?)",
+            (peer_type, peer_id, now, now),
+        )
+        if member:
+            conn.execute(
+                "INSERT INTO project_peers (project_id, peer_id, membership_kind, created_at,"
+                " updated_at) VALUES (1, ?, 'primary', ?, ?)",
+                (row.row_id, now, now),
+            )
+        conn.commit()  # RefStore opens BEGIN IMMEDIATE: no implicit transaction may be open
+    return out

@@ -18,16 +18,56 @@ def _error_codes() -> set[str]:
     return codes
 
 
-def error_result(code: str) -> types.CallToolResult:
+# Spec §27.1, the Retryable column, verbatim: the one registry. "yes" and "no"
+# are fixed; a caller's retryable only resolves a "maybe".
+RETRYABILITY: dict[str, str] = {
+    "AUTH_REQUIRED": "no",
+    "SESSION_REVOKED": "no",
+    "ACCOUNT_UNAVAILABLE": "maybe",
+    "POLICY_UNCONFIGURED": "no",
+    "REF_NOT_FOUND": "no",
+    "NOT_ACCESSIBLE": "no",
+    "MESSAGE_NOT_FOUND": "no",
+    "AMBIGUOUS_PEER": "no",
+    "INVALID_CURSOR": "no",
+    "CURSOR_EXPIRED": "yes",
+    "CURSOR_POLICY_CHANGED": "yes",
+    "CURSOR_PROJECT_CHANGED": "yes",
+    "INVALID_TIME": "no",
+    "INVALID_ARGUMENT": "no",
+    "RESPONSE_LIMIT": "yes",
+    "EXPOSURE_BUDGET_EXCEEDED": "maybe",
+    "SECURITY_LOCKED": "no",
+    "PROOF_GENERATION_FAILED": "maybe",
+    "AUDIT_INTEGRITY_UNAVAILABLE": "no",
+    "WORK_BUDGET_EXCEEDED": "yes",
+    "FLOOD_WAIT": "yes",
+    "TELEGRAM_UNAVAILABLE": "yes",
+    "CLIENT_REVOKED": "no",
+    "CONSENT_DENIED": "no",
+    "CONSENT_UNAVAILABLE": "no",
+    "POLICY_CHANGED": "yes",
+    "DEADLINE_EXCEEDED": "yes",
+    "UNSUPPORTED_RELEASE_PROFILE": "no",
+    "INTERNAL_ERROR": "maybe",
+}
+
+
+def error_result(
+    code: str, *, retryable: bool | None = None, retry_after_seconds: int | None = None
+) -> types.CallToolResult:
     if code not in _error_codes():
         raise ValueError("unknown error code")
+    if retry_after_seconds is not None and retry_after_seconds < 0:
+        raise ValueError("retry_after_seconds must be non-negative")
+    row = RETRYABILITY[code]
     body = {
         "ok": False,
         "error": {
             "code": code,
             "message": _FIXED_MESSAGE,
-            "retryable": False,
-            "retry_after_seconds": None,
+            "retryable": row == "yes" or (row == "maybe" and bool(retryable)),
+            "retry_after_seconds": retry_after_seconds,
         },
     }
     emit_event("error", code)

@@ -267,6 +267,36 @@ def _cmd_rotate(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_daemon(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from telegram_mcp.runtime.daemon import DaemonConfig, DaemonError, run_daemon
+
+    test_dc = None
+    if args.test_dc:
+        try:
+            dc, ip, port = args.test_dc.split(":")
+            test_dc = (int(dc), ip, int(port))
+        except ValueError:
+            return _fail("--test-dc must be DC:IP:PORT.", EXIT_USAGE)
+    config = DaemonConfig(
+        runtime_dir=Path(args.runtime_dir),
+        state_dir=Path(args.state_dir),
+        key_dir=Path(args.store_dir),
+        api_id=args.api_id,
+        test_dc=test_dc,
+        port=args.port,
+        admin_group=args.admin_group,
+    )
+    try:
+        asyncio.run(run_daemon(config))
+    except DaemonError as exc:
+        return _fail(f"{exc}.", EXIT_FAILURE)
+    except KeyboardInterrupt:
+        pass
+    return EXIT_OK
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="telegram-mcp")
     # dest="verb": the admin subcommand owns the name "command".
@@ -313,6 +343,14 @@ def _build_parser() -> argparse.ArgumentParser:
     rotate.add_argument("spki")
     rotate.add_argument("--store-dir", required=True)
 
+    daemon = sub.add_parser("daemon", help="run the Telegram daemon in the foreground")
+    daemon.add_argument("--runtime-dir", required=True)
+    daemon.add_argument("--state-dir", required=True)
+    daemon.add_argument("--store-dir", required=True)
+    daemon.add_argument("--api-id", type=int, default=None)
+    daemon.add_argument("--test-dc", default=None)
+    daemon.add_argument("--port", type=int, default=8766)
+    daemon.add_argument("--admin-group", default=None, help="production: telegram-mcp-admin")
     return parser
 
 
@@ -326,6 +364,7 @@ _COMMANDS = {
     "keys": _cmd_keys,
     "pair": _cmd_pair,
     "rotate": _cmd_rotate,
+    "daemon": _cmd_daemon,
 }
 
 

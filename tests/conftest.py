@@ -49,15 +49,26 @@ def pytest_addoption(parser):
         default=False,
         help="run tests that mutate or interrogate this host (macOS, admin rights)",
     )
+    parser.addoption(
+        "--run-telegram-testdc",
+        action="store_true",
+        default=False,
+        help="run tests against Telegram's test DC (needs TG_TESTDC_* and the Keychain item)",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
-    if config.getoption("--run-platform-gated"):
-        return
-    skip = pytest.mark.skip(reason="needs --run-platform-gated (host-mutating)")
-    for item in items:
-        if "platform_gated" in item.keywords:
-            item.add_marker(skip)
+    gates = (
+        ("--run-platform-gated", "platform_gated", "needs --run-platform-gated (host-mutating)"),
+        ("--run-telegram-testdc", "telegram_testdc", "needs --run-telegram-testdc (network)"),
+    )
+    for option, marker, reason in gates:
+        if config.getoption(option):
+            continue
+        skip = pytest.mark.skip(reason=reason)
+        for item in items:
+            if marker in item.keywords:
+                item.add_marker(skip)
 
 
 SOURCE = Path("agent/consent-agent.swift")

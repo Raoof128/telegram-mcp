@@ -23,6 +23,12 @@ __all__ = ["project_handlers"]
 _SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,31}\Z")
 _EGRESS = ("metadata_only", "excerpt", "full_text")
 _MODES = ("allowlist", "all_cloud_chats")
+# Spec §9.8: display strings must not spoof the trusted prompt. Bidi
+# embedding/override/isolate controls, LRM/RLM, the Arabic letter mark and
+# line/paragraph separators are refused. ZWNJ (U+200C) stays: Persian needs it.
+PROMPT_UNSAFE: frozenset[int] = frozenset(
+    {0x200E, 0x200F, 0x061C, 0x2028, 0x2029, *range(0x202A, 0x202F), *range(0x2066, 0x206A)}
+)
 
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -43,6 +49,8 @@ def _display_name(value: Any) -> str:
         raise ValueError("display_name must be 1-80 characters")
     if any(ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F for c in value):
         raise ValueError("display_name must not contain control characters")
+    if any(ord(c) in PROMPT_UNSAFE for c in value):
+        raise ValueError("display_name must not contain bidi or line-separator controls")
     return value
 
 

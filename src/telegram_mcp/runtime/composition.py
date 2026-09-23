@@ -20,6 +20,7 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from telegram_mcp.consent.admin_approval import AdminApprover
 from telegram_mcp.consent.broker import ConsentBroker
 from telegram_mcp.consent.prompter import Prompter
 from telegram_mcp.disclosure.budget import BudgetLedger
@@ -28,8 +29,11 @@ from telegram_mcp.disclosure.keys import current_verification_key, publish_verif
 from telegram_mcp.disclosure.seams import CoordinatorAuthority, CoordinatorConsent
 from telegram_mcp.http_guards import DEFAULT_LIMITS, RateLimiter
 from telegram_mcp.ipc.admin import AdminRouter
+from telegram_mcp.ipc.handlers.auth import auth_handlers
+from telegram_mcp.ipc.handlers.clients import client_handlers
 from telegram_mcp.ipc.handlers.leases import auth_headers_handler
 from telegram_mcp.ipc.handlers.projects import project_handlers
+from telegram_mcp.ipc.handlers.scope import scope_handlers
 from telegram_mcp.ipc.leases import LeaseError, verify_lease
 from telegram_mcp.ipc.rendezvous import serve_rendezvous
 from telegram_mcp.keys.store import key_id, load_key, read_lease_seed, set_store_dir
@@ -38,10 +42,13 @@ from telegram_mcp.runtime.ingress import create_ingress_app
 from telegram_mcp.sensitive_dispatch import SensitiveDispatcher
 from telegram_mcp.storage.authority_view import load_security
 from telegram_mcp.storage.db import bind_cursor_store
+from telegram_mcp.telegram.discovery import DiscoveryStore
 from telegram_mcp.telegram.metadata import MetadataReadAdapter
+from telegram_mcp.telegram.reads import TelegramReads
 from telegram_mcp.telegram.service import RoutedRetrieval
+from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
 
-__all__ = ["RuntimeServices", "build_runtime", "serve_consent"]
+__all__ = ["RuntimeServices", "build_runtime", "build_telegram", "serve_consent"]
 
 
 @dataclass
@@ -52,6 +59,7 @@ class RuntimeServices:
     prompter: Prompter
     broker: ConsentBroker
     runtime_id: bytes
+    approver: AdminApprover
 
 
 class _Seeds:
@@ -99,6 +107,7 @@ def build_runtime(
     presence_verifier: Callable[[Any], bool] | None = None,
     limits: Mapping[str, int] | None = None,
     clock: Callable[[], float] = time.time,
+    telegram: Any = None,
 ) -> RuntimeServices:
     set_store_dir(key_dir)
     privacy_key = load_key("privacy-key")
@@ -116,6 +125,7 @@ def build_runtime(
         cursor_store=bind_cursor_store(conn),
         runtime_id=runtime_id,
         clock=clock,
+        telegram_gate=lambda: "AUTH_REQUIRED" if telegram is None else telegram.readiness(),
     )
     coordinator = DisclosureCoordinator(
         conn,
@@ -128,12 +138,21 @@ def build_runtime(
         consent=CoordinatorConsent(broker, prompter),
     )
     metadata = MetadataReadAdapter(mint_cursor=authority.mint_catalogue_cursor)
-    routed = RoutedRetrieval(
-        {
-            "telegram_list_projects": metadata.list_projects,
-            "telegram_resolve_project": metadata.resolve_project,
-        }
-    )
+    routes: dict[str, Any] = {
+        "telegram_list_projects": metadata.list_projects,
+        "telegram_resolve_project": metadata.resolve_project,
+    }
+    if telegram is not None:
+        reads = TelegramReads(telegram, conn, mint_cursor=authority.mint_project_cursor)
+        routes.update(
+            {
+                "telegram_list_chats": reads.list_chats,
+                "telegram_resolve_peer": reads.resolve_peer,
+                "telegram_get_messages": reads.get_messages,
+                "telegram_get_unread": reads.get_unread,
+            }
+        )
+    routed = RoutedRetrieval(routes)
     dispatcher = SensitiveDispatcher(functools.partial(coordinator.disclose, adapter=routed))
     seeds = _Seeds(key_dir)
 
@@ -159,19 +178,44 @@ def build_runtime(
         limiter=RateLimiter(limits or DEFAULT_LIMITS),
         status_key=_disclosure_public(conn),
     )
-    handlers = {
+    approver = AdminApprover(broker, prompter, privacy_key=privacy_key, conn=conn)
+    handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
         **project_handlers(conn),
+        **client_handlers(conn, key_dir=key_dir),
         "auth headers": auth_headers_handler(
             conn, seed_for=seeds.get, runtime_id=runtime_id, clock=clock
         ),
     }
+    if telegram is not None:
+        handlers.update(auth_handlers(conn, telegram))
+        handlers.update(scope_handlers(conn, telegram, DiscoveryStore()))
     return RuntimeServices(
         ingress_app=app,
-        admin_router=AdminRouter(handlers, presence_verifier=presence_verifier),
+        admin_router=AdminRouter(
+            handlers,
+            presence_verifier=presence_verifier,
+            request_verifier=None if presence_verifier is not None else approver.verify,
+        ),
         coordinator=coordinator,
         prompter=prompter,
         broker=broker,
         runtime_id=runtime_id,
+        approver=approver,
+    )
+
+
+def build_telegram(
+    *,
+    api_id: int,
+    session_dir: Path,
+    test_dc: tuple[int, str, int] | None,
+    api_hash: str,
+    client_factory: Callable[..., Any] | None = None,
+) -> TelethonSession:
+    return TelethonSession(
+        TelegramConfig(api_id, session_dir, test_dc),
+        api_hash=api_hash,
+        client_factory=client_factory,
     )
 
 
