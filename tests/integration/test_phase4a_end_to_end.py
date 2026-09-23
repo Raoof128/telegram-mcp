@@ -42,6 +42,7 @@ class Agent:
 
     def __init__(self, signer, mode="approve"):
         self.signer, self.mode, self.prompts, self.before_approve = signer, mode, 0, None
+        self.delay = 0.0
 
     async def run(self, reader, writer):
         while True:
@@ -54,6 +55,8 @@ class Agent:
                 self.before_approve()
             if self.mode == "silent":
                 continue
+            if self.delay:
+                await asyncio.sleep(self.delay)
             challenge = base64.urlsafe_b64decode(
                 frame["challenge"] + "=" * (-len(frame["challenge"]) % 4)
             )
@@ -312,3 +315,35 @@ async def test_the_other_seven_tools_still_refuse_honestly(world):
     body = await call(world, CODEX, "telegram_list_chats", {"project_ref": world["ops"]})
     assert body["error"]["code"] == "POLICY_UNCONFIGURED"
     assert world["agent"].prompts == 0
+
+
+async def test_a_client_that_disconnects_mid_prompt_invalidates_its_challenge(world):
+    # Spec §9.8: if the originating MCP request is cancelled/disconnected before
+    # consent is consumed, the challenge MUST be invalidated.
+    world["agent"].delay = 1.5
+    token = mint_lease(
+        seed=world["seeds"][CODEX], client=CODEX, epoch=1, now=int(time.time()), runtime_id=RUNTIME
+    )
+    params = {
+        "name": "telegram_list_projects",
+        "arguments": {},
+        "_meta": {PROTOCOL_VERSION_META_KEY: "2026-07-28", CLIENT_CAPABILITIES_META_KEY: {}},
+    }
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Mcp-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "telegram_list_projects",
+        "Accept": "application/json, text/event-stream",
+    }
+    async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{world['port']}", timeout=0.5) as http:
+        with pytest.raises(httpx.TimeoutException):
+            await http.post(
+                "/mcp",
+                headers=headers,
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params},
+            )
+    await asyncio.sleep(0.3)
+    assert world["services"].broker.pending_count() == 0, "challenge outlived its request"
+    await asyncio.sleep(2.0)  # the operator's approval lands after the client left
+    assert counts(world["conn"]) == (0, 0, 0)

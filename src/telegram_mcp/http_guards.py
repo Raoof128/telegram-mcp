@@ -9,6 +9,7 @@ which check failed.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import math
 import time
@@ -201,6 +202,36 @@ def duplicate_key_preflight(
                 return {"type": "http.request", "body": body, "more_body": False}
             return {"type": "http.disconnect"}
 
-        await app(scope, replay, send)
+        await _run_until_disconnect(app(scope, replay, send), receive)
 
     return middleware
+
+
+async def _run_until_disconnect(call: Any, receive: Any) -> None:
+    """Run the app, cancelling it if the client disconnects first.
+
+    Spec §9.8: a consent challenge MUST be invalidated when its originating
+    request is cancelled or disconnected. The body is already buffered and
+    replayed, so the real ``receive`` is free to watch for
+    ``http.disconnect``. Cancelling the app runs the coordinator's
+    cancellation path, which invalidates the pending challenge and releases
+    any reservation. In stateless JSON mode the SDK never does this itself.
+    """
+    task = asyncio.ensure_future(call)
+
+    async def watch() -> None:
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                task.cancel()
+                return
+
+    watcher = asyncio.ensure_future(watch())
+    try:
+        await task
+    except asyncio.CancelledError:
+        if not watcher.done() or not task.cancelled():
+            raise  # we were cancelled from outside, not by a disconnect
+    finally:
+        watcher.cancel()
+        await asyncio.gather(watcher, return_exceptions=True)
