@@ -16,8 +16,24 @@ PACKAGE = "telegram_mcp"
 ADAPTER = SRC / "telegram" / "telethon_adapter.py"
 COMPOSITION = SRC / "runtime" / "composition.py"
 
-# The reviewed RPC allowlist per sub-phase (design §3.3, §4.1-§4.2). 4a: none.
-REVIEWED_RPCS: frozenset[str] = frozenset()
+# Design §3.3, as <module>.<Request>: the reviewer's copy, deliberately not
+# imported from the adapter, so a change to one without the other fails here.
+REVIEWED_RPCS: frozenset[str] = frozenset(
+    {
+        "messages.GetDialogsRequest",
+        "messages.GetPeerDialogsRequest",
+        "messages.GetHistoryRequest",
+        "messages.GetMessagesRequest",
+        "channels.GetMessagesRequest",
+        "users.GetUsersRequest",
+        "updates.GetStateRequest",
+        "auth.SendCodeRequest",
+        "auth.SignInRequest",
+        "account.GetPasswordRequest",
+        "auth.CheckPasswordRequest",
+        "help.GetConfigRequest",
+    }
+)
 
 PROHIBITED = {
     "send_message",
@@ -37,8 +53,27 @@ PROHIBITED = {
     "ReadReactionsRequest",
     "GetMessagesViewsRequest",
     "SearchGlobalRequest",
+    "send_code_request",
+    "sign_in",
+    "is_user_authorized",
+    "get_me",
+    "iter_dialogs",
+    "get_dialogs",
+    "log_out",
+    "LogOutRequest",
+    "ResendCodeRequest",
+    "ResolveUsernameRequest",
+    "GetChannelsRequest",
+    "get_entity",
+    "UpdatePasswordSettingsRequest",
+    "ConfirmPasswordEmailRequest",
+    "InitTakeoutSessionRequest",
 }
-CONCRETE_BACKENDS = {"telegram_mcp.telegram.metadata", "telegram_mcp.telegram.telethon_adapter"}
+CONCRETE_BACKENDS = {
+    "telegram_mcp.telegram.metadata",
+    "telegram_mcp.telegram.telethon_adapter",
+    "telegram_mcp.telegram.reads",
+}
 
 
 def _modules():
@@ -76,14 +111,67 @@ def test_only_the_adapter_imports_telethon():
     assert offenders == []
 
 
+def _aliases(tree: ast.AST) -> dict[str, str]:
+    """Local name -> fully qualified name, for every import in the module."""
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                out[alias.asname or alias.name.split(".")[0]] = (
+                    alias.name if alias.asname else alias.name.split(".")[0]
+                )
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                out[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return out
+
+
+def _qualified_references(tree: ast.AST) -> set[str]:
+    """Every dotted name, resolved through the module's import aliases."""
+    aliases = _aliases(tree)
+    found: set[str] = set(aliases.values())
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        parts: list[str] = []
+        cursor: ast.AST = node
+        while isinstance(cursor, ast.Attribute):
+            parts.append(cursor.attr)
+            cursor = cursor.value
+        if isinstance(cursor, ast.Name) and cursor.id in aliases:
+            found.add(".".join([aliases[cursor.id], *reversed(parts)]))
+    return found
+
+
+FUNCTIONS = "telethon.tl.functions."
+
+
 def test_every_rpc_reference_is_reviewed():
     referenced = {
-        name.rsplit(".", 1)[-1]
+        name.removeprefix(FUNCTIONS)
         for _path, tree in _modules()
-        for name in _imports(tree)
-        if name.startswith("telethon.tl.functions.")
+        for name in _qualified_references(tree)
+        if name.startswith(FUNCTIONS) and name.count(".") == 4  # functions.<module>.<Request>
     }
-    assert referenced <= REVIEWED_RPCS
+    assert referenced, "the guard sees no RPC at all: it is not reading the adapter"
+    assert referenced <= REVIEWED_RPCS, referenced - REVIEWED_RPCS
+
+
+def test_the_guard_resolves_aliases():
+    tree = ast.parse(
+        "from telethon.tl import functions as f\n"
+        "import telethon.tl.functions.messages as m\n"
+        "f.messages.SendMessageRequest\nm.ReadHistoryRequest\n"
+    )
+    names = _qualified_references(tree)
+    assert "telethon.tl.functions.messages.SendMessageRequest" in names
+    assert "telethon.tl.functions.messages.ReadHistoryRequest" in names
+
+
+def test_the_adapter_declares_the_reviewed_set():
+    from telegram_mcp.telegram.telethon_adapter import REVIEWED_REQUESTS
+
+    assert REVIEWED_REQUESTS == REVIEWED_RPCS
 
 
 def test_no_prohibited_symbol_appears_in_src():

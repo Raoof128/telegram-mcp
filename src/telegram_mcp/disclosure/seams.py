@@ -211,8 +211,10 @@ class CoordinatorAuthority:
         cursor_store: CursorStore,
         runtime_id: bytes,
         clock: Callable[[], float] = time.time,
+        telegram_gate: Callable[[], str | None] = lambda: None,
     ) -> None:
         self._conn = conn
+        self._telegram_gate = telegram_gate
         self._privacy_key = privacy_key
         self._cursor_key = cursor_key
         self._cursors = cursor_store
@@ -399,6 +401,9 @@ class CoordinatorAuthority:
         principal = request.principal
         if principal.account_id is None or principal.account_ref is None:
             raise AuthorityRefusal("POLICY_UNCONFIGURED")
+        gated = self._telegram_gate()
+        if gated is not None:
+            raise AuthorityRefusal(gated)  # before consent: never prompt for a read that cannot run
         security_epoch, locked = load_security(self._conn)
         if locked:
             raise AuthorityRefusal("SECURITY_LOCKED")
