@@ -278,3 +278,15 @@
   - Re-package the signed agent bundle with the renderer fix.
   - The merge decision (owner).
   - No production claim.
+- **Scope:** Phase-4b final whole-branch review and its fix pass, on branch `phase-4b`.
+- **Summary:** This was a self-review, because the owner's rule is no subagents: the code-reviewer checklist over the whole branch diff, plus executed probes. The shipped daemon CLI fails closed when unpaired, before it creates state or reads the Keychain.
+
+  One Important finding was fixed test first. `_call_reviewed` carried an `isinstance(self._client, _GatewayClient)` branch that existed only for injected test clients, which breaks the "no test-only flags in production paths" rule. Charging is now uniform: the session always charges its own request and marks it pre-charged, and the client charges anything else.
+
+  Five minors are deferred to the owner and listed in the ledger.
+- **Files changed:** `src/telegram_mcp/telegram/telethon_adapter.py`, `tests/unit/test_gateway_client.py`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** the new source guard went red, then green. Full gate: pytest 862 passed, 10 skipped; smoke 49/49; formal 624/624; ruff, format and mypy clean; build OK.
+- **Follow-ups:**
+  - The owner decides the merge and push; a self-review is weaker than a fresh reviewer.
+  - Owner-run: the Test DC run, the Touch ID test, and the installed-host boundary check.
+  - Re-package the signed agent bundle.
