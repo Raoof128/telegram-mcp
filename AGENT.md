@@ -201,3 +201,28 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
 - **Files changed:** `docs/superpowers/plans/2026-09-23-telegram-mcp-phase-4b-adapter-and-tools.md` (new), `docs/superpowers/specs/2026-09-23-telegram-mcp-phase-4-design.md` (revision 3), `AGENT.md`, `CHANGELOG.md`.
 - **Verification:** Scratch dry run: the new tests for Tasks 4–17 passed; the full suite showed 770 passed, and its failures were only those expected from unapplied Tasks 1–2 and the unrebuilt Swift agent. Telethon 1.45.0 signatures were read from the installed package. `main` suite unchanged.
 - **Follow-ups:** An owner-requested simurgh gauntlet of this plan next, then execution inline (no subagents). The owner must create the Keychain item, and supply the `api_id` and Test DC IP for the opt-in Test DC run. No Telegram access, no production claim.
+
+### 2026-09-23 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Simurgh gauntlet of the Phase-4b plan, revision 1 → revision 2. Plan only; no product code on `main`.
+- **Summary:** Applied the whole plan to a scratch copy of `main`, including the Swift renderer, the recorder and the smoke rows, and attacked it by execution. Eight defects were fixed in the plan text:
+  - The plan's code failed its own commit gate: 7 ruff and 6 mypy errors.
+  - Literal bidi and invisible characters were embedded in the plan's code (a Trojan-Source hazard).
+  - A deleted message in a full history page silently ended pagination.
+  - An unreachable Telegram at start crashed the daemon and took the admin socket with it.
+  - An unauthorised session still reached a Touch ID prompt.
+  - `auth logout-local` left the auth key in the client's memory. Proven against real Telethon: the next connect would sign back in.
+  - The smoke pinned the admin-router order that the plan changes.
+  - The Swift instruction invited deleting the `isInvisible` line.
+
+  Five residuals are recorded as owner rulings in the plan's gauntlet record.
+- **Files changed:** `docs/superpowers/plans/2026-09-23-telegram-mcp-phase-4b-adapter-and-tools.md`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification (scratch copy, fully applied):**
+  - `pytest tests`: 825 passed, 8 skipped.
+  - join gate: 16 passed, 1 skipped.
+  - smoke: 49/49.
+  - ruff check and format: clean.
+  - mypy: clean over 85 files.
+  - Each defect was shown failing by a probe before its fix.
+  - `main` suite unchanged (706 passed, 8 skipped).
+- **Follow-ups:** Owner review of revision 2 and the five residual rulings. Then inline execution. The Test DC run stays owner-only (needs the Keychain item, `api_id` and the Test DC IP).
