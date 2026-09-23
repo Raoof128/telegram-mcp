@@ -671,7 +671,8 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
                         "lock status": lambda args: {
                             "locked": False,
                             "security_epoch": state.get("security_epoch", 1),
-                        }
+                        },
+                        "lock": lambda args: {"locked": True},
                     },
                     presence_verifier=lambda proof: proof == {"method": "smoke"},
                     control_handlers={"stop": lambda args: seen.append("stop") or {"ok": 1}},
@@ -697,7 +698,9 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
                             {"cmd": "lock", "args": {"presence": {"method": "smoke"}}}
                         )
                     )
-                    assert allowed["code"] == "NOT_AVAILABLE_IN_PHASE", allowed
+                    assert allowed["ok"] is True, allowed
+                    unrouted = await call(encode_json_frame({"cmd": "project rename"}))
+                    assert unrouted["code"] == "NOT_AVAILABLE_IN_PHASE", unrouted
                     unknown = await call(encode_json_frame({"cmd": "drop everything"}))
                     assert unknown["code"] == "UNKNOWN_COMMAND", unknown
                     duplicate = await call(b'{"cmd": "lock status", "cmd": "lock"}')
