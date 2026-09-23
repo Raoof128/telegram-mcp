@@ -66,8 +66,8 @@ DEFAULT_DIALOGS = [
 ]
 
 
-@pytest.fixture
-async def world(tmp_path):
+async def make_reads_world(tmp_path):
+    """Shared by the 4b and 4c read tests (a plain helper, so importing it is lint-clean)."""
     provision_missing(tmp_path / "keys", phases=(2, 3))
     conn = open_db(tmp_path / "meta.db")
     seed_authority_rows(conn)
@@ -97,6 +97,11 @@ async def world(tmp_path):
         return request.validated_args, authority.snapshot(tool, request)
 
     return conn, fake, reads, snap, refs
+
+
+@pytest.fixture
+async def world(tmp_path):
+    return await make_reads_world(tmp_path)
 
 
 async def test_list_chats_is_the_project_newest_first_without_archived(world):
