@@ -1,0 +1,70 @@
+# tests/unit/test_exposure_and_display.py
+"""Exposure snapshot digest and the five-field consent display (§9.8 step 6)."""
+
+import pytest
+
+from telegram_mcp.consent.display import ACTION_DISPLAY, build_display
+from telegram_mcp.disclosure.budget import GLOBAL, PROJECT, BucketKey, Usage
+from telegram_mcp.disclosure.exposure import exposure_digest, exposure_snapshot
+from telegram_mcp.disclosure.measure import RECORD_ELEMENT
+
+G = BucketKey(1, GLOBAL, "a" * 64)
+P = BucketKey(1, PROJECT, "b" * 64)
+
+
+def test_snapshot_is_order_independent_and_names_every_bucket():
+    one = exposure_snapshot("normal", {G: Usage(3, 300), P: Usage(2, 200)})
+    two = exposure_snapshot("normal", {P: Usage(2, 200), G: Usage(3, 300)})
+    assert one == two
+    assert [b["kind"] for b in one["buckets"]] == [GLOBAL, PROJECT]
+    assert one["schema"] == "tg-mcp-exposure-snapshot/v1" and one["mode"] == "projected"
+
+
+def test_digest_moves_with_quantity_and_with_tier():
+    base = exposure_digest("normal", {G: Usage(3, 300)})
+    assert exposure_digest("normal", {G: Usage(3, 301)}) != base
+    assert exposure_digest("elevated", {G: Usage(3, 300)}) != base
+    assert len(base) == 64
+
+
+def test_every_sensitive_tool_has_an_action_label():
+    assert set(ACTION_DISPLAY) == set(RECORD_ELEMENT)
+
+
+def test_display_shows_egress_and_current_and_projected_budget():
+    display = build_display(
+        tool_name="telegram_list_projects",
+        client_kind="codex_local",
+        project_names=[],
+        peer_name=None,
+        egress_level="metadata_only",
+        tier="elevated",
+        current=Usage(1200, 90_000),
+        projected=Usage(1210, 91_000),
+    )
+    assert set(display) == {
+        "action_display",
+        "client_display",
+        "peer_display",
+        "project_display",
+        "risk_class",
+    }
+    assert display["client_display"] == "Codex"
+    assert "metadata_only" in display["risk_class"]
+    assert "1200" in display["risk_class"] and "1210" in display["risk_class"]
+    assert "ELEVATED" in display["risk_class"]
+    assert len(display["risk_class"]) <= 160
+
+
+def test_unknown_client_kind_is_refused():
+    with pytest.raises(ValueError):
+        build_display(
+            tool_name="telegram_list_projects",
+            client_kind="curl",
+            project_names=[],
+            peer_name=None,
+            egress_level="metadata_only",
+            tier="normal",
+            current=Usage(0, 0),
+            projected=Usage(1, 10),
+        )
