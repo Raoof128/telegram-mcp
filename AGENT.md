@@ -361,3 +361,19 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
   - Deferred minors: the conservative ten-page check; the exposure test's in-place `_rehome`; the candidate-universe digest.
   - Next: Phase 5 per the roadmap.
   - No production claim until Gates A–R pass for the exact artifact.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase 5 design (operator controls, retention and recovery). Design only; no code.
+- **Summary:** Brainstormed Phase 5 with the owner in four reviewed sections and wrote `docs/superpowers/specs/2026-09-24-telegram-mcp-phase-5-design.md` revision 1.
+  - **Decomposition:** 5a inspect surface and one policy engine; 5b lifecycle, key rotation, retention, recovery; 5c backup, import, runbooks.
+  - **Decisions:** in-tree age-v1 (X25519 subset) on `cryptography`; purges both scheduled and manual; `auth.LogOutRequest` as the single admin-only RPC; seven rotatable key purposes (principal refused); SAVEPOINT dry-run for simulate/diff/import; the recovery identity is used in daemon memory and never stored.
+  - **Review:** 24 findings folded in and checked against the spec and the code.
+  - **Self-review defect:** the draft sent up to 4 MiB in one admin frame against the 64 KiB codec cap (`ipc/framing.py:31`); replaced by chunked transfer.
+  - **Shipped defect found:** `telegram/telethon_adapter.py:131-138` maps `UserDeactivated*` to `SESSION_REVOKED`; it should be `ACCOUNT_UNAVAILABLE`. Fixed in 5b.
+- **Files changed:** `docs/superpowers/specs/2026-09-24-telegram-mcp-phase-5-design.md`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** Every design claim that cites code was checked by `grep`/`sed` at `9eec78e`: handler transactions, `PRESENCE_GATED` (31 names), the class filter location, the `accounts` / `mcp_clients` schema, the `ADMIN_EVENTS` vocabulary, the key store layout, the frame cap, and spec line 1310. Placeholder scan clean. No tests run (no code changed).
+- **Follow-ups:**
+  - The owner's line-by-line gauntlet of the design.
+  - Then writing-plans for 5a.
+  - No production claim.

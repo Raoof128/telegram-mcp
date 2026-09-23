@@ -355,3 +355,13 @@
   - Deferred minors: the conservative ten-page check; the exposure test's in-place `_rehome`; the candidate-universe digest.
   - Next: Phase 5 per the roadmap.
   - No production claim until Gates A–R pass for the exact artifact.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase 5 design written.
+- **Summary:** Revision 1 of the Phase 5 design (5a inspect surface and policy engine, 5b lifecycle/rotation/retention/recovery, 5c backup/import/runbooks). It carries 9 decisions and 25 review findings. The findings include a shipped error-mapping defect (`UserDeactivated*` reported as `SESSION_REVOKED`) queued for 5b.
+- **Files changed:** `docs/superpowers/specs/2026-09-24-telegram-mcp-phase-5-design.md`, `AGENT.md`, this file.
+- **Verification:** The design's code citations were checked at `9eec78e`. No code changed.
+- **Follow-ups:**
+  - The owner's gauntlet of the design, then the 5a plan.
+  - No production claim.
