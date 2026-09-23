@@ -34,7 +34,7 @@ from telegram_mcp.authority.cursors import (
     project_scope_digest,
     scope_entries_from_view,
 )
-from telegram_mcp.authority.policy import AuthorityRequest, Denial, evaluate
+from telegram_mcp.authority.policy import AuthorityRequest, Denial, evaluate, readable_members
 from telegram_mcp.consent.broker import ConsentBroker, ConsentError, ConsumedChallenge
 from telegram_mcp.consent.challenge import display_digest, jcs_dumps
 from telegram_mcp.consent.display import build_display
@@ -44,6 +44,7 @@ from telegram_mcp.disclosure.budget import GLOBAL, PROJECT, BucketKey, Usage, su
 from telegram_mcp.disclosure.coordinator import AuthorityRefusal, ConsentRefusal
 from telegram_mcp.disclosure.egress import transform_record
 from telegram_mcp.disclosure.exposure import exposure_digest
+from telegram_mcp.disclosure.search_authority import SEARCH_TOOLS, SearchAuthority, SearchSnapshot
 from telegram_mcp.runtime.identity import PrincipalContext
 from telegram_mcp.storage.authority_view import (
     load_owner_scope,
@@ -74,11 +75,14 @@ PROJECT_TOOLS = frozenset(
         "telegram_resolve_peer",
         "telegram_get_messages",
         "telegram_get_unread",
+        "telegram_get_context",
     }
 )
-SERVED_TOOLS = CATALOGUE_TOOLS | PROJECT_TOOLS
+SERVED_TOOLS = CATALOGUE_TOOLS | PROJECT_TOOLS | SEARCH_TOOLS
 # Design §3.8: only these two contracts let a record carry origin_project_refs.
-_PROJECT_BUCKET_TOOLS = frozenset({"telegram_list_chats", "telegram_get_messages"})
+_PROJECT_BUCKET_TOOLS = frozenset(
+    {"telegram_list_chats", "telegram_get_messages", "telegram_get_context"}
+)
 _REQUEST_DOMAIN = b"telegram-mcp-request/v1\0"
 # The longest match_kind value in E.12, used by the catalogue upper bound.
 _LONGEST_MATCH_KIND = "substring_display_name"
@@ -186,6 +190,7 @@ class ProjectSnapshot:
     peer_ref: str | None = None
     peer_identity: str | None = None
     peer_name: str | None = None
+    anchor_message_id: int | None = None  # get_context only; never leaves the daemon
     state: Mapping[str, Any] = field(default_factory=dict)
     project_count: int = 1
     partial: bool = False
@@ -220,6 +225,19 @@ class CoordinatorAuthority:
         self._cursors = cursor_store
         self._runtime_id = runtime_id
         self._clock = clock
+        self._search = SearchAuthority(
+            conn,
+            privacy_key=privacy_key,
+            cursor_key=cursor_key,
+            cursor_store=cursor_store,
+            runtime_id=runtime_id,
+            clock=clock,
+            telegram_gate=lambda: self._telegram_gate(),
+            presenter=self._presenter,
+            owner_scope=lambda principal_id, account_id: OwnerScope(
+                *load_owner_scope(conn, principal_id=principal_id, account_id=account_id)
+            ),
+        )
 
     # -- step 1 -------------------------------------------------------------
 
@@ -276,6 +294,8 @@ class CoordinatorAuthority:
     def snapshot(
         self, tool_name: str, request: FrozenRequest
     ) -> CatalogueSnapshot | ProjectSnapshot:
+        if tool_name in SEARCH_TOOLS:
+            return self._search.snapshot(tool_name, request)  # type: ignore[return-value]
         if tool_name in PROJECT_TOOLS:
             return self._project_snapshot(tool_name, request)
         principal = request.principal
@@ -384,18 +404,7 @@ class CoordinatorAuthority:
 
     @staticmethod
     def _readable(view: Any, client_ref: str, project_ref: str) -> frozenset[str]:
-        """Members that pass every layer for ``read``: owner mode, deny, membership."""
-        return frozenset(
-            identity
-            for identity in view.memberships.get(project_ref, frozenset())
-            if not isinstance(
-                evaluate(
-                    view,
-                    AuthorityRequest("read", client_ref, (project_ref,), peer_identity=identity),
-                ),
-                Denial,
-            )
-        )
+        return readable_members(view, client_ref, project_ref)
 
     def _project_snapshot(self, tool_name: str, request: FrozenRequest) -> ProjectSnapshot:
         principal = request.principal
@@ -431,6 +440,20 @@ class CoordinatorAuthority:
                 raise AuthorityRefusal("NOT_ACCESSIBLE")
             peer_ref, peer_identity = row.peer_ref, row.identity
             peer_name = clamp(row.display_name, NAME_MAX)[0]
+        anchor_message_id = None
+        if tool_name == "telegram_get_context":
+            # §20.4: a historical ref resolves to its canonical peer, which must
+            # pass *current* owner policy and membership; the ref grants nothing.
+            refs = RefStore(self._conn, account_id=principal.account_id)
+            located = refs.message_by_ref(args["message_ref"])
+            row = refs.peer_by_row(located[0]) if located is not None else None
+            if located is None or row is None:
+                raise AuthorityRefusal("REF_NOT_FOUND")
+            if row.identity not in readable:
+                raise AuthorityRefusal("NOT_ACCESSIBLE")
+            peer_ref, peer_identity = row.peer_ref, row.identity
+            peer_name = clamp(row.display_name, NAME_MAX)[0]
+            anchor_message_id = located[1]
         state: dict[str, Any] = {}
         cursor = args.get("cursor")
         if cursor is not None:
@@ -481,13 +504,23 @@ class CoordinatorAuthority:
                     account_id=principal.account_id,
                 )
             ),
-            limit=int(args["limit"]),
+            limit=(
+                int(args["before"]) + int(args["after"]) + 1
+                if tool_name == "telegram_get_context"
+                else int(args["limit"])
+            ),
             tool_name=tool_name,
             peer_ref=peer_ref,
             peer_identity=peer_identity,
             peer_name=peer_name,
+            anchor_message_id=anchor_message_id,
             state=state,
         )
+
+    def mint_search_cursor(
+        self, snapshot: SearchSnapshot, arguments: Mapping[str, Any], state: Mapping[str, Any]
+    ) -> str:
+        return self._search.mint_cursor(snapshot, arguments, state)
 
     def mint_project_cursor(
         self, snapshot: ProjectSnapshot, arguments: Mapping[str, Any], state: Mapping[str, Any]
@@ -554,6 +587,8 @@ class CoordinatorAuthority:
         longer than its counterpart here, and the longest ``match_kind`` is
         assumed for each. So the bound holds for both tools, for any page.
         """
+        if isinstance(snapshot, SearchSnapshot):
+            return self._search.worst_case_buckets(snapshot)
         if isinstance(snapshot, ProjectSnapshot):
             records, total, project_bytes = worst_case(
                 tool_name,
@@ -584,6 +619,8 @@ class CoordinatorAuthority:
     # -- step 8 -------------------------------------------------------------
 
     def revalidate(self, snapshot: CatalogueSnapshot | ProjectSnapshot) -> str | None:
+        if isinstance(snapshot, SearchSnapshot):
+            return self._search.revalidate(snapshot)
         if isinstance(snapshot, ProjectSnapshot):
             return self._revalidate_project(snapshot)
         security_epoch, locked = load_security(self._conn)
@@ -608,6 +645,8 @@ class CoordinatorAuthority:
     # -- step 9 -------------------------------------------------------------
 
     def apply_egress(self, raw: Mapping[str, Any], snapshot: Any) -> dict[str, Any]:
+        if isinstance(snapshot, SearchSnapshot):
+            return self._search.apply_egress(raw, snapshot)
         out = dict(raw)
         if isinstance(snapshot, ProjectSnapshot) and "messages" in out:
             out["messages"] = [

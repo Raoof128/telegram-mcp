@@ -101,3 +101,39 @@ def seed_project_world(conn) -> dict[str, str]:
             )
         conn.commit()  # RefStore opens BEGIN IMMEDIATE: no implicit transaction may be open
     return out
+
+
+BETA_REF = "tpr_" + "b" * 26
+
+
+def seed_second_project(conn) -> None:
+    """Project Beta: channel:7 shared with Alpha, plus Bob. Both grants allow cross search.
+
+    Alpha is full_text; Beta is metadata_only, so a record from the shared
+    channel must come out as metadata only (spec §23B.2 intersection).
+    """
+    now = "2026-09-23T00:00:00Z"
+    conn.execute(
+        "INSERT INTO projects (account_id, project_ref, slug, display_name, enabled,"
+        " project_epoch, created_at, updated_at) VALUES (1, ?, 'beta', 'Beta', 1, 1, ?, ?)",
+        (BETA_REF, now, now),
+    )
+    conn.execute("UPDATE client_projects SET can_cross_search = 1")
+    conn.execute(
+        "INSERT INTO client_projects (client_id, project_id, can_read, can_cross_search,"
+        " egress_level, excerpt_max_codepoints, created_at, updated_at)"
+        " VALUES (1, 2, 1, 1, 'metadata_only', NULL, ?, ?)",
+        (now, now),
+    )
+    for identity in ("channel:7", "user:101"):
+        peer_type, _, raw = identity.partition(":")
+        row = conn.execute(
+            "SELECT id FROM peers WHERE telegram_peer_type = ? AND telegram_peer_id = ?",
+            (peer_type, int(raw)),
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO project_peers (project_id, peer_id, membership_kind, created_at,"
+            " updated_at) VALUES (2, ?, 'shared', ?, ?)",
+            (row[0], now, now),
+        )
+    conn.commit()

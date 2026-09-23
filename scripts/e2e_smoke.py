@@ -1358,8 +1358,8 @@ def phase4a_catalogue(ledger: Ledger) -> None:
 
     def others_refuse():
         out = drive()
-        assert out["other"]["error"]["code"] == "POLICY_UNCONFIGURED", out["other"]
-        return "telegram_get_context -> POLICY_UNCONFIGURED"
+        assert out["other"]["error"]["code"] == "AUTH_REQUIRED", out["other"]
+        return "telegram_get_context without a session -> AUTH_REQUIRED, no prompt"
 
     def demo_still_refuses():
         from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
@@ -1390,7 +1390,7 @@ def phase4a_catalogue(ledger: Ledger) -> None:
 
     ledger.run(area, "catalogue success through ingress + real agent", real_success)
     ledger.run(area, "bad bearers are 401, byte-identical", bad_bearers)
-    ledger.run(area, "4c tools still refuse", others_refuse)
+    ledger.run(area, "Telegram tools refuse without a session", others_refuse)
     ledger.run(area, "demo server still has no sensitive route", demo_still_refuses)
 
 
