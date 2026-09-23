@@ -184,3 +184,15 @@ def test_non_datetime_format_failure_is_invalid_argument():
     with pytest.raises(ArgumentError) as exc:
         validate_arguments(contract, {"host": "not a host name!!"})
     assert exc.value.code == "INVALID_ARGUMENT"
+
+
+def test_a_lowercase_rfc3339_range_is_valid():
+    """RFC 3339 §5.6 allows lowercase t/z; the range check must parse them too."""
+    c = load_contracts()["telegram_search_messages"]
+    args = {
+        "project_ref": TPR,
+        "query": "q",
+        "since": "2026-09-22t00:00:00z",
+        "until": "2026-09-22T01:00:00z",
+    }
+    assert validate_arguments(c, args)["until"] == "2026-09-22T01:00:00z"
