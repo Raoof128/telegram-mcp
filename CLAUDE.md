@@ -6,13 +6,16 @@ consent and accountable disclosure. The frozen product specification is
 (SHA-256 `36b67f488415f2ab1c44b8d906de7f192fbe0dc562a2aeac76938b24c4a61b0a`);
 it controls wherever anything else is silent.
 
-**Where the work stands:** Phase 1 (synthetic protocol foundation) and Phase 2
-(privileged runtime, identity, consent, authority, storage, IPC, and the Swift
-consent agent) are complete and qualified. Phase 3 (disclosure receipts,
-exposure budgets, proofs, audit chain and external anchor) is complete and
-qualified against the fake adapter. The coordinator commits real receipts,
-ledger rows and audit events, but **no tool slice calls it yet** — that is
-Phase 4 — so the nine sensitive tools still return `POLICY_UNCONFIGURED`.
+**Where the work stands:** Phases 1–3 are complete and qualified (synthetic
+protocol, privileged runtime and consent, disclosure receipts, budgets, audit
+chain and anchor). **Phase 4a is complete:** `telegram_list_projects` and
+`telegram_resolve_project` succeed for real through the authenticated
+loopback ingress (`runtime/ingress.py`), a daemon-delivered consent prompt
+(`consent/prompter.py`), live SQLite authority and the Phase-3 coordinator,
+with receipts that verify persisted and offline. `runtime/composition.py` is
+the only wiring point. The other seven sensitive tools still return
+`POLICY_UNCONFIGURED`; identity rows are seeded until 4b's login creates the
+account. Evidence: `docs/verification/phase-4.md`.
 Nothing here has ever touched Telegram.
 
 ## Non-negotiables
@@ -40,8 +43,8 @@ Nothing here has ever touched Telegram.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 626 passed, 7 skipped
-uv run python scripts/e2e_smoke.py                # 41 checks, end to end
+uv run pytest -q                                  # 704 passed, 8 skipped
+uv run python scripts/e2e_smoke.py                # 45 checks, end to end
 uv run pytest tests/formal -q -s                  # 624 states, 18 assertions
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
