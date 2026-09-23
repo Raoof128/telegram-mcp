@@ -599,6 +599,26 @@ prompt as elevated.
 four tools refuse at step 2 with `AUTH_REQUIRED` (or `SESSION_REVOKED` after a
 revocation), before any consent prompt.
 
+**The adapter owns the wire (revision 4; refines §3.1 and §3.3).** Telethon's
+login and status helpers are never used, because in 1.45.0 they retry
+(`AuthRestartError`), send the prohibited `auth.ResendCode` when a code hash is
+cached, and pull `updates.GetDifference` on login. The adapter's own
+`_call` sends each request once, with no retry, sleep, flood cache or hidden
+migrate RPC, and only within the current operation's allowlist and work
+budget:
+
+- `admin.login`: `auth.SendCode`, `auth.SignIn`, `account.GetPassword`,
+  `auth.CheckPassword`, and `help.GetConfig` for one explicit, budgeted DC switch;
+- `admin.status`: `updates.GetState`, `users.GetUsers(self)`;
+- `admin.discover`: `messages.GetDialogs`;
+- `mcp.retrieval`: `messages.GetPeerDialogs`, `messages.GetHistory`,
+  `messages.GetMessages`, `channels.GetMessages`.
+
+`updates.GetDifference` is no longer sent in any phase. Admin approvals bind
+keyed digests of the secret arguments into the signed request, and each
+approval token is bound to its exact request. Retryability comes only from
+§27.1.
+
 ## 4. Phase 4c — context, both searches, coverage, qualification
 
 ### 4.1 `get_context`

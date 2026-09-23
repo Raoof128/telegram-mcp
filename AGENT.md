@@ -226,3 +226,24 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
   - Each defect was shown failing by a probe before its fix.
   - `main` suite unchanged (706 passed, 8 skipped).
 - **Follow-ups:** Owner review of revision 2 and the five residual rulings. Then inline execution. The Test DC run stays owner-only (needs the Keychain item, `api_id` and the Test DC IP).
+
+### 2026-09-23 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase-4b plan revision 4, fixing an external gauntlet's eight findings. Plan and design only; no product code on `main`.
+- **Summary:** Each finding was verified before any change: all eight held against the pinned Telethon source, the plan and the spec. The verification found more. `send_code_request` sends the prohibited `auth.ResendCodeRequest` when a code hash is cached, and Telethon's `_call` sleeps and sends hidden RPCs.
+  - **Wire (G-1, G-2):** the adapter now owns the wire. `_GatewayClient._call` sends one request per call, with no retry or sleep, under a per-operation allowlist and work budget. Login is raw reviewed requests, and the executor is private.
+  - **Admin approvals (G-3):** they now bind keyed secret digests, and tokens are bound to their exact request.
+  - **Pagination (G-4):** keyset with constant state; the 1,024-chat silent stop is gone.
+  - **Retryability (G-5):** `results.RETRYABILITY` is §27.1 verbatim and the only registry.
+  - **Witness (G-6):** widened to DM and group markers, channel views and unread counts.
+  - **Daemon (G-7):** a production-shape admin-socket mode.
+  - **Estimator (G-8):** a seeded adversarial invariant proves the reservation dominates Phase 3's exact measurement; a control run shows it bites.
+- **Files changed:** `docs/superpowers/plans/2026-09-23-telegram-mcp-phase-4b-adapter-and-tools.md`, `docs/superpowers/specs/2026-09-23-telegram-mcp-phase-4-design.md`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification (whole plan applied to a scratch copy of `main`):**
+  - pytest: 847 passed, 10 skipped
+  - smoke: 49/49
+  - join gate: 16 passed, 1 skipped
+  - ruff, format and mypy: clean
+  - session-file ignores: checked in the real repository
+  - `main` suite unchanged.
+- **Follow-ups:** Execute revision 4 inline, per the owner. The Test DC run and the installed-host boundary check remain owner-run.

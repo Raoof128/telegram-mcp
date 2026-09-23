@@ -110,6 +110,43 @@ It also exposed three pins that the new behaviour must move: the 4a end-to-end t
 
 The Test DC harness (Task 18) was **not** run: it needs the owner's credentials.
 
+## Revision 4 record (external gauntlet, 2026-09-23)
+
+An external review found eight defects in revision 3. Each claim was verified against the artifact before any change: the pinned Telethon 1.45.0 source, the plan's code, and spec §27.1, §38.3 and §9.4. All eight held. The verification also found more:
+- `send_code_request` sends the **prohibited `auth.ResendCodeRequest`** whenever a phone-code hash is cached;
+- `_call` sleeps 2 s on server errors;
+- on `PHONE_MIGRATE`, `_call` sends a hidden `updates.GetState`.
+
+| # | Finding | Fix | Proof |
+|---|---|---|---|
+| G-1 | Telethon login helpers retry, resend and pull updates outside the budget. | Task 8: login is raw reviewed requests. `_GatewayClient._call` sends each request once: no retry, sleep, flood cache or hidden migrate RPC. `PHONE_MIGRATE` gets one explicit, budgeted DC switch. | `test_auth_restart_is_one_request_and_no_retry`, `test_auth_restart_is_raised_once_with_no_hidden_sleep` (a real `TelegramClient` with a fake sender), `test_login_is_raw_reviewed_requests_and_never_resends`, `test_phone_migrate_is_one_explicit_budgeted_switch` |
+| G-2 | A public raw-request seam on the adapter. | The executor is private (`_call_reviewed`). Per-operation allowlists are enforced in the session **and** in `_GatewayClient._call`; every request is charged. | `test_an_unreviewed_request_is_refused_before_the_client`, `test_outside_an_operation_or_its_allowlist_nothing_is_sent` |
+| G-3 | Secrets were redacted *out of* the signed request, and tokens were not request-bound. | Task 3: keyed secret digests enter `canonical_request_hmac`. Tokens are bound to (command, digest, expiry), and the router's `request_verifier` recomputes the digest before running. | `test_a_token_is_bound_to_the_exact_request_including_secrets`, `test_a_token_expires`, a swapped-args replay refused |
+| G-4 | `seen_ids` silently ended paging past 1,024 chats. | Task 16: an anchored keyset cursor of constant size. | `test_a_large_project_pages_to_the_end_with_constant_state` (1,100 chats, each exactly once), `test_a_chat_that_moves_mid_walk_is_not_repeated` |
+| G-5 | A private retryable set forked from §27.1. | Task 14: `results.RETRYABILITY` is §27.1 verbatim and the only registry. A caller resolves only "maybe" codes. | `test_retryability_is_the_frozen_table_and_nothing_else` |
+| G-6 | One DM marker was presented as the whole §38.3 invariant. | Task 18: DM and group read markers plus the channel view counter (independent, from B), and A's unread counts (labelled not independent). The channel joins the project. | Owner-run (Test DC) |
+| G-7 | The development daemon's uid-only socket could be mistaken for production conformity. | Task 17: a production-shape mode (`admin_group`): installer-owned directory never created or chmodded, a `0660` group socket, group-verified peers. A host check is platform-gated. | `test_production_shape_socket_is_group_0660_and_needs_the_installer` |
+| G-8 | The estimator was proven only against hand-built records. | Task 16: a seeded adversarial invariant over the real reads, egress, `_split_sidecar` and `buckets_for`, for every tool and egress mode. | `test_actual_charge_never_exceeds_the_reservation` (4/4). Control: weakening `_W` fails all 4. |
+
+The re-dry-run of revision 4 on a scratch copy of `main` also found and fixed:
+- literal invisible characters re-entering the plan through a patch (now escaped; the plan has zero Cf/Zl/Zp);
+- the start-up `GetState` probe leaking into the smoke's "only reviewed RPCs" row (the fixture now clears it);
+- two tests counting calls across `start()`;
+- a wrong challenge key in a new test (`canonical_request_hmac`);
+- an ambiguous `conftest` instruction.
+
+The final state of that copy:
+
+| Check | Result |
+|---|---|
+| pytest | 847 passed, 10 skipped |
+| smoke | 49/49 |
+| join gate | 16 passed, 1 skipped |
+| ruff, format, mypy | clean |
+| session-file ignores | verified in the real repository |
+
+Not executable here: the Test DC harness (G-6, owner credentials) and the installed-host boundary check (G-7, platform-gated).
+
 ## Gauntlet record (plan revision 2, 2026-09-23)
 
 The whole plan was applied to the scratch copy: every task, including the Swift renderer and Task 18's recorder and smoke rows. It was then attacked by execution. The final state of that copy:
@@ -424,7 +461,11 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 ### Task 3: Live admin approvals over the prompter
 
-Design §3.8 (the owner's decision): gated admin commands are approved by Touch ID through the same broker and prompter, on the unchanged wire with sentinel refs. The router is untouched in spirit: `serve_admin` asks the approver, and the approver's one-time token becomes the request's `presence` proof, which the router's existing verifier accepts exactly once. Handlers may now be `async` (login and discovery need the network).
+Design §3.8 (the owner's decision): gated admin commands are approved by Touch ID through the same broker and prompter, on the unchanged wire with sentinel refs. `serve_admin` asks the approver, and the approver's one-time token becomes the request's `presence` proof. Handlers may now be `async` (login and discovery need the network).
+
+**Revision 4 (gauntlet G-3): an approval is bound to the exact request.** The raw phone number, code and password never enter a challenge, display or log. But each one enters the signed `request_hmac` as a **keyed digest**, `HMAC(privacy_key, "telegram-mcp-admin-secret/v1\0" || name || "\0" || value)`, so two requests that differ only in a secret sign different challenges.
+
+The token is bound to `(command, request digest, expiry)`. The router's new `request_verifier` recomputes the digest from the request it is about to run, and consumes the token only on an exact match. A token approved for code `11111` cannot run code `22222`, and a token for `project create` cannot run `project rename`.
 
 **Files:**
 - Create: `src/telegram_mcp/consent/admin_approval.py`
@@ -436,7 +477,11 @@ Design §3.8 (the owner's decision): gated admin commands are approved by Touch 
 - Produces:
   - `SECRET_ARGS = frozenset({"phone", "code", "password"})`
   - `sentinel_ref(privacy_key: bytes, label: str, prefix: str) -> str`
-  - `AdminApprover(broker, prompter, *, privacy_key, conn, wait_s=45.0)` with `async approve(command: str, args: Mapping) -> str | None` (a one-time token on approval) and `verify(proof: Any) -> bool` (consumes the token).
+  - `AdminApprover(broker, prompter, *, privacy_key, conn, wait_s=45.0, token_ttl_s=60.0, clock=time.monotonic)`, with:
+    - `request_digest(command, args) -> str` (secrets keyed-hashed; `presence` excluded)
+    - `async approve(command: str, args: Mapping) -> str | None` (a one-time token bound to the digest)
+    - `verify(proof: Any, command: str, args: Mapping) -> bool` (consumes the token; `True` only for the same command, the same digest, and before expiry)
+  - `AdminRouter(..., request_verifier: Callable[[Any, str, dict], bool] | None = None)`. When set, it is used for gated commands instead of `presence_verifier`, and receives the args without `presence`.
   - `AdminRouter.adispatch(request) -> dict` (awaits awaitable handler results; same codes as `dispatch`).
   - `serve_admin(..., approver: Callable[[str, dict], Awaitable[str | None]] | None = None)`.
 
@@ -515,8 +560,33 @@ async def test_an_approval_yields_a_one_time_token_and_keeps_secrets_out(tmp_pat
     assert signed["tool"] == "admin.auth_login" and signed["client"] == sentinel_ref(KEY, "operator", "tcl_")
     blob = json.dumps([signed, display])
     assert "22222" not in blob and "9996621234" not in blob
-    assert approver.verify({"token": token}) is True
-    assert approver.verify({"token": token}) is False  # exactly once
+    args = {"step": "code", "code": "22222", "phone": "9996621234"}
+    assert approver.verify({"token": token}, "auth login", args) is True
+    assert approver.verify({"token": token}, "auth login", args) is False  # exactly once
+    for t in tasks:
+        t.cancel()
+
+
+async def test_a_token_is_bound_to_the_exact_request_including_secrets(tmp_path):
+    approver, seen, tasks = await _world(tmp_path)
+    args = {"step": "code", "code": "11111", "phone": "9996621234"}
+    token = await approver.approve("auth login", args)
+    other = await approver.approve("auth login", {**args, "code": "22222"})
+    assert seen[0][0]["canonical_request_hmac"] != seen[1][0]["canonical_request_hmac"]  # secrets bind, hidden
+    assert approver.verify({"token": token}, "auth login", {**args, "code": "22222"}) is False
+    assert approver.verify({"token": token}, "auth login", args) is False  # consumed by the miss
+    assert approver.verify({"token": other}, "project rename", {"code": "22222"}) is False
+    for t in tasks:
+        t.cancel()
+
+
+async def test_a_token_expires(tmp_path):
+    approver, _seen, tasks = await _world(tmp_path)
+    now = [0.0]
+    approver._clock = lambda: now[0]
+    token = await approver.approve("project create", {"slug": "ops"})
+    now[0] = 61.0
+    assert approver.verify({"token": token}, "project create", {"slug": "ops"}) is False
     for t in tasks:
         t.cancel()
 
@@ -524,7 +594,7 @@ async def test_an_approval_yields_a_one_time_token_and_keeps_secrets_out(tmp_pat
 async def test_a_denial_yields_no_token(tmp_path):
     approver, _seen, tasks = await _world(tmp_path, approve=False)
     assert await approver.approve("project create", {"slug": "ops"}) is None
-    assert approver.verify({"token": "forged"}) is False
+    assert approver.verify({"token": "forged"}, "project create", {"slug": "ops"}) is False
     for t in tasks:
         t.cancel()
 
@@ -537,7 +607,10 @@ async def test_serve_admin_path_gates_through_the_approver(tmp_path):
         calls.append(args)
         return {"done": True}
 
-    router = AdminRouter({"project create": handler}, presence_verifier=approver.verify)
+    router = AdminRouter({"project create": handler}, request_verifier=approver.verify)
+    token = await approver.approve("project create", {"slug": "ops"})
+    swapped = await router.adispatch({"cmd": "project create", "args": {"slug": "evil", "presence": {"token": token}}})
+    assert swapped["code"] == "PRESENCE_REQUIRED"  # a token cannot carry a different request
     token = await approver.approve("project create", {"slug": "ops"})
     ok = await router.adispatch({"cmd": "project create", "args": {"slug": "ops", "presence": {"token": token}}})
     assert ok == {"ok": True, "data": {"done": True}}
@@ -576,7 +649,8 @@ import hashlib
 import hmac
 import secrets
 import sqlite3
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from telegram_mcp.authority.cursors import project_scope_digest
@@ -589,6 +663,7 @@ __all__ = ["SECRET_ARGS", "AdminApprover", "sentinel_ref"]
 
 SECRET_ARGS = frozenset({"phone", "code", "password"})
 _REQUEST_DOMAIN = b"telegram-mcp-admin-request/v1\0"
+_SECRET_DOMAIN = b"telegram-mcp-admin-secret/v1\0"
 _SENTINEL_DOMAIN = b"telegram-mcp-sentinel/v1\0"
 
 
@@ -607,13 +682,32 @@ class AdminApprover:
         privacy_key: bytes,
         conn: sqlite3.Connection,
         wait_s: float = 45.0,
+        token_ttl_s: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._broker = broker
         self._prompter = prompter
         self._key = privacy_key
         self._conn = conn
         self._wait_s = wait_s
-        self._tokens: set[str] = set()
+        self._ttl = token_ttl_s
+        self._clock = clock
+        self._tokens: dict[str, tuple[str, str, float]] = {}  # token -> (command, digest, expiry)
+
+    def request_digest(self, command: str, args: Mapping[str, Any]) -> str:
+        """Keyed digest of the exact request: secrets bind by keyed hash, never by value."""
+        bound: dict[str, Any] = {}
+        for name, value in args.items():
+            if name == "presence":
+                continue
+            if name in SECRET_ARGS:
+                raw = f"{name}\0{value}".encode()
+                bound[name] = "hmac:" + hmac.new(self._key, _SECRET_DOMAIN + raw, hashlib.sha256).hexdigest()
+            else:
+                bound[name] = value
+        return hmac.new(
+            self._key, _REQUEST_DOMAIN + jcs_dumps({"args": bound, "command": command}), hashlib.sha256
+        ).hexdigest()
 
     def _refs(self) -> tuple[str, str, int]:
         row = self._conn.execute(
@@ -630,10 +724,7 @@ class AdminApprover:
 
     async def approve(self, command: str, args: Mapping[str, Any]) -> str | None:
         tool = "admin." + command.replace(" ", "_").replace("-", "_")
-        public = {k: ("<secret>" if k in SECRET_ARGS else v) for k, v in args.items() if k != "presence"}
-        request_hmac = hmac.new(
-            self._key, _REQUEST_DOMAIN + jcs_dumps({"args": public, "command": command}), hashlib.sha256
-        ).hexdigest()
+        request_hmac = self.request_digest(command, args)
         principal, account, policy_epoch = self._refs()
         security_epoch, _locked = load_security(self._conn)
         display: dict[str, Any] = {
@@ -674,19 +765,40 @@ class AdminApprover:
             self._broker.invalidate(handle)
             raise
         token = secrets.token_urlsafe(24)
-        self._tokens.add(token)
+        self._tokens[token] = (command, request_hmac, self._clock() + self._ttl)
         return token
 
-    def verify(self, proof: Any) -> bool:
-        """Router presence verifier: accept each approval token exactly once."""
+    def verify(self, proof: Any, command: str, args: Mapping[str, Any]) -> bool:
+        """Consume a token; true only for the same command and exact request, unexpired."""
         token = proof.get("token") if isinstance(proof, dict) else None
-        if not isinstance(token, str) or token not in self._tokens:
+        bound = self._tokens.pop(token, None) if isinstance(token, str) else None
+        if bound is None:
             return False
-        self._tokens.discard(token)
-        return True
+        approved_command, approved_digest, expires = bound
+        return (
+            approved_command == command
+            and self._clock() < expires
+            and hmac.compare_digest(approved_digest, self.request_digest(command, args))
+        )
 ```
 
 - [ ] **Step 4: Add `adispatch` and the approver hook in `ipc/admin.py`**
+
+Give `AdminRouter.__init__` a keyword `request_verifier: Callable[[Any, str, dict[str, Any]], bool] | None = None`, stored as `self._request_verifier`. In `dispatch`, replace the presence check with:
+
+```python
+        if command in PRESENCE_GATED:
+            proof = args.get("presence")
+            bare = {k: v for k, v in args.items() if k != "presence"}
+            if self._request_verifier is not None:
+                verified = proof is not None and self._request_verifier(proof, command, bare)
+            else:
+                verified = proof is not None and self._presence is not None and self._presence(proof)
+            if not verified:
+                return self._error(PRESENCE_REQUIRED, "user presence is required")
+```
+
+Existing tests that pass `presence_verifier` keep their behaviour.
 
 Add to `AdminRouter` (after `dispatch`):
 
@@ -1546,39 +1658,65 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 8: The Telethon session core and error translation
+### Task 8: The Telethon session core — an owned MTProto boundary
 
-Spec §36, §9.3, §27.2; design §3.1–§3.3, §6.3. This is the only module that imports Telethon. It builds the client exactly as §36 requires, holds a per-account session lock, keeps the session directory at `0700` and its files at `0600`, and runs every request under a deadline, a work budget and a fair slot. It translates errors in two layers, and resolves `InputPeer`s only from the local entity cache.
+Spec §36, §9.3, §27.2, §28; design §3.1–§3.3, §6.3.
+
+This is the only module that imports Telethon. It builds the client exactly as §36 requires, holds a per-account session lock, keeps the session directory at `0700` and its files at `0600`, translates errors in two layers, and resolves `InputPeer`s only from the local entity cache.
+
+**Revision 4 (gauntlet G-1, G-2): the adapter owns the wire.**
+
+- **Telethon's helpers are never used.** The convenience login helpers hide work the gateway cannot budget. Verified in the pinned 1.45.0 source (`client/auth.py`, `client/users.py`):
+  - `send_code_request` recurses up to three times on `AuthRestartError`, and sends the prohibited `auth.ResendCodeRequest` whenever a phone-code hash is already cached;
+  - `sign_in` first calls `get_me()`, and its `_on_login` pulls `updates.GetDifference`, which brings message content into memory;
+  - `_call` sleeps 2 s on server errors, and on `PHONE_MIGRATE` issues a hidden `updates.GetState` before switching DC.
+
+  So this module never calls `send_code_request`, `sign_in`, `get_me`, `is_user_authorized` or `start`. Login is a state machine over **raw reviewed requests**.
+- **The client class owns `_call`.** `_GatewayClient` replaces Telethon's `_call`: one send, no retry loop, no flood cache, no sleep, no hidden migrate RPC. Every request — ours or any Telethon might ever issue through `_call` — must be in the allowlist of the **current operation** and is charged to that operation's `WorkBudget`, or it is refused before it reaches the sender.
+- **No raw-request surface is public.** The executor is private (`_call_reviewed`). Higher layers see only typed operations: `scan_dialogs`, `peer_dialogs`, `fetch_history` (Tasks 9 and 15), and the login and status methods here.
 
 **Files:**
 - Create: `src/telegram_mcp/telegram/errors.py` (no Telethon import)
-- Create: `src/telegram_mcp/telegram/telethon_adapter.py` (session core; Task 13–15 add the reads to the same module)
-- Test: `tests/telegram/__init__.py`, `tests/telegram/fake_client.py`, `tests/unit/test_telethon_session.py`
+- Create: `src/telegram_mcp/telegram/telethon_adapter.py` (Tasks 9 and 15 add reads to it)
+- Modify: `pyproject.toml` (mypy: Telethon ships no types)
+- Modify: `tests/security/test_demo_isolation.py`
+- Test: `tests/telegram/__init__.py`, `tests/telegram/fake_client.py`, `tests/unit/test_telethon_session.py`, `tests/unit/test_gateway_client.py`
 
 **Interfaces:**
 - Produces:
   - `telegram/errors.py`: `GatewayError(code: str, retry_after: int | None = None)`.
   - `telethon_adapter.py`:
-    - `REVIEWED_REQUESTS: frozenset[str]` (qualified names; see Task 16)
+    - `OPERATIONS: dict[str, frozenset[str]]`: the per-operation allowlists
+      - `admin.login`: `auth.SendCodeRequest`, `auth.SignInRequest`, `account.GetPasswordRequest`, `auth.CheckPasswordRequest`, `help.GetConfigRequest` (the explicit DC switch)
+      - `admin.status`: `updates.GetStateRequest`, `users.GetUsersRequest`
+      - `admin.discover`: `messages.GetDialogsRequest`
+      - `mcp.retrieval`: `messages.GetPeerDialogsRequest`, `messages.GetHistoryRequest`, `messages.GetMessagesRequest`, `channels.GetMessagesRequest`
+    - `REVIEWED_REQUESTS: frozenset[str]` (the union of `OPERATIONS`)
+    - `qualified(request) -> str` (`<module>.<Class>`; unwraps `Invoke*`; the one copy — the test recorder imports it)
     - `translate(exc: BaseException) -> GatewayError`
     - `TelegramConfig(api_id: int, session_dir: Path, test_dc: tuple[int, str, int] | None = None)`
     - `TelethonSession(config, *, api_hash: str, client_factory=None, scheduler: FairScheduler | None = None)` with:
-      - `async start()` (fails closed only on the session lock; an unreachable Telegram leaves it not ready), `async stop()` (disconnect only)
-      - `async reconnect(seconds=10.0) -> bool`, and `readiness() -> str | None`, which returns:
+      - `async start()` — fails closed only on the session lock. An unreachable Telegram leaves the session not ready; it does not crash.
+      - `async stop()` — disconnect only.
+      - `async reconnect(seconds=10.0) -> bool`
+      - `readiness() -> str | None`, which returns:
         - `SESSION_REVOKED` if Telegram revoked the authorisation;
         - `AUTH_REQUIRED` after a local logout or when unauthorised;
         - `TELEGRAM_UNAVAILABLE` when disconnected;
         - `None` when ready.
       - `.revoked`, `.connected`, `.authorized`, `.logged_out: bool`
       - `async is_authorized(deadline) -> bool`
-      - `async send_code(phone, deadline)`
+      - `async send_code(phone, deadline)` — one `auth.SendCode`, never a resend. A `PHONE_MIGRATE` is followed by one explicit, budgeted DC switch and a second send.
       - `async sign_in_code(phone, code, deadline) -> str` (`"authorized"` | `"password_needed"`)
-      - `async sign_in_password(password, deadline)`
-      - `async me(deadline) -> int` (the account's Telegram user id)
-      - `async logout_local()`
-      - `async call(request, *, client_ref, deadline, budget) -> Any`
+      - `async sign_in_password(password, deadline)` — `account.GetPassword`, then an SRP `auth.CheckPassword`.
+      - `async me(deadline) -> int` — `users.GetUsers([InputUserSelf])`.
+      - `async logout_local()` — closes and drops the client; the next operation builds a fresh one.
+      - `async _call_reviewed(request, *, operation, client_ref, deadline, budget) -> Any` (**private**; typed operations only)
       - `input_peer(peer_type, peer_id) -> Any`
       - `static identity_of(peer) -> tuple[str, int]`
+  - `tests/telegram/fake_client.py`:
+    - `FakeClient(script=None, *, authorized=True)`, which answers the raw login and status requests by default
+    - `srp_password() -> types.account.Password`, a valid SRP challenge built on Telethon's known-good 2048-bit prime, so 2FA runs offline
 
 - [ ] **Step 1: Write the fake client and the failing tests**
 
@@ -1590,15 +1728,41 @@ Spec §36, §9.3, §27.2; design §3.1–§3.3, §6.3. This is the only module t
 # tests/telegram/fake_client.py
 """A Telethon-shaped fake: real TL request objects in, scripted TL results out.
 
-It never touches the network. ``calls`` records every request class name, so
-tests can assert what was (and was not) sent.
+It never touches the network. ``calls`` records every request by its
+qualified name (the adapter's own ``qualified``), so tests assert what was,
+and was not, sent. Login and status requests have realistic defaults;
+``script`` overrides any of them.
 """
 
 from __future__ import annotations
 
+import inspect
+import re
 from typing import Any
 
 from telethon import errors, utils
+from telethon import password as srp
+from telethon.tl import types
+
+from telegram_mcp.telegram.telethon_adapter import qualified
+
+_ME = 4242
+
+
+def srp_password() -> types.account.Password:
+    """A valid 2FA challenge on Telethon's pinned known-good prime (g=3)."""
+    body = re.search(
+        r"good_prime = bytes\(\((.*?)\)\)", inspect.getsource(srp.check_prime_and_good), re.S
+    ).group(1)
+    prime = bytes(int(v, 16) for v in re.findall(r"0x[0-9A-Fa-f]{2}", body))
+    algo = types.PasswordKdfAlgoSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow(
+        salt1=b"s1" * 8, salt2=b"s2" * 8, g=3, p=prime
+    )
+    b_pub = pow(3, 123456789, int.from_bytes(prime, "big")).to_bytes(256, "big")
+    return types.account.Password(
+        new_algo=algo, new_secure_algo=types.SecurePasswordKdfAlgoUnknown(),
+        secure_random=b"\0" * 32, has_password=True, current_algo=algo, srp_B=b_pub, srp_id=42,
+    )
 
 
 class FakeSession:
@@ -1626,7 +1790,7 @@ class FakeClient:
         self.authorized = authorized
         self.connected = False
         self.logged_out = False
-        self.me_id = 4242
+        self.me_id = _ME
 
     async def connect(self) -> None:
         self.connected = True
@@ -1634,41 +1798,55 @@ class FakeClient:
     async def disconnect(self) -> None:
         self.connected = False
 
-    async def is_user_authorized(self) -> bool:
-        return self.authorized
-
-    async def send_code_request(self, phone: str) -> None:
-        self.calls.append("auth.SendCodeRequest")
-
-    async def sign_in(self, phone: str | None = None, code: str | None = None, *, password: str | None = None):
-        self.calls.append("auth.CheckPasswordRequest" if password else "auth.SignInRequest")
-        if code == "needs-2fa":
-            raise errors.SessionPasswordNeededError(request=None)
-        if code == "bad":
-            raise errors.PhoneCodeInvalidError(request=None)
-        self.authorized = True
-
-    async def get_me(self, input_peer: bool = False):
-        self.calls.append("users.GetUsersRequest")
-
-        class Me:
-            id = self.me_id
-
-        return Me()
-
     async def log_out(self) -> None:  # must never be called
         self.logged_out = True
 
+    async def _switch_dc(self, new_dc: int) -> None:
+        self.calls.append(f"switch_dc:{new_dc}")
+
+    def _default(self, name: str, request: Any) -> Any:
+        me = types.User(id=self.me_id, access_hash=1, is_self=True, first_name="A")
+        if name == "updates.GetStateRequest":
+            if not self.authorized:
+                raise errors.AuthKeyUnregisteredError(request=None)
+            return types.updates.State(pts=1, qts=0, date=None, seq=0, unread_count=0)
+        if name == "users.GetUsersRequest":
+            return [me]
+        if name == "auth.SendCodeRequest":
+            return types.auth.SentCode(
+                type=types.auth.SentCodeTypeApp(length=5), phone_code_hash="hash"
+            )
+        if name == "auth.SignInRequest":
+            if request.phone_code == "needs-2fa":
+                raise errors.SessionPasswordNeededError(request=None)
+            if request.phone_code == "bad":
+                raise errors.PhoneCodeInvalidError(request=None)
+            self.authorized = True
+            return types.auth.Authorization(user=me)
+        if name == "account.GetPasswordRequest":
+            return srp_password()
+        if name == "auth.CheckPasswordRequest":
+            self.authorized = True
+            return types.auth.Authorization(user=me)
+        return None
+
     async def __call__(self, request: Any) -> Any:
-        name = f"{type(request).__module__.rsplit('.', 1)[-1]}.{type(request).__name__}"
+        name = qualified(request)
         self.calls.append(name)
-        outcome = self.script.get(name)
-        if isinstance(outcome, BaseException):
-            raise outcome
-        if callable(outcome):
-            outcome = outcome(request)
-        # Telethon's _call feeds every result's users/chats to the session's
-        # entity cache; the fake does the same, so cache-only peers resolve.
+        if name in self.script:
+            outcome = self.script[name]
+            if isinstance(outcome, list) and outcome and isinstance(outcome[0], BaseException):
+                outcome = outcome.pop(0)  # a sequence of failures, then the default
+                if not self.script[name]:
+                    del self.script[name]
+            if isinstance(outcome, BaseException):
+                raise outcome
+            if callable(outcome):
+                outcome = outcome(request)
+        else:
+            outcome = self._default(name, request)
+        # Telethon's _call feeds every result's users/chats to the entity
+        # cache; the fake does the same, so cache-only peers resolve.
         for entity in [*getattr(outcome, "users", []), *getattr(outcome, "chats", [])]:
             self.session.remember(entity)
         return outcome
@@ -1676,7 +1854,7 @@ class FakeClient:
 
 ```python
 # tests/unit/test_telethon_session.py
-"""The Telethon session core: construction, lock, deadlines, errors, cache-only peers."""
+"""The session core: construction, lock, readiness, login state machine, errors."""
 
 import asyncio
 import os
@@ -1690,6 +1868,8 @@ from telegram_mcp.telegram.deadline import Deadline, WorkBudget
 from telegram_mcp.telegram.errors import GatewayError
 from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession, translate
 from tests.telegram.fake_client import FakeClient
+
+PHONE = "9996621234"
 
 
 def _session(tmp_path, client=None, **kw):
@@ -1708,6 +1888,10 @@ def _session(tmp_path, client=None, **kw):
     return session, fake, captured
 
 
+def _history():
+    return functions.messages.GetHistoryRequest(types.InputPeerEmpty(), 0, None, 0, 1, 0, 0, 0)
+
+
 async def test_the_client_is_built_exactly_as_section_36_requires(tmp_path):
     session, _fake, captured = _session(tmp_path)
     await session.start()
@@ -1717,8 +1901,7 @@ async def test_the_client_is_built_exactly_as_section_36_requires(tmp_path):
         "flood_sleep_threshold": 0,
         "raise_last_call_error": True,
     }
-    mode = stat.S_IMODE(os.stat(tmp_path / "session").st_mode)
-    assert mode == 0o700
+    assert stat.S_IMODE(os.stat(tmp_path / "session").st_mode) == 0o700
     await session.stop()
 
 
@@ -1748,6 +1931,8 @@ async def test_test_dc_is_applied_to_a_fresh_session(tmp_path):
         (errors.ChannelPrivateError(request=None), "NOT_ACCESSIBLE"),
         (errors.MsgIdInvalidError(request=None), "MESSAGE_NOT_FOUND"),
         (errors.ServerError(request=None, message="x", code=500), "TELEGRAM_UNAVAILABLE"),
+        (errors.AuthRestartError(request=None), "TELEGRAM_UNAVAILABLE"),
+        (errors.PhoneMigrateError(request=None, capture=4), "TELEGRAM_UNAVAILABLE"),
         (ConnectionError(), "TELEGRAM_UNAVAILABLE"),
         (errors.RPCError(request=None, message="WEIRD", code=400), "INTERNAL_ERROR"),
     ],
@@ -1759,20 +1944,36 @@ def test_errors_translate_specific_first(exc, code):
         assert translated.retry_after == 7
 
 
+async def test_an_unreviewed_request_is_refused_before_the_client(tmp_path):
+    session, fake, _c = _session(tmp_path)
+    await session.start()
+    fake.calls.clear()
+    read_ack = functions.messages.ReadHistoryRequest(types.InputPeerEmpty(), 0)
+    for request, operation in ((read_ack, "mcp.retrieval"), (_history(), "admin.discover")):
+        with pytest.raises(GatewayError) as exc:
+            await session._call_reviewed(
+                request, operation=operation, client_ref="c", deadline=Deadline(5), budget=WorkBudget()
+            )
+        assert exc.value.code == "INTERNAL_ERROR"
+    assert fake.calls == []  # neither reached the client
+
+
 async def test_a_revoked_session_latches_and_refuses_further_calls(tmp_path):
-    fake = FakeClient({"messages.GetDialogsRequest": errors.AuthKeyUnregisteredError(request=None)})
+    fake = FakeClient({"messages.GetHistoryRequest": errors.AuthKeyUnregisteredError(request=None)})
     session, _fake, _c = _session(tmp_path, client=fake)
     await session.start()
-    request = functions.messages.GetDialogsRequest(None, 0, types.InputPeerEmpty(), 1, 0)
     for _ in range(2):
         with pytest.raises(GatewayError) as exc:
-            await session.call(request, client_ref="c", deadline=Deadline(5), budget=WorkBudget())
+            await session._call_reviewed(
+                _history(), operation="mcp.retrieval", client_ref="c",
+                deadline=Deadline(5), budget=WorkBudget(),
+            )
         assert exc.value.code == "SESSION_REVOKED"
-    assert fake.calls.count("messages.GetDialogsRequest") == 1  # the second never reached Telegram
+    assert fake.calls.count("messages.GetHistoryRequest") == 1
 
 
 async def test_a_slow_request_hits_the_deadline(tmp_path):
-    fake = FakeClient({"messages.GetDialogsRequest": None})
+    fake = FakeClient()
     session, _f, _c = _session(tmp_path, client=fake)
     await session.start()
 
@@ -1781,9 +1982,9 @@ async def test_a_slow_request_hits_the_deadline(tmp_path):
 
     fake.__class__ = type("Slow", (FakeClient,), {"__call__": lambda self, r: hang(r)})
     with pytest.raises(GatewayError) as exc:
-        await session.call(
-            functions.messages.GetDialogsRequest(None, 0, types.InputPeerEmpty(), 1, 0),
-            client_ref="c", deadline=Deadline(0.1), budget=WorkBudget(),
+        await session._call_reviewed(
+            _history(), operation="mcp.retrieval", client_ref="c",
+            deadline=Deadline(0.1), budget=WorkBudget(),
         )
     assert exc.value.code == "DEADLINE_EXCEEDED"
 
@@ -1792,23 +1993,74 @@ async def test_the_work_budget_is_spent_per_request(tmp_path):
     session, _f, _c = _session(tmp_path)
     await session.start()
     budget = WorkBudget(max_rpcs=1)
-    request = functions.messages.GetDialogsRequest(None, 0, types.InputPeerEmpty(), 1, 0)
-    await session.call(request, client_ref="c", deadline=Deadline(5), budget=budget)
+    kw = {"operation": "mcp.retrieval", "client_ref": "c", "deadline": Deadline(5), "budget": budget}
+    await session._call_reviewed(_history(), **kw)
     with pytest.raises(GatewayError) as exc:
-        await session.call(request, client_ref="c", deadline=Deadline(5), budget=budget)
+        await session._call_reviewed(_history(), **kw)
     assert exc.value.code == "WORK_BUDGET_EXCEEDED"
 
 
 async def test_input_peers_come_only_from_the_cache(tmp_path):
     session, fake, _c = _session(tmp_path)
     await session.start()
-    user = types.User(id=42, access_hash=9, first_name="Ali")
-    fake.session.remember(user)
+    fake.calls.clear()
+    fake.session.remember(types.User(id=42, access_hash=9, first_name="Ali"))
     assert isinstance(session.input_peer("user", 42), types.InputPeerUser)
     with pytest.raises(GatewayError) as exc:
         session.input_peer("user", 43)
     assert exc.value.code == "NOT_ACCESSIBLE"
     assert fake.calls == []  # a cache miss never becomes a network lookup
+
+
+async def test_login_is_raw_reviewed_requests_and_never_resends(tmp_path):
+    fake = FakeClient(authorized=False)
+    session, _f, _c = _session(tmp_path, client=fake)
+    await session.start()
+    await session.send_code(PHONE, Deadline(5))
+    await session.send_code(PHONE, Deadline(5))  # the operator re-runs "start"
+    assert await session.sign_in_code(PHONE, "22222", Deadline(5)) == "authorized"
+    assert await session.me(Deadline(5)) == 4242
+    auth = [c for c in fake.calls if not c.startswith("updates.")]
+    assert auth == ["auth.SendCodeRequest", "auth.SendCodeRequest", "auth.SignInRequest",
+                    "users.GetUsersRequest"]
+    assert "auth.ResendCodeRequest" not in fake.calls
+    assert "updates.GetDifferenceRequest" not in fake.calls  # no content pulled at login
+    assert session.readiness() is None
+
+
+async def test_two_factor_login_runs_srp_offline(tmp_path):
+    fake = FakeClient(authorized=False)
+    session, _f, _c = _session(tmp_path, client=fake)
+    await session.start()
+    await session.send_code(PHONE, Deadline(5))
+    assert await session.sign_in_code(PHONE, "needs-2fa", Deadline(5)) == "password_needed"
+    await session.sign_in_password("hunter2", Deadline(5))
+    assert fake.calls[-2:] == ["account.GetPasswordRequest", "auth.CheckPasswordRequest"]
+    assert session.readiness() is None
+
+
+async def test_auth_restart_is_one_request_and_no_retry(tmp_path):
+    fake = FakeClient({"auth.SendCodeRequest": errors.AuthRestartError(request=None)},
+                      authorized=False)
+    session, _f, _c = _session(tmp_path, client=fake)
+    await session.start()
+    with pytest.raises(GatewayError) as exc:
+        await session.send_code(PHONE, Deadline(5))
+    assert exc.value.code == "TELEGRAM_UNAVAILABLE"
+    assert fake.calls.count("auth.SendCodeRequest") == 1
+
+
+async def test_phone_migrate_is_one_explicit_budgeted_switch(tmp_path):
+    fake = FakeClient(
+        {"auth.SendCodeRequest": [errors.PhoneMigrateError(request=None, capture=4)]},
+        authorized=False,
+    )
+    session, _f, _c = _session(tmp_path, client=fake)
+    await session.start()
+    await session.send_code(PHONE, Deadline(5))
+    assert [c for c in fake.calls if not c.startswith("updates.")] == [
+        "auth.SendCodeRequest", "switch_dc:4", "auth.SendCodeRequest"
+    ]
 
 
 async def test_logout_local_never_logs_out_and_removes_only_session_files(tmp_path):
@@ -1847,7 +2099,7 @@ async def test_an_unreachable_telegram_is_a_state_not_a_crash(tmp_path):
     await session.start()  # the lock is held; the link is not
     assert session.readiness() == "TELEGRAM_UNAVAILABLE"
     with pytest.raises(GatewayError) as exc:
-        await session.send_code("9996621234", Deadline(1))
+        await session.send_code(PHONE, Deadline(1))
     assert exc.value.code == "TELEGRAM_UNAVAILABLE"
 
 
@@ -1857,12 +2109,92 @@ async def test_an_unauthorised_session_is_not_ready(tmp_path):
     assert session.readiness() == "AUTH_REQUIRED"
 ```
 
-(`test_a_slow_request_hits_the_deadline` swaps the fake's class to one whose `__call__` hangs.)
+```python
+# tests/unit/test_gateway_client.py
+"""_GatewayClient against a real TelegramClient and a fake sender: the wire boundary."""
+
+import asyncio
+import time
+
+import pytest
+from telethon import errors
+from telethon.tl import functions, types
+
+from telegram_mcp.telegram.deadline import WorkBudget, WorkBudgetExceeded
+from telegram_mcp.telegram.telethon_adapter import _default_factory, _operation, qualified
+
+
+class FakeSender:
+    def __init__(self, outcome):
+        self.outcome, self.sent = outcome, []
+
+    def send(self, request, ordered=False):
+        self.sent.append(qualified(request))
+        future = asyncio.get_running_loop().create_future()
+        if isinstance(self.outcome, BaseException):
+            future.set_exception(self.outcome)
+        else:
+            future.set_result(self.outcome)
+        return future
+
+
+def _client(tmp_path, outcome):
+    client = _default_factory(str(tmp_path / "s"), 1, "0" * 32, receive_updates=False,
+                              request_retries=0, flood_sleep_threshold=0, raise_last_call_error=True)
+    client._sender = FakeSender(outcome)
+    return client
+
+
+def _history():
+    return functions.messages.GetHistoryRequest(types.InputPeerEmpty(), 0, None, 0, 1, 0, 0, 0)
+
+
+async def test_a_reviewed_request_is_sent_once_and_caches_entities(tmp_path):
+    client = _client(tmp_path, types.messages.Messages(
+        messages=[], topics=[], chats=[], users=[types.User(id=7, access_hash=1)]))
+    with _operation("mcp.retrieval", WorkBudget()):
+        await client(_history())
+    assert client._sender.sent == ["messages.GetHistoryRequest"]  # InvokeWithoutUpdates unwrapped
+    assert isinstance(client.session.get_input_entity(7), types.InputPeerUser)
+    client.session.close()
+
+
+async def test_outside_an_operation_or_its_allowlist_nothing_is_sent(tmp_path):
+    client = _client(tmp_path, None)
+    with pytest.raises(PermissionError):
+        await client(_history())  # no operation at all
+    with _operation("mcp.retrieval", WorkBudget()), pytest.raises(PermissionError):
+        await client(functions.messages.ReadHistoryRequest(types.InputPeerEmpty(), 0))
+    with _operation("mcp.retrieval", WorkBudget()), pytest.raises(PermissionError):
+        await client(functions.updates.GetDifferenceRequest(pts=1, date=None, qts=0))
+    assert client._sender.sent == []
+    client.session.close()
+
+
+async def test_auth_restart_is_raised_once_with_no_hidden_sleep(tmp_path):
+    client = _client(tmp_path, errors.AuthRestartError(request=None))
+    started = time.monotonic()
+    with _operation("admin.login", WorkBudget()), pytest.raises(errors.AuthRestartError):
+        await client(functions.auth.SendCodeRequest("9996621234", 1, "0" * 32, types.CodeSettings()))
+    assert time.monotonic() - started < 0.5  # Telethon's own _call would sleep 2 s here
+    assert client._sender.sent == ["auth.SendCodeRequest"]
+    client.session.close()
+
+
+async def test_every_request_is_charged_to_the_operation(tmp_path):
+    client = _client(tmp_path, types.messages.Messages(messages=[], topics=[], chats=[], users=[]))
+    with _operation("mcp.retrieval", WorkBudget(max_rpcs=1)):
+        await client(_history())
+        with pytest.raises(WorkBudgetExceeded):
+            await client(_history())
+    assert client._sender.sent == ["messages.GetHistoryRequest"]
+    client.session.close()
+```
 
 - [ ] **Step 2: Run them and watch them fail**
 
-Run: `uv run pytest tests/unit/test_telethon_session.py -q`
-Expected: `ModuleNotFoundError: No module named 'telegram_mcp.telegram.errors'`.
+Run: `uv run pytest tests/unit/test_telethon_session.py tests/unit/test_gateway_client.py -q`
+Expected: `ModuleNotFoundError: No module named 'telegram_mcp.telegram.telethon_adapter'`.
 
 - [ ] **Step 3: Implement `telegram/errors.py`**
 
@@ -1890,11 +2222,13 @@ class GatewayError(Exception):
 # src/telegram_mcp/telegram/telethon_adapter.py
 """The only module that imports Telethon (spec §36, §37; design §3.1-§3.3).
 
-An allowlisted capability surface, not a convenience wrapper: the client is
-built exactly as §36 requires; every request runs under a deadline, a work
-budget and a fair slot; errors translate to frozen codes; ``InputPeer``s
-come only from the local entity cache, so caller text never becomes a
-network lookup. Telethon objects never leave this module.
+An allowlisted capability surface, not a convenience wrapper. The gateway
+owns the MTProto boundary: ``_GatewayClient._call`` sends each request once,
+with no retry, sleep, flood cache or hidden migrate RPC, and only if the
+current operation's allowlist names it and its work budget pays for it.
+Telethon's login helpers are never used (they retry, resend and pull
+updates on their own). ``InputPeer``s come only from the local entity
+cache. Telethon objects never leave this module.
 """
 
 from __future__ import annotations
@@ -1904,13 +2238,15 @@ import contextlib
 import fcntl
 import os
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from telethon import TelegramClient, errors, utils
-from telethon.tl import types
+from telethon import password as srp
+from telethon.tl import functions, types
 
 from telegram_mcp.telegram.deadline import (
     Deadline,
@@ -1922,27 +2258,86 @@ from telegram_mcp.telegram.deadline import (
 from telegram_mcp.telegram.errors import GatewayError
 
 __all__ = [
+    "OPERATIONS",
     "REVIEWED_REQUESTS",
     "TelegramConfig",
     "TelethonSession",
+    "qualified",
     "translate",
 ]
 
-# Design §3.3, qualified as <module>.<RequestClass>. Every entry is classified
-# for side effects in docs/verification/telegram-rpc-review.md. Login requests
-# are sent by Telethon's helpers (send_code_request, sign_in), not built here.
-REVIEWED_REQUESTS: frozenset[str] = frozenset(
-    {
-        "messages.GetDialogsRequest",
-        "messages.GetPeerDialogsRequest",
-        "messages.GetHistoryRequest",
-        "messages.GetMessagesRequest",
-        "channels.GetMessagesRequest",
-        "users.GetUsersRequest",
-    }
-)
+# Design §3.3 as revised by the gauntlet: every request class the gateway may
+# put on the wire, per operation. Each is classified for side effects in
+# docs/verification/telegram-rpc-review.md. Nothing else is ever sent.
+OPERATIONS: dict[str, frozenset[str]] = {
+    "admin.login": frozenset(
+        {
+            "auth.SendCodeRequest",
+            "auth.SignInRequest",
+            "account.GetPasswordRequest",
+            "auth.CheckPasswordRequest",
+            "help.GetConfigRequest",  # the explicit, budgeted DC switch reads the DC list
+        }
+    ),
+    "admin.status": frozenset({"updates.GetStateRequest", "users.GetUsersRequest"}),
+    "admin.discover": frozenset({"messages.GetDialogsRequest"}),
+    "mcp.retrieval": frozenset(
+        {
+            "messages.GetPeerDialogsRequest",
+            "messages.GetHistoryRequest",
+            "messages.GetMessagesRequest",
+            "channels.GetMessagesRequest",
+        }
+    ),
+}
+REVIEWED_REQUESTS: frozenset[str] = frozenset().union(*OPERATIONS.values())
 
-_SESSION_NAME = "primary"
+
+def qualified(request: Any) -> str:
+    """``<module>.<Class>`` of a TL request, looking through ``Invoke*`` wrappers."""
+    while type(request).__name__.startswith("InvokeWith") and hasattr(request, "query"):
+        request = request.query
+    return f"{type(request).__module__.rsplit('.', 1)[-1]}.{type(request).__name__}"
+
+
+@dataclass
+class _Operation:
+    allowed: frozenset[str]
+    budget: WorkBudget
+
+
+_CURRENT: ContextVar[_Operation | None] = ContextVar("telegram_mcp_operation", default=None)
+
+
+@contextlib.contextmanager
+def _operation(name: str, budget: WorkBudget) -> Iterator[None]:
+    token = _CURRENT.set(_Operation(OPERATIONS[name], budget))
+    try:
+        yield
+    finally:
+        _CURRENT.reset(token)
+
+
+class _GatewayClient(TelegramClient):  # type: ignore[misc]
+    """Telethon's client with the gateway's own ``_call``: one send, reviewed, charged."""
+
+    async def _call(  # type: ignore[no-untyped-def]
+        self, sender, request, ordered=False, flood_sleep_threshold=None
+    ):
+        if isinstance(request, list):
+            raise PermissionError("batched requests are not reviewed")
+        current = _CURRENT.get()
+        name = qualified(request)
+        if current is None or name not in current.allowed:
+            raise PermissionError(f"unreviewed request: {name}")
+        current.budget.spend()
+        await request.resolve(self, utils)
+        wire = functions.InvokeWithoutUpdatesRequest(request) if self._no_updates else request
+        result = await sender.send(wire, ordered=ordered)
+        await utils.maybe_async(self.session.process_entities(result))
+        return result
+
+
 _REVOKED = (
     errors.AuthKeyUnregisteredError,
     errors.SessionRevokedError,
@@ -1958,13 +2353,15 @@ _NOT_ACCESSIBLE = (
     errors.PeerIdInvalidError,
 )
 _UNAVAILABLE = (
-    errors.ServerError,
+    errors.ServerError,  # includes AuthRestartError, TimedOutError, RpcCallFailError
     errors.TimedOutError,
     errors.InterdcCallErrorError,
     errors.RpcCallFailError,
+    errors.InvalidDCError,  # a migrate we did not handle explicitly
     ConnectionError,
     OSError,
 )
+_SESSION_NAME = "primary"
 
 
 def translate(exc: BaseException) -> GatewayError:
@@ -1975,6 +2372,8 @@ def translate(exc: BaseException) -> GatewayError:
         return GatewayError("DEADLINE_EXCEEDED")
     if isinstance(exc, WorkBudgetExceeded):
         return GatewayError("WORK_BUDGET_EXCEEDED")
+    if isinstance(exc, PermissionError):
+        return GatewayError("INTERNAL_ERROR")  # an unreviewed request was attempted
     if isinstance(exc, errors.FloodError):
         return GatewayError("FLOOD_WAIT", retry_after=int(getattr(exc, "seconds", 0)) or None)
     if isinstance(exc, _REVOKED):
@@ -1998,7 +2397,7 @@ class TelegramConfig:
 
 
 def _default_factory(path: str, api_id: int, api_hash: str, **kwargs: Any) -> Any:
-    return TelegramClient(path, api_id, api_hash, **kwargs)
+    return _GatewayClient(path, api_id, api_hash, **kwargs)
 
 
 class TelethonSession:
@@ -2016,6 +2415,7 @@ class TelethonSession:
         self._scheduler = scheduler or FairScheduler()
         self._client: Any = None
         self._lock_fd: int | None = None
+        self._code_hash: tuple[str, str] | None = None  # (phone, phone_code_hash), memory only
         self.revoked = False  # Telegram said the authorisation is gone
         self.connected = False
         self.authorized = False
@@ -2064,6 +2464,20 @@ class TelethonSession:
         await self.reconnect()
         self._pin_file_modes()
 
+    async def _probe_authorized(self, deadline: Deadline) -> bool:
+        """updates.GetState: any authorised request answers; an unauthorised key is refused."""
+        try:
+            await self._call_reviewed(
+                functions.updates.GetStateRequest(),
+                operation="admin.status", client_ref="operator",
+                deadline=deadline, budget=WorkBudget(max_rpcs=1),
+            )
+        except GatewayError as exc:
+            if exc.code in ("SESSION_REVOKED", "AUTH_REQUIRED"):
+                return False  # a fresh or logged-out key: unauthorised (a probe never latches)
+            raise
+        return True
+
     async def reconnect(self, seconds: float = 10.0) -> bool:
         """Connect (a fresh client after a local logout) and refresh authorisation."""
         if self._client is None:
@@ -2071,8 +2485,8 @@ class TelethonSession:
         try:
             async with asyncio.timeout(seconds):
                 await self._client.connect()
-                self.connected = True
-                self.authorized = bool(await self._client.is_user_authorized())
+            self.connected = True
+            self.authorized = await self._probe_authorized(Deadline(seconds))
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
         except BaseException as exc:  # noqa: BLE001 -- mapped to a frozen code
@@ -2104,53 +2518,131 @@ class TelethonSession:
             os.close(self._lock_fd)
             self._lock_fd = None
 
-    # -- authentication (admin plane) ---------------------------------------
+    # -- the one executor (private) ------------------------------------------
 
-    async def _guard(self, action: Callable[[Any], Any], deadline: Deadline) -> Any:
-        """Run one admin RPC helper; reconnect first if the link is down."""
-        if not self.connected and not await self.reconnect(max(0.1, deadline.remaining())):
-            raise GatewayError("TELEGRAM_UNAVAILABLE")
+    async def _call_reviewed(
+        self,
+        request: Any,
+        *,
+        operation: str,
+        client_ref: str,
+        deadline: Deadline,
+        budget: WorkBudget,
+        passthrough: tuple[type[BaseException], ...] = (errors.SessionPasswordNeededError,),
+    ) -> Any:
+        """Send one reviewed request for ``operation``. Refused before the client otherwise.
+
+        ``passthrough`` names Telegram errors a login step handles itself
+        (2FA needed, a phone migrate); everything else is translated.
+        """
+        if qualified(request) not in OPERATIONS[operation]:
+            raise GatewayError("INTERNAL_ERROR")  # a programming error, never a network call
+        if operation == "mcp.retrieval":
+            refused = self.readiness()
+            if refused is not None:
+                raise GatewayError(refused)
+        elif not self.connected and operation != "admin.status":
+            if not await self.reconnect(max(0.1, deadline.remaining())):
+                raise GatewayError("TELEGRAM_UNAVAILABLE")
+        if self._client is None:
+            raise GatewayError("AUTH_REQUIRED")
         try:
-            async with asyncio.timeout(deadline.remaining()):
-                return await action(self._client)
+            async with self._scheduler.slot(client_ref):
+                async with asyncio.timeout(deadline.remaining()):
+                    # The client's own _call spends the budget: one copy of the charge,
+                    # and it also covers anything the client might send on its own.
+                    with _operation(operation, budget):
+                        if not isinstance(self._client, _GatewayClient):
+                            budget.spend()  # an injected test client has no _call of ours
+                        return await self._client(request)
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
-        except errors.SessionPasswordNeededError:
+        except passthrough:
             raise
         except BaseException as exc:  # noqa: BLE001 -- mapped to a frozen code
             gateway = translate(exc)
-            if gateway.code == "SESSION_REVOKED":
+            if gateway.code == "SESSION_REVOKED" and operation != "admin.status":
                 self.revoked = True
             raise gateway from None
 
+    # -- login and status (admin plane): raw reviewed requests only -----------
+
+    async def _login(
+        self,
+        request: Any,
+        deadline: Deadline,
+        budget: WorkBudget,
+        passthrough: tuple[type[BaseException], ...] = (errors.SessionPasswordNeededError,),
+    ) -> Any:
+        return await self._call_reviewed(
+            request, operation="admin.login", client_ref="operator",
+            deadline=deadline, budget=budget, passthrough=passthrough,
+        )
+
     def _signed_in(self) -> None:
         self.revoked, self.logged_out, self.authorized = False, False, True
+        self._code_hash = None
         self._pin_file_modes()
 
     async def is_authorized(self, deadline: Deadline) -> bool:
-        return bool(await self._guard(lambda c: c.is_user_authorized(), deadline))
+        if not self.connected and not await self.reconnect(max(0.1, deadline.remaining())):
+            raise GatewayError("TELEGRAM_UNAVAILABLE")
+        self.authorized = await self._probe_authorized(deadline)
+        return self.authorized
 
     async def send_code(self, phone: str, deadline: Deadline) -> None:
-        await self._guard(lambda c: c.send_code_request(phone), deadline)
+        """One auth.SendCode, never a resend. One explicit, budgeted DC switch on a migrate."""
+        budget = WorkBudget(max_rpcs=4)
+        request = functions.auth.SendCodeRequest(
+            phone, self._config.api_id, self._api_hash, types.CodeSettings()
+        )
+        migrate = (errors.PhoneMigrateError, errors.NetworkMigrateError)
+        try:
+            sent = await self._login(request, deadline, budget, passthrough=migrate)
+        except migrate as exc:
+            try:
+                async with asyncio.timeout(deadline.remaining()):
+                    with _operation("admin.login", budget):
+                        await self._client._switch_dc(int(exc.new_dc))
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                raise
+            except BaseException as switch_failed:  # noqa: BLE001 -- mapped to a frozen code
+                raise translate(switch_failed) from None
+            sent = await self._login(request, deadline, budget)
+        self._code_hash = (phone, sent.phone_code_hash)
 
     async def sign_in_code(self, phone: str, code: str, deadline: Deadline) -> str:
+        if self._code_hash is None or self._code_hash[0] != phone:
+            raise GatewayError("AUTH_REQUIRED")  # no code was requested for this number
         try:
-            await self._guard(lambda c: c.sign_in(phone=phone, code=code), deadline)
+            result = await self._login(
+                functions.auth.SignInRequest(phone, self._code_hash[1], code),
+                deadline, WorkBudget(max_rpcs=1),
+            )
         except errors.SessionPasswordNeededError:
             return "password_needed"
+        if isinstance(result, types.auth.AuthorizationSignUpRequired):
+            raise GatewayError("AUTH_REQUIRED")  # third-party apps cannot sign up
         self._signed_in()
         return "authorized"
 
     async def sign_in_password(self, password: str, deadline: Deadline) -> None:
+        budget = WorkBudget(max_rpcs=2)
+        challenge = await self._login(functions.account.GetPasswordRequest(), deadline, budget)
         try:
-            await self._guard(lambda c: c.sign_in(password=password), deadline)
-        except errors.SessionPasswordNeededError:
+            check = srp.compute_check(challenge, password)
+        except ValueError:
             raise GatewayError("AUTH_REQUIRED") from None
+        await self._login(functions.auth.CheckPasswordRequest(check), deadline, budget)
         self._signed_in()
 
     async def me(self, deadline: Deadline) -> int:
-        user = await self._guard(lambda c: c.get_me(input_peer=False), deadline)
-        return int(user.id)
+        users = await self._call_reviewed(
+            functions.users.GetUsersRequest([types.InputUserSelf()]),
+            operation="admin.status", client_ref="operator",
+            deadline=deadline, budget=WorkBudget(max_rpcs=1),
+        )
+        return int(users[0].id)
 
     async def logout_local(self) -> None:
         """Forget the session locally; never ``log_out``.
@@ -2167,28 +2659,10 @@ class TelethonSession:
             self._client = None
         for path in self._config.session_dir.glob(f"{_SESSION_NAME}.session*"):
             path.unlink(missing_ok=True)
+        self._code_hash = None
         self.connected, self.authorized, self.logged_out = False, False, True
 
-    # -- requests ------------------------------------------------------------
-
-    async def call(
-        self, request: Any, *, client_ref: str, deadline: Deadline, budget: WorkBudget
-    ) -> Any:
-        refused = self.readiness()
-        if refused is not None:
-            raise GatewayError(refused)
-        try:
-            budget.spend()
-            async with self._scheduler.slot(client_ref):
-                async with asyncio.timeout(deadline.remaining()):
-                    return await self._client(request)
-        except (asyncio.CancelledError, KeyboardInterrupt):
-            raise
-        except BaseException as exc:  # noqa: BLE001 -- mapped to a frozen code
-            gateway = translate(exc)
-            if gateway.code == "SESSION_REVOKED":
-                self.revoked = True
-            raise gateway from None
+    # -- entities --------------------------------------------------------------
 
     @staticmethod
     def identity_of(peer: Any) -> tuple[str, int]:
@@ -2216,11 +2690,15 @@ class TelethonSession:
             return self._client.session.get_input_entity(utils.get_peer_id(peer))
         except (ValueError, KeyError, TypeError):
             raise GatewayError("NOT_ACCESSIBLE") from None
+
+
 ```
+
+Only `send_code` lets a `PHONE_MIGRATE` through untranslated (`passthrough`), and only for one explicit switch. Anywhere else a migrate becomes `TELEGRAM_UNAVAILABLE`, which is retryable. The switch runs under the `admin.login` operation, so the `help.GetConfig` it issues is allowed and charged, and nothing else is.
 
 - [ ] **Step 5: Tell mypy Telethon ships no types**
 
-`telethon` has no `py.typed`, so `mypy src/telegram_mcp` fails with `import-untyped` as soon as the adapter exists. Add beside the `jsonschema` override in `pyproject.toml`:
+Add beside the `jsonschema` override in `pyproject.toml`:
 
 ```toml
 [[tool.mypy.overrides]]
@@ -2228,7 +2706,7 @@ module = "telethon.*"
 ignore_missing_imports = true
 ```
 
-- [ ] **Step 5b: Make the demo-isolation check order-independent**
+- [ ] **Step 6: Make the demo-isolation check order-independent**
 
 `tests/security/test_demo_isolation.py::test_no_telethon_import` asserts `"telethon" not in sys.modules` in the test process. From this task on, other tests import Telethon, so that assertion would pass or fail depending on test order. Replace its first line with a fresh-interpreter check, which is also stronger: it proves the demo server's whole import closure never loads Telethon.
 
@@ -2247,16 +2725,16 @@ def test_no_telethon_import():
     assert "telethon" not in telegram_mcp.config.__dict__.get("__doc__", "")
 ```
 
-- [ ] **Step 6: Run the tests and watch them pass**
+- [ ] **Step 7: Run the tests and watch them pass**
 
-Run: `uv run pytest tests/unit/test_telethon_session.py tests/security/test_demo_isolation.py -q`
-Expected: all passed (20 in `test_telethon_session.py`). The architecture guard now finds `telethon` imported by exactly one module. Run `uv run pytest tests/security/test_phase4_architecture.py -q` too; it must stay green (Task 17 updates its RPC rule).
+Run: `uv run pytest tests/unit/test_telethon_session.py tests/unit/test_gateway_client.py tests/security/test_demo_isolation.py -q`
+Expected: all passed. Run `uv run pytest tests/security/test_phase4_architecture.py -q` too; it must stay green (Task 17 updates its RPC rule).
 
-- [ ] **Step 7: Commit** (format, check, full gate first)
+- [ ] **Step 8: Commit** (format, check, full gate first)
 
 ```bash
-git add src/telegram_mcp/telegram/errors.py src/telegram_mcp/telegram/telethon_adapter.py tests/telegram tests/unit/test_telethon_session.py tests/security/test_demo_isolation.py pyproject.toml
-git commit -m "feat: add the Telethon session core with deadlines and error translation
+git add src/telegram_mcp/telegram/errors.py src/telegram_mcp/telegram/telethon_adapter.py tests/telegram tests/unit/test_telethon_session.py tests/unit/test_gateway_client.py tests/security/test_demo_isolation.py pyproject.toml
+git commit -m "feat: own the MTProto boundary with reviewed, budgeted raw requests
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -2466,11 +2944,12 @@ and these two methods on `TelethonSession`:
         seen: set[str] = set()
         while True:
             try:
-                result = await self.call(
+                result = await self._call_reviewed(
                     functions.messages.GetDialogsRequest(
                         offset_date=offset_date, offset_id=offset_id, offset_peer=offset_peer,
                         limit=page_size, hash=0,
                     ),
+                    operation="admin.discover",
                     client_ref=client_ref, deadline=deadline, budget=budget,
                 )
             except GatewayError as exc:
@@ -2509,8 +2988,9 @@ and these two methods on `TelethonSession`:
                 continue  # not in the entity cache: never looked up over the network
         out: dict[str, DialogView] = {}
         for start in range(0, len(wanted), 100):
-            result = await self.call(
+            result = await self._call_reviewed(
                 functions.messages.GetPeerDialogsRequest(peers=wanted[start : start + 100]),
+                operation="mcp.retrieval",
                 client_ref=client_ref, deadline=deadline, budget=budget,
             )
             for view in _views(result):
@@ -2627,6 +3107,7 @@ async def world(tmp_path):
     session = TelethonSession(TelegramConfig(api_id=1, session_dir=tmp_path / "s"), api_hash="0" * 32,
                               client_factory=lambda *a, **k: fake)
     await session.start()
+    fake.calls.clear()  # start() probes authorisation once; tests count what follows
     now = [0.0]
     return conn, fake, auth_handlers(conn, session, clock=lambda: now[0]), now
 
@@ -2637,7 +3118,8 @@ async def test_code_login_creates_the_account(world):
     done = await h["auth login"]({"step": "code", "login": started["login"], "code": "22222"})
     assert done["authorized"] is True and done["account_ref"].startswith("tga_")
     assert conn.execute("SELECT count(*) FROM policy_state").fetchone()[0] == 1
-    assert fake.calls[:2] == ["auth.SendCodeRequest", "auth.SignInRequest"]
+    assert [c for c in fake.calls if c.startswith("auth.")] == ["auth.SendCodeRequest", "auth.SignInRequest"]
+    assert "auth.ResendCodeRequest" not in fake.calls
 
 
 async def test_password_step_needs_its_own_approval_and_live_handle(world, caplog):
@@ -3905,7 +4387,7 @@ Design §3.8 (carried from 4a) and §6.3; spec §27.1–§27.2.
 - **Authority re-check before retrieval.** The coordinator re-checks authority immediately before retrieval as well as at step 8, so no Telegram RPC runs under authority that moved while the prompt was open. The check sits under the existing `retrieve` checkpoint; the frozen `DISCLOSURE_STEPS` tuple is unchanged.
 - **Typed retrieval refusals.** A Telegram failure is a `RetrievalRefusal(code, retry_after)`. The coordinator turns it into a refusal outcome carrying `retry_after_seconds`, and releases the reservation (Phase 3 already does that in `finally`). Cancellation is never caught.
 - **Late partial.** An adapter may return a `_partial` sidecar, because `get_unread` only knows after retrieval whether its universe was complete.
-- **Error results carry retry data.** `error_result` gains `retryable` and `retry_after_seconds`, and the sensitive dispatcher passes the outcome's values through.
+- **One retryability registry (gauntlet G-5).** `results.RETRYABILITY` transcribes the §27.1 table's Retryable column for every contract code: `yes`, `no` or `maybe`. `error_result` derives `retryable` from it. A caller's `retryable` is consulted only for a `maybe` code (for example, the coordinator's rolling-window `EXPOSURE_BUDGET_EXCEEDED`). No other module keeps a retryable set. `retry_after_seconds` passes through.
 
 **Files:**
 - Modify: `src/telegram_mcp/disclosure/coordinator.py`
@@ -3920,8 +4402,8 @@ Design §3.8 (carried from 4a) and §6.3; spec §27.1–§27.2.
   - `RetrievalRefusal(code: str, retry_after: int | None = None)` in `disclosure/coordinator.py` (exported)
   - `DisclosureOutcome.retry_after_seconds: int | None = None`
   - `_SIDECAR_KEYS` gains `"_partial"`
-  - `RETRYABLE_CODES = frozenset({"FLOOD_WAIT", "TELEGRAM_UNAVAILABLE", "DEADLINE_EXCEEDED"})`
-  - `error_result(code, *, retryable: bool = False, retry_after_seconds: int | None = None)`
+  - `RETRYABILITY: dict[str, str]` in `results.py`: §27.1 verbatim, with keys equal to the contract's error enum
+  - `error_result(code, *, retryable: bool | None = None, retry_after_seconds: int | None = None)`. `retryable` is honoured only for `maybe` codes.
   - `build_coordinator(..., moved_on_call: int = 1, authority_factory=None)`. `moved` is reported from the `moved_on_call`-th `revalidate` onward: 1 is the pre-retrieval check, 2 is step 8.
 
 - [ ] **Step 1: Update the fixture and write the failing tests**
@@ -4025,8 +4507,7 @@ async def test_a_flood_wait_is_a_retryable_refusal_that_charges_nothing(tmp_path
     outcome = await coordinator.disclose(
         tool_name="telegram_get_messages", arguments={}, adapter=Flooded()
     )
-    assert outcome.error_code == "FLOOD_WAIT"
-    assert (outcome.retryable, outcome.retry_after_seconds) == (True, 7)
+    assert (outcome.error_code, outcome.retry_after_seconds) == ("FLOOD_WAIT", 7)
     assert _count(conn, "exposure_ledger") == 0
     assert coordinator._ledger.live_usage(_global_key()) == Usage(0, 0)
 
@@ -4064,9 +4545,23 @@ async def test_a_late_partial_reaches_the_receipt_and_meta(tmp_path):
 
 
 def test_error_results_carry_retry_data():
-    body = error_result("FLOOD_WAIT", retryable=True, retry_after_seconds=7).structured_content
+    body = error_result("FLOOD_WAIT", retry_after_seconds=7).structured_content
     assert body["error"]["retryable"] is True and body["error"]["retry_after_seconds"] == 7
     assert error_result("NOT_ACCESSIBLE").structured_content["error"]["retryable"] is False
+
+
+def test_retryability_is_the_frozen_table_and_nothing_else():
+    from telegram_mcp.results import RETRYABILITY, _error_codes
+
+    assert set(RETRYABILITY) == set(_error_codes())
+    for code in ("CURSOR_EXPIRED", "CURSOR_POLICY_CHANGED", "CURSOR_PROJECT_CHANGED", "RESPONSE_LIMIT",
+                 "WORK_BUDGET_EXCEEDED", "FLOOD_WAIT", "TELEGRAM_UNAVAILABLE", "POLICY_CHANGED",
+                 "DEADLINE_EXCEEDED"):
+        assert error_result(code).structured_content["error"]["retryable"] is True, code
+    # a caller cannot override a fixed row; it can only resolve a Maybe
+    assert error_result("AUTH_REQUIRED", retryable=True).structured_content["error"]["retryable"] is False
+    assert error_result("EXPOSURE_BUDGET_EXCEEDED", retryable=True).structured_content["error"]["retryable"] is True
+    assert error_result("INTERNAL_ERROR").structured_content["error"]["retryable"] is False
 
 
 async def test_the_sensitive_dispatcher_passes_retry_data_through():
@@ -4089,12 +4584,9 @@ Expected: `ImportError: cannot import name 'RetrievalRefusal'`.
 
 - [ ] **Step 3: Implement in `disclosure/coordinator.py`**
 
-Add `"RETRYABLE_CODES"` and `"RetrievalRefusal"` to `__all__`, and:
+Add `"RetrievalRefusal"` to `__all__`, and:
 
 ```python
-RETRYABLE_CODES = frozenset({"FLOOD_WAIT", "TELEGRAM_UNAVAILABLE", "DEADLINE_EXCEEDED"})
-
-
 class RetrievalRefusal(Exception):
     """Retrieval failed with a frozen §27.1 code (never a Telegram message)."""
 
@@ -4126,10 +4618,9 @@ Replace the block from `# ==== SECURITY BARRIER` through `self._checkpoint("reva
                     tool_name=tool_name, arguments=request.validated_args, snapshot=snapshot
                 )
             except RetrievalRefusal as refusal:
-                return DisclosureOutcome(
+                return DisclosureOutcome(  # retryability comes from results.RETRYABILITY
                     released=False,
                     error_code=refusal.code,
-                    retryable=refusal.code in RETRYABLE_CODES,
                     retry_after_seconds=refusal.retry_after,
                 )
 
@@ -4141,19 +4632,55 @@ After `next_cursor = side.get("_next_cursor")`, add `partial = bool(snapshot.par
 - [ ] **Step 4: Implement in `results.py` and `sensitive_dispatch.py`**
 
 ```python
+# Spec §27.1, the Retryable column, verbatim: the one registry. "yes" and "no"
+# are fixed; a caller's retryable only resolves a "maybe".
+RETRYABILITY: dict[str, str] = {
+    "AUTH_REQUIRED": "no",
+    "SESSION_REVOKED": "no",
+    "ACCOUNT_UNAVAILABLE": "maybe",
+    "POLICY_UNCONFIGURED": "no",
+    "REF_NOT_FOUND": "no",
+    "NOT_ACCESSIBLE": "no",
+    "MESSAGE_NOT_FOUND": "no",
+    "AMBIGUOUS_PEER": "no",
+    "INVALID_CURSOR": "no",
+    "CURSOR_EXPIRED": "yes",
+    "CURSOR_POLICY_CHANGED": "yes",
+    "CURSOR_PROJECT_CHANGED": "yes",
+    "INVALID_TIME": "no",
+    "INVALID_ARGUMENT": "no",
+    "RESPONSE_LIMIT": "yes",
+    "EXPOSURE_BUDGET_EXCEEDED": "maybe",
+    "SECURITY_LOCKED": "no",
+    "PROOF_GENERATION_FAILED": "maybe",
+    "AUDIT_INTEGRITY_UNAVAILABLE": "no",
+    "WORK_BUDGET_EXCEEDED": "yes",
+    "FLOOD_WAIT": "yes",
+    "TELEGRAM_UNAVAILABLE": "yes",
+    "CLIENT_REVOKED": "no",
+    "CONSENT_DENIED": "no",
+    "CONSENT_UNAVAILABLE": "no",
+    "POLICY_CHANGED": "yes",
+    "DEADLINE_EXCEEDED": "yes",
+    "UNSUPPORTED_RELEASE_PROFILE": "no",
+    "INTERNAL_ERROR": "maybe",
+}
+
+
 def error_result(
-    code: str, *, retryable: bool = False, retry_after_seconds: int | None = None
+    code: str, *, retryable: bool | None = None, retry_after_seconds: int | None = None
 ) -> types.CallToolResult:
     if code not in _error_codes():
         raise ValueError("unknown error code")
     if retry_after_seconds is not None and retry_after_seconds < 0:
         raise ValueError("retry_after_seconds must be non-negative")
+    row = RETRYABILITY[code]
     body = {
         "ok": False,
         "error": {
             "code": code,
             "message": _FIXED_MESSAGE,
-            "retryable": bool(retryable),
+            "retryable": row == "yes" or (row == "maybe" and bool(retryable)),
             "retry_after_seconds": retry_after_seconds,
         },
     }
@@ -4172,7 +4699,7 @@ def error_result(
 - [ ] **Step 5: Run the tests and the coordinator suites**
 
 Run: `uv run pytest tests/integration/test_coordinator_phase4b.py tests/integration/test_disclosure_coordinator.py tests/integration/test_coordinator_phase4.py tests/unit/test_dispatch.py -q`
-Expected: all passed. If a pre-existing test pinned `retryable: false` on `EXPOSURE_BUDGET_EXCEEDED` through the dispatcher, it was pinning the old drop of the coordinator's own `retryable=True`. Update it to `True` and ledger a ruling.
+Expected: all passed. A pre-existing test that pinned `retryable: false` for a code §27.1 marks "Yes", or for a "Maybe" the coordinator resolves as retryable, was pinning the old always-false result. Update it to the registry's value and record a ruling. The contract fixture in `tests/contract/test_schemas.py` builds its own body, so it is unaffected.
 
 - [ ] **Step 6: Commit** (format, check, full gate first; the formal model must stay 624/624)
 
@@ -4240,6 +4767,7 @@ async def _session(tmp_path, script, *cached):
     session = TelethonSession(TelegramConfig(api_id=1, session_dir=tmp_path / "s"), api_hash="0" * 32,
                               client_factory=lambda *a, **k: fake)
     await session.start()
+    fake.calls.clear()  # start() probes authorisation once; tests count what follows
     return session, fake
 
 
@@ -4446,11 +4974,12 @@ and this method on `TelethonSession`:
         continue below it even if deleted entries shrank what it can show.
         """
         peer = self.input_peer(peer_type, peer_id)  # cache only: a miss never becomes an RPC
-        result = await self.call(
+        result = await self._call_reviewed(
             functions.messages.GetHistoryRequest(
                 peer=peer, offset_id=offset_id, offset_date=None, add_offset=0,
                 limit=limit, max_id=max_id, min_id=0, hash=0,
             ),
+            operation="mcp.retrieval",
             client_ref=client_ref, deadline=deadline, budget=budget,
         )
         entities = {
@@ -4488,7 +5017,7 @@ Spec §17–§19, §22, §27; design §3.4, §3.8. `TelegramReads` implements th
 
 **The chat universe is the project's readable members** (`snapshot.readable`), fetched with `messages.GetPeerDialogs`, never by paging `GetDialogs`. This is a recorded refinement of design §3.4, added to design §3.8 in this plan's commit:
 - **Narrower than §17.4.** Metadata for chats outside the project never enters process memory during an MCP call. §17.4 only requires filtering before a ref is minted; this never fetches them at all.
-- **Pagination is over a finite set.** Pages run over a fixed, finite set with `seen_ids` (peer row ids), so a concurrent message that reorders dialogs can neither duplicate nor skip a chat.
+- **Pagination is anchored keyset.** Pages run over a finite set with a constant-size keyset cursor. A chat whose activity moves past the first page's anchor mid-walk is left for a fresh first page, so nothing repeats and every walk ends.
 - **The unread total can be exact.** `total_is_exact` is true exactly when every readable member was found in the entity cache and fetched within budget.
 
 `GetDialogs` stays in the reviewed set for operator discovery (`admin.discover`) only.
@@ -4500,7 +5029,7 @@ Spec §17–§19, §22, §27; design §3.4, §3.8. `TelegramReads` implements th
 
 **Files:**
 - Create: `src/telegram_mcp/telegram/reads.py` (no Telethon import)
-- Test: `tests/integration/test_telegram_reads.py`
+- Test: `tests/integration/test_telegram_reads.py`, `tests/integration/test_exposure_bound_invariant.py`
 
 **Interfaces:**
 - Consumes:
@@ -4511,7 +5040,7 @@ Spec §17–§19, §22, §27; design §3.4, §3.8. `TelegramReads` implements th
   - `RetrievalRefusal` (Task 14)
 - Produces: `TelegramReads(session, conn, *, mint_cursor: Callable[[ProjectSnapshot, Mapping, Mapping], str], deadline_s: float = 15.0, max_rpcs: int = 20)`, with async `list_chats`, `resolve_peer`, `get_messages` and `get_unread`, each taking `(arguments, snapshot)`.
 - Cursor state:
-  - `list_chats` / `get_unread`: `{"seen_ids": [peer row ids]}`, bounded at 1024. Past that the page ends without a cursor and `_partial` is set.
+  - `list_chats` / `get_unread`: keyset `{"offset_date"?, "offset_peer_ref", "anchor_date"?}`. It is constant-size for any project size (gauntlet G-4; the earlier `seen_ids` stopped at 1,024 chats). All three keys are already in `ALLOWED_STATE_KEYS`, with `_date` values validated as ISO dates and `offset_peer_ref` as a `tgp_` ref.
   - `get_messages`: `{"anchor_id", "offset_id"}`. The first page's newest id is the anchor, and later pages read strictly below `offset_id` and at or below the anchor (§19.5).
 
 - [ ] **Step 1: Write the failing tests**
@@ -4526,6 +5055,7 @@ import pytest
 from telethon import errors
 from telethon.tl import types
 
+from telegram_mcp.consent.challenge import jcs_dumps
 from telegram_mcp.disclosure.coordinator import RetrievalRefusal
 from telegram_mcp.disclosure.seams import CoordinatorAuthority
 from telegram_mcp.keys.store import load_key, provision_missing
@@ -4630,7 +5160,7 @@ async def test_archived_chat_excluded_from_unread_total(world):
     assert sorted(c["unread_count"] for c in out["chats"]) == [1, 2]
 
 
-async def test_paging_uses_seen_ids_and_never_repeats(world):
+async def test_paging_is_keyset_and_never_repeats(world):
     _conn, _fake, reads, snap, refs = world
     args, s = snap("telegram_list_chats", limit=1, chat_type="any", archived="exclude")
     first = await reads.list_chats(args, s)
@@ -4639,6 +5169,82 @@ async def test_paging_uses_seen_ids_and_never_repeats(world):
     second = await reads.list_chats(args2, s2)
     assert [c["peer_ref"] for c in first["chats"] + second["chats"]] == [refs["user:100"], refs["chat:9"]]
     assert "_next_cursor" not in second
+
+
+async def test_a_chat_that_moves_mid_walk_is_not_repeated(world):
+    _conn, fake, reads, snap, refs = world
+    args, s = snap("telegram_list_chats", limit=1, chat_type="any", archived="exclude")
+    first = await reads.list_chats(args, s)
+    assert [c["peer_ref"] for c in first["chats"]] == [refs["user:100"]]
+    # user:100 gets a newer message before page 2: it must not come back
+    moved = [(types.PeerUser(100), {"unread": 3, "minute": 30})] + DEFAULT_DIALOGS[1:]
+    fake.script["messages.GetPeerDialogsRequest"] = _peer_dialogs(moved)
+    args2, s2 = snap("telegram_list_chats", limit=1, chat_type="any", archived="exclude",
+                     cursor=first["_next_cursor"])
+    second = await reads.list_chats(args2, s2)
+    assert [c["peer_ref"] for c in second["chats"]] == [refs["chat:9"]]
+
+
+async def test_a_large_project_pages_to_the_end_with_constant_state(tmp_path):
+    """Gauntlet G-4: 1,100 member chats (past the old 1,024 seen_ids cap)."""
+    from telegram_mcp.storage.refstore import RefStore
+    from tests.authority_fixtures import seed_authority_rows
+
+    provision_missing(tmp_path / "keys", phases=(2, 3))
+    conn = open_db(tmp_path / "meta.db")
+    seed_authority_rows(conn)
+    now = "2026-09-23T00:00:00Z"
+    conn.execute(
+        "INSERT INTO client_projects (client_id, project_id, can_read, can_cross_search,"
+        " egress_level, excerpt_max_codepoints, created_at, updated_at)"
+        " VALUES (1, 1, 1, 0, 'metadata_only', NULL, ?, ?)", (now, now),
+    )
+    conn.commit()
+    refs = RefStore(conn, account_id=1)
+    users = [types.User(id=10_000 + i, access_hash=1, first_name=f"U{i}") for i in range(1100)]
+    for user in users:
+        row = refs.ensure_peer("user", user.id, display_name=user.first_name, username=None)
+        conn.execute("INSERT INTO peer_policy VALUES (1, 1, 'user', ?, 'allow', ?, ?)", (user.id, now, now))
+        conn.execute("INSERT INTO project_peers VALUES (1, ?, 'primary', ?, ?)", (row.row_id, now, now))
+        conn.commit()
+
+    def dialogs(request):
+        wanted = {p.peer.user_id for p in request.peers}
+        chosen = [u for u in users if u.id in wanted]
+        pairs = [_dialog(types.PeerUser(u.id), unread=1, minute=u.id % 60) for u in chosen]
+        return types.messages.PeerDialogs(
+            dialogs=[d for d, _ in pairs], messages=[m for _, m in pairs], chats=[], users=chosen,
+            state=types.updates.State(pts=1, qts=0, date=WHEN, seq=0, unread_count=0),
+        )
+
+    fake = FakeClient({"messages.GetPeerDialogsRequest": dialogs})
+    for user in users:
+        fake.session.remember(user)
+    session = TelethonSession(TelegramConfig(api_id=1, session_dir=tmp_path / "s"), api_hash="0" * 32,
+                              client_factory=lambda *a, **k: fake)
+    await session.start()
+    authority = CoordinatorAuthority(
+        conn, privacy_key=load_key("privacy-key"), cursor_key=load_key("cursor-key"),
+        cursor_store=bind_cursor_store(conn), runtime_id=b"\x05" * 16,
+    )
+    reads = TelegramReads(session, conn, mint_cursor=authority.mint_project_cursor)
+    principal = resolve_principal(conn, CLIENT)
+    seen: list[str] = []
+    cursor = None
+    for _page in range(20):
+        args = {"project_ref": PROJECT_REF, "limit": 100, "include_muted": True, "chat_type": "any"}
+        if cursor:
+            args["cursor"] = cursor
+        request = authority.freeze_arguments("telegram_get_unread", args, principal=principal)
+        snapshot = authority.snapshot("telegram_get_unread", request)
+        assert len(jcs_dumps(dict(snapshot.state))) < 200  # constant-size cursor state
+        out = await reads.get_unread(request.validated_args, snapshot)
+        seen += [c["peer_ref"] for c in out["chats"]]
+        assert "_partial" not in out and out["total_unread_visible"] == 1100
+        cursor = out.get("_next_cursor")
+        if cursor is None:
+            break
+    assert len(seen) == 1100 and len(set(seen)) == 1100
 
 
 async def test_a_member_missing_from_the_cache_makes_unread_inexact(world):
@@ -4807,7 +5413,6 @@ from telegram_mcp.telegram.errors import GatewayError
 
 __all__ = ["TelegramReads"]
 
-_SEEN_MAX = 1024
 _RANK = {
     "exact_display_name": 0,
     "exact_username": 1,
@@ -4823,6 +5428,17 @@ def _split(identity: str) -> tuple[str, int]:
 
 def _name(text: str | None) -> str:
     return clamp(text, NAME_MAX)[0] or ""
+
+
+def _key(date: str | None, peer_ref: str) -> tuple[int, tuple[int, ...], str]:
+    """Newest first (fixed-width ISO dates, negated), undated last, then ``peer_ref``."""
+    if date is None:
+        return (1, (), peer_ref)
+    return (0, tuple(-ord(c) for c in date), peer_ref)
+
+
+def _order(row: PeerRow, view: Any) -> tuple[int, tuple[int, ...], str]:
+    return _key(view.last_message_at, row.peer_ref)
 
 
 class TelegramReads:
@@ -4856,19 +5472,21 @@ class TelegramReads:
             client_ref=snapshot.client_ref, deadline=deadline, budget=budget,
         )
         refs = RefStore(self._conn, account_id=snapshot.account_id)
+        known = refs.peers_by_identities(identities)
         out: list[tuple[PeerRow, Any]] = []
         for identity in identities:
             view = views.get(identity)
             if view is None or not snapshot.owner_scope.admits(view.chat_type, view.is_archived):
                 continue
-            row = refs.ensure_peer(  # an authorised member: refreshing its cache is allowed
-                view.peer_type, view.peer_id,
-                display_name=_name(view.display_name),
-                username=clamp(view.username, USERNAME_MAX)[0],
-            )
+            name, username = _name(view.display_name), clamp(view.username, USERNAME_MAX)[0]
+            row = known.get(identity)
+            if row is None or (row.display_name, row.username) != (name, username):
+                # An authorised member renamed: refresh its cache (one write, only on change).
+                row = refs.ensure_peer(
+                    view.peer_type, view.peer_id, display_name=name, username=username
+                )
             out.append((row, view))
-        out.sort(key=lambda pair: pair[0].peer_ref)
-        out.sort(key=lambda pair: pair[1].last_message_at or "", reverse=True)
+        out.sort(key=lambda pair: _order(*pair))
         return out, len(views) == len(identities)
 
     def _page(
@@ -4880,18 +5498,41 @@ class TelegramReads:
         pairs: list[tuple[PeerRow, Any]],
         build: Callable[[PeerRow, Any], dict[str, Any]],
     ) -> dict[str, Any]:
-        seen = list(snapshot.state.get("seen_ids", []))
-        remaining = [pair for pair in pairs if pair[0].row_id not in set(seen)]
+        """Keyset pagination: constant-size state, never a silent end (spec §19.5, §23.5).
+
+        Order is newest first, ties by ``peer_ref``. The cursor holds the last
+        emitted key and the first page's newest date as an anchor. A chat
+        whose activity moves past the anchor mid-walk is left for a fresh
+        first page, so no chat repeats and the walk always ends.
+        """
+        state = snapshot.state
+        anchor = state.get("anchor_date")
+        after = (
+            _key(state.get("offset_date"), state["offset_peer_ref"])
+            if "offset_peer_ref" in state
+            else None
+        )
+        remaining = [
+            pair
+            for pair in pairs
+            if (anchor is None or pair[1].last_message_at is None or pair[1].last_message_at <= anchor)
+            and (after is None or _order(*pair) > after)
+        ]
         page = remaining[: snapshot.limit]
         data[element] = [build(row, view) for row, view in page]
         fit(data, element)
         emitted = page[: len(data[element])]
-        if len(emitted) < len(remaining):
-            seen_next = seen + [row.row_id for row, _ in emitted]
-            if len(seen_next) > _SEEN_MAX:
-                data["_partial"] = True  # the cursor chain cannot carry more
-            else:
-                data["_next_cursor"] = self._mint(snapshot, arguments, {"seen_ids": seen_next})
+        if emitted and len(emitted) < len(remaining):
+            last_row, last_view = emitted[-1]
+            nxt: dict[str, Any] = {"offset_peer_ref": last_row.peer_ref}
+            if last_view.last_message_at is not None:
+                nxt["offset_date"] = last_view.last_message_at
+            first_newest = anchor or next(
+                (view.last_message_at for _, view in remaining if view.last_message_at), None
+            )
+            if first_newest is not None:
+                nxt["anchor_date"] = first_newest
+            data["_next_cursor"] = self._mint(snapshot, arguments, nxt)
         return data
 
     def _project(self, snapshot: ProjectSnapshot) -> dict[str, str]:
@@ -5111,12 +5752,118 @@ class TelegramReads:
 - [ ] **Step 4: Run them and watch them pass**
 
 Run: `uv run pytest tests/integration/test_telegram_reads.py -q`
-Expected: 14 passed.
+Expected: 15 passed.
+
+- [ ] **Step 4b: Prove the reservation dominates the real measurement (gauntlet G-8)**
+
+Task 12's unit tests compare the bound against hand-built records. This test compares it against **the exact Phase-3 measurement**: real reads, real egress, the coordinator's `_split_sidecar`, and `budget.buckets_for`. It covers every tool, every egress mode, and seeded adversarial strings.
+
+```python
+# tests/integration/test_exposure_bound_invariant.py
+"""Gauntlet G-8: the reservation dominates the exact Phase-3 measurement.
+
+For every 4b tool and every egress mode, adversarial inputs (maximal and
+over-long strings, U+0001, quotes, backslashes, astral emoji, lone
+surrogates, bidi, nulls) go through the real reads, the real egress, the
+coordinator's own sidecar split and Phase 3's ``buckets_for``. Every actual
+bucket must be within the step-3 reservation: records and bytes. Seeded,
+so a failure reproduces.
+"""
+
+import random
+
+import pytest
+from telethon.tl import types
+
+from telegram_mcp.disclosure.budget import buckets_for
+from telegram_mcp.disclosure.coordinator import _split_sidecar
+from tests.integration.test_telegram_reads import WHEN, _dialog, world  # noqa: F401 -- the pytest fixture
+
+ALPHABET = ["a", "\u00e9", "\x01", '"', "\\", "\U0001F469\u200d\U0001F4BB", "\ud800", "\u202e", "\u0301", " ", "\u0645"]
+ROUNDS = 12
+
+
+def _text(rng: random.Random, longest: int) -> str | None:
+    if rng.random() < 0.15:
+        return None
+    return "".join(rng.choice(ALPHABET) for _ in range(rng.randint(0, longest)))
+
+
+def _entities(rng):
+    ali = types.User(id=100, access_hash=1, first_name=_text(rng, 400) or "x",
+                     last_name=_text(rng, 400), username=_text(rng, 80))
+    news = types.Channel(id=7, title=_text(rng, 400) or "n", photo=types.ChatPhotoEmpty(), date=WHEN,
+                         broadcast=True, access_hash=3)
+    team = types.Chat(id=9, title=_text(rng, 400) or "t", photo=types.ChatPhotoEmpty(),
+                      participants_count=3, date=WHEN, version=1)
+    zed = types.User(id=555, access_hash=6, first_name=_text(rng, 400) or "z", last_name=_text(rng, 400))
+    return ali, news, team, zed
+
+
+def _script(rng, limit):
+    ali, news, team, zed = _entities(rng)
+    specs = [(types.PeerUser(100), {"unread": rng.randint(0, 2**31), "minute": 5}),
+             (types.PeerChannel(7), {"unread": rng.randint(0, 9), "minute": 9, "archived": rng.random() < 0.5}),
+             (types.PeerChat(9), {"unread": rng.randint(1, 9), "minute": 1})]
+    pairs = [_dialog(peer, **kw) for peer, kw in specs]
+    dialogs = types.messages.PeerDialogs(
+        dialogs=[d for d, _ in pairs], messages=[m for _, m in pairs], chats=[news, team],
+        users=[ali, zed], state=types.updates.State(pts=1, qts=0, date=WHEN, seq=0, unread_count=0),
+    )
+    messages = []
+    for i in range(limit, 0, -1):
+        media = rng.choice([None, types.MessageMediaPhoto(), types.MessageMediaEmpty()])
+        reply = types.MessageReplyHeader(reply_to_msg_id=rng.randint(1, 10**9), forum_topic=rng.random() < 0.5) if rng.random() < 0.5 else None
+        messages.append(types.Message(
+            id=i, peer_id=types.PeerChat(9), date=WHEN, message=_text(rng, 5000) or "",
+            from_id=rng.choice([types.PeerUser(100), types.PeerUser(555), None]),
+            post_author=_text(rng, 400), media=media, reply_to=reply, edit_date=WHEN if rng.random() < 0.5 else None,
+        ))
+    history = types.messages.Messages(messages=messages, topics=[], chats=[team], users=[ali, zed])
+    return {"messages.GetPeerDialogsRequest": dialogs, "messages.GetHistoryRequest": history}
+
+
+@pytest.mark.parametrize("egress", [("metadata_only", None), ("excerpt", 64), ("excerpt", 4000), ("full_text", None)])
+async def test_actual_charge_never_exceeds_the_reservation(world, egress):  # noqa: F811 -- the imported fixture
+    conn, fake, reads, snap, refs = world
+    conn.execute("UPDATE client_projects SET egress_level = ?, excerpt_max_codepoints = ?", egress)
+    conn.execute("UPDATE policy_state SET include_archived = 1")
+    conn.commit()
+    rng = random.Random(f"g8-{egress}")
+    cases = {
+        "telegram_list_chats": (100, {"chat_type": "any", "archived": "include"}, "list_chats"),
+        "telegram_get_unread": (100, {"include_muted": True, "chat_type": "any"}, "get_unread"),
+        "telegram_resolve_peer": (20, {"chat_type": "any"}, "resolve_peer"),
+        "telegram_get_messages": (100, {"peer_ref": refs["chat:9"]}, "get_messages"),
+    }
+    authority = reads._mint.__self__
+    for _round in range(ROUNDS):
+        for tool, (cap, extra, method) in cases.items():
+            limit = rng.randint(1, cap)
+            fake.script.update(_script(rng, limit))
+            args = {"limit": limit, **extra}
+            if tool == "telegram_resolve_peer":
+                args["query"] = rng.choice(["a", "é", "\x01", "م", "z"])
+            validated, snapshot = snap(tool, **args)
+            raw = await getattr(reads, method)(validated, snapshot)
+            data, _side = _split_sidecar(authority.apply_egress(raw, snapshot))
+            actual = buckets_for(tool, data, client_id=snapshot.client_id)
+            reserved = authority.worst_case_buckets(tool, snapshot)
+            for key, usage in actual.items():
+                assert key in reserved, (tool, key)
+                assert usage.records <= reserved[key].records, (tool, egress, usage, reserved[key])
+                assert usage.bytes <= reserved[key].bytes, (tool, egress, usage, reserved[key])
+```
+
+Run: `uv run pytest tests/integration/test_exposure_bound_invariant.py -q`
+Expected: 4 passed.
+
+**Control run** (record in the ledger): change `_W = "\x01"` in `bounds.py` to `_W = "a"`. All four cases must fail, because the reservation no longer dominates. Then restore it. The gauntlet dry run observed exactly that: 4 failed, then 4 passed after the restore.
 
 - [ ] **Step 5: Commit** (format, check, full gate first)
 
 ```bash
-git add src/telegram_mcp/telegram/reads.py tests/integration/test_telegram_reads.py
+git add src/telegram_mcp/telegram/reads.py tests/integration/test_telegram_reads.py tests/integration/test_exposure_bound_invariant.py
 git commit -m "feat: serve list_chats, resolve_peer, get_messages and get_unread
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
@@ -5144,9 +5891,11 @@ Spec §9.1–§9.4, §37; design §1, §3.1, §3.5, §6.1.
 - Consumes: every earlier task.
 - Produces:
   - `CoordinatorAuthority(..., telegram_gate: Callable[[], str | None] = lambda: None)`. A non-`None` code refuses every project tool at step 2.
-  - `build_runtime(..., telegram: TelethonSession | None = None)`. This registers `client_handlers` always, and `auth_handlers` / `scope_handlers` only when a session exists. It routes the four tools to `TelegramReads`, builds an `AdminApprover`, and uses `approver.verify` as the presence verifier unless a test passes `presence_verifier`.
+  - `build_runtime(..., telegram: TelethonSession | None = None)`. This registers `client_handlers` always, and `auth_handlers` / `scope_handlers` only when a session exists. It routes the four tools to `TelegramReads`, builds an `AdminApprover`, and uses `approver.verify` as the request-bound verifier unless a test passes `presence_verifier`.
   - `RuntimeServices.approver: AdminApprover`.
-  - `DaemonConfig(runtime_dir: Path, state_dir: Path, key_dir: Path, api_id: int | None, test_dc: tuple[int, str, int] | None = None, port: int = 8766)`.
+  - `DaemonConfig(runtime_dir: Path, state_dir: Path, key_dir: Path, api_id: int | None, test_dc: tuple[int, str, int] | None = None, port: int = 8766, admin_group: str | None = None)`. There are two modes, and the evidence must never blur them (gauntlet G-7):
+    - **Development** (`admin_group=None`): the daemon creates `runtime_dir` at `0700`, and only its own uid may use the admin socket. This is not evidence of production conformity.
+    - **Production shape** (`admin_group` set, spec §9.4): `runtime_dir` must already exist, created by the installer as `/private/var/run/telegram-mcp` owned by `telegram-mcpd`. The daemon neither creates nor chmods it, and a missing directory fails closed. The admin socket is `0660`, its group is `admin_group`, and peers are admitted by that group's credentials only.
   - `run_daemon(config, *, api_hash_reader=read_api_hash, client_factory=None, stop: asyncio.Event | None = None) -> None`, plus `DaemonError`.
   - The CLI verb: `telegram-mcp daemon --runtime-dir D --state-dir D --store-dir D [--api-id N] [--test-dc DC:IP:PORT] [--port N]`.
 
@@ -5165,11 +5914,17 @@ REVIEWED_RPCS: frozenset[str] = frozenset(
         "messages.GetMessagesRequest",
         "channels.GetMessagesRequest",
         "users.GetUsersRequest",
+        "updates.GetStateRequest",
+        "auth.SendCodeRequest",
+        "auth.SignInRequest",
+        "account.GetPasswordRequest",
+        "auth.CheckPasswordRequest",
+        "help.GetConfigRequest",
     }
 )
 ```
 
-Add to `PROHIBITED`: `"log_out"`, `"LogOutRequest"`, `"ResendCodeRequest"`, `"ResolveUsernameRequest"`, `"GetChannelsRequest"`, `"get_entity"`, `"UpdatePasswordSettingsRequest"`, `"ConfirmPasswordEmailRequest"`, `"InitTakeoutSessionRequest"`. Add `"telegram_mcp.telegram.reads"` to `CONCRETE_BACKENDS`. Replace `test_every_rpc_reference_is_reviewed` with:
+Add to `PROHIBITED`: `"send_code_request"`, `"sign_in"`, `"is_user_authorized"`, `"get_me"`, `"iter_dialogs"`, `"get_dialogs"` (Telethon helpers that retry, resend or pull updates on their own; Task 8 replaced them), `"log_out"`, `"LogOutRequest"`, `"ResendCodeRequest"`, `"ResolveUsernameRequest"`, `"GetChannelsRequest"`, `"get_entity"`, `"UpdatePasswordSettingsRequest"`, `"ConfirmPasswordEmailRequest"`, `"InitTakeoutSessionRequest"`. Add `"telegram_mcp.telegram.reads"` to `CONCRETE_BACKENDS`. Replace `test_every_rpc_reference_is_reviewed` with:
 
 ```python
 def _aliases(tree: ast.AST) -> dict[str, str]:
@@ -5236,7 +5991,7 @@ def test_the_adapter_declares_the_reviewed_set():
 ```
 
 Run: `uv run pytest tests/security/test_phase4_architecture.py -q`
-Expected: PASS once Tasks 8, 9 and 15 are in. The adapter references exactly `messages.GetDialogsRequest`, `messages.GetPeerDialogsRequest` and `messages.GetHistoryRequest`, all reviewed. To see the guard bite, temporarily add `functions.messages.ReadHistoryRequest` to the adapter, watch `test_every_rpc_reference_is_reviewed` (and `test_no_prohibited_symbol_appears_in_src`) fail, then remove it. Record that in the ledger.
+Expected: PASS once Tasks 8, 9 and 15 are in. The adapter builds the raw login and status requests itself (Task 8), so the source now references them, and each is reviewed. `help.GetConfigRequest` appears only in `OPERATIONS`, for the explicit DC switch. To see the guard bite, temporarily add `functions.messages.ReadHistoryRequest` to the adapter, watch `test_every_rpc_reference_is_reviewed` (and `test_no_prohibited_symbol_appears_in_src`) fail, then remove it. Record that in the ledger.
 
 - [ ] **Step 2: Write the failing composition and daemon tests**
 
@@ -5292,6 +6047,7 @@ async def _world(tmp_path, monkeypatch, *, with_telegram=True, authorized=True):
         session = TelethonSession(TelegramConfig(api_id=1, session_dir=tmp_path / "tg"),
                                   api_hash="0" * 32, client_factory=lambda *a, **k: fake)
         await session.start()
+        fake.calls.clear()  # the start-up authorisation probe is not part of any tool call
     signer = StubSigner(seed=0x07)
     port = _free_port()
     services = build_runtime(
@@ -5438,6 +6194,56 @@ async def test_an_unreachable_telegram_does_not_stop_the_daemon(tmp_path, monkey
         await asyncio.wait_for(daemon, 10)
 
 
+async def test_production_shape_socket_is_group_0660_and_needs_the_installer(tmp_path, monkeypatch):
+    import grp
+    import stat
+
+    monkeypatch.chdir(tmp_path)
+    _pin(tmp_path)
+    group = grp.getgrgid(os.getgid()).gr_name  # a group this test process really is in
+    config = DaemonConfig(runtime_dir=Path("run"), state_dir=tmp_path / "state",
+                          key_dir=tmp_path / "keys", api_id=1, port=_port(), admin_group=group)
+    with pytest.raises(DaemonError, match="installer"):
+        await run_daemon(config, api_hash_reader=lambda: "0" * 32,
+                         client_factory=lambda *a, **k: FakeClient())
+    os.mkdir("run", 0o750)  # what the installer provides
+    stop = asyncio.Event()
+    daemon = asyncio.create_task(run_daemon(config, api_hash_reader=lambda: "0" * 32,
+                                            client_factory=lambda *a, **k: FakeClient(), stop=stop))
+    for _ in range(100):
+        if os.path.exists("run/admin.sock") or daemon.done():
+            break
+        await asyncio.sleep(0.05)
+    try:
+        st = os.stat("run/admin.sock")
+        assert stat.S_IMODE(st.st_mode) == 0o660 and st.st_gid == os.getgid()
+        assert stat.S_IMODE(os.stat("run").st_mode) == 0o750  # the daemon did not touch it
+        assert (await _admin("client list"))["ok"] is True  # admitted by group, not by uid
+    finally:
+        stop.set()
+        await asyncio.wait_for(daemon, 10)
+
+
+@pytest.mark.platform_gated
+def test_the_installed_runtime_directory_has_the_production_boundary():
+    """Spec §9.4 on this host. Skips honestly until the installer has run."""
+    import grp
+    import pwd
+    import stat
+
+    path = Path("/private/var/run/telegram-mcp")
+    try:
+        owner = pwd.getpwnam("telegram-mcpd").pw_uid
+        admin = grp.getgrnam("telegram-mcp-admin").gr_gid
+    except KeyError:
+        pytest.skip("service accounts are not installed on this host")
+    if not path.is_dir():
+        pytest.skip("the runtime directory is not installed on this host")
+    st = path.stat()
+    assert (st.st_uid, st.st_gid) == (owner, admin)
+    assert stat.S_IMODE(st.st_mode) & 0o007 == 0  # nothing for others
+
+
 async def test_the_daemon_refuses_to_start_unpaired(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     provision_missing(tmp_path / "keys", phases=(2, 3))
@@ -5569,7 +6375,9 @@ Replace the handler and router construction at the end with:
     return RuntimeServices(
         ingress_app=app,
         admin_router=AdminRouter(
-            handlers, presence_verifier=presence_verifier or approver.verify
+            handlers,
+            presence_verifier=presence_verifier,
+            request_verifier=None if presence_verifier is not None else approver.verify,
         ),
         coordinator=coordinator,
         prompter=prompter,
@@ -5605,6 +6413,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import grp
 import logging
 import os
 import secrets
@@ -5643,6 +6452,7 @@ class DaemonConfig:
     api_id: int | None
     test_dc: tuple[int, str, int] | None = None
     port: int = 8766
+    admin_group: str | None = None
 
 
 def _pins() -> tuple[bytes, bytes]:
@@ -5662,7 +6472,17 @@ async def run_daemon(
     stop: asyncio.Event | None = None,
 ) -> None:
     runtime_dir = Path(config.runtime_dir)
-    runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    admin_gid: int | None = None
+    if config.admin_group is not None:
+        # Production shape: the installer owns this directory; never create or chmod it.
+        try:
+            admin_gid = grp.getgrnam(config.admin_group).gr_gid
+        except KeyError:
+            raise DaemonError("the admin group does not exist (run the installer)") from None
+        if not runtime_dir.is_dir():
+            raise DaemonError("the runtime directory is missing (run the installer)")
+    else:
+        runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     admin_path, consent_path = runtime_dir / "admin.sock", runtime_dir / "consent.sock"
     runtime_id = secrets.token_bytes(16)
     try:
@@ -5729,10 +6549,13 @@ async def run_daemon(
             await serve_admin(
                 admin_path,
                 services.admin_router,
-                allow_uid=os.getuid(),
+                allow_uid=os.getuid() if admin_gid is None else None,
+                allow_gids=() if admin_gid is None else (admin_gid,),
                 approver=services.approver.approve,
             )
         )
+        if admin_gid is not None:
+            os.chown(admin_path, -1, admin_gid)  # serve_admin already made it 0660
         server = uvicorn.Server(
             uvicorn.Config(
                 services.ingress_app, host="127.0.0.1", port=config.port, log_level="warning"
@@ -5810,7 +6633,10 @@ and in `_build_parser`:
     daemon.add_argument("--api-id", type=int, default=None)
     daemon.add_argument("--test-dc", default=None)
     daemon.add_argument("--port", type=int, default=8766)
+    daemon.add_argument("--admin-group", default=None, help="production: telegram-mcp-admin")
 ```
+
+and pass `admin_group=args.admin_group` to `DaemonConfig`.
 
 and `"daemon": _cmd_daemon,` in `_COMMANDS`. `Path` is already imported.
 
@@ -5835,7 +6661,7 @@ Design §3.6–§3.7, §6.2, §6.4–§6.5; spec §38.3.
 
 - **The opt-in harness.** It runs against Telegram's test servers with three throwaway accounts.
 - **The recorder.** It is injected at Telethon's `_call` boundary, a test-only subclass and never a flag in the adapter. It checks every request class Telethon actually sends against the phase's allowlist.
-- **The witness.** The canonical read-state witness runs in a separate process on the counterpart's session.
+- **The witness.** It runs in a separate process on the counterpart's session. It covers the DM and group read markers and the channel post's view counter, all independent, plus A's unread counts, which are not independent and are labelled as such (gauntlet G-6: one DM marker alone is not the §38.3 invariant).
 - **The leak sweep.** It scans every gateway-owned surface for a runtime marker.
 - **The smoke.** It gains 4b rows on the fake transport.
 - **The evidence.** `docs/verification/phase-4.md` records 4b honestly: what ran, what was opt-in, and what the owner must still run.
@@ -5874,7 +6700,7 @@ In `pyproject.toml` `markers`, add `"telegram_testdc: talks to Telegram's test s
     )
 ```
 
-and extend `pytest_collection_modifyitems` so that it skips `telegram_testdc` items without the flag, independently of the platform gate:
+and replace **only** the `pytest_collection_modifyitems` function; the agent-bundle fixtures defined after it in the same file must stay. The new function skips `telegram_testdc` items without the flag, independently of the platform gate:
 
 ```python
 def pytest_collection_modifyitems(config, items):
@@ -5897,7 +6723,8 @@ def pytest_collection_modifyitems(config, items):
 # tests/unit/test_recorder.py
 from telethon.tl import functions, types
 
-from tests.telegram.recorder import PHASE, qualified, violations
+from telegram_mcp.telegram.telethon_adapter import qualified
+from tests.telegram.recorder import PHASE, violations
 
 
 def test_invoke_wrappers_unwrap_to_the_inner_request():
@@ -5909,7 +6736,7 @@ def test_invoke_wrappers_unwrap_to_the_inner_request():
 
 def test_a_login_request_during_retrieval_is_a_violation():
     log = [
-        ("admin.login", "updates.GetDifferenceRequest"),
+        ("admin.login", "auth.SignInRequest"),
         ("mcp.retrieval", "messages.GetHistoryRequest"),
         ("mcp.retrieval", "updates.GetDifferenceRequest"),
         ("mcp.retrieval", "messages.ReadHistoryRequest"),
@@ -5919,6 +6746,7 @@ def test_a_login_request_during_retrieval_is_a_violation():
         ("mcp.retrieval", "updates.GetDifferenceRequest"),
         ("mcp.retrieval", "messages.ReadHistoryRequest"),
     ]
+    assert violations([("admin.login", "updates.GetDifferenceRequest")])  # login no longer pulls updates
     assert PHASE.get() == "unscoped"
 ```
 
@@ -5929,12 +6757,14 @@ Expected: `ModuleNotFoundError: No module named 'tests.telegram.recorder'`.
 
 ```python
 # tests/telegram/recorder.py
-"""Runtime outbound-RPC recorder (design §6.2), injected at Telethon's _call.
+"""Runtime outbound-RPC recorder (design §6.2), at the gateway's own _call.
 
-Source AST shows what our code can build; this shows what Telethon actually
-sends, including the requests its own login helpers issue. It lives in tests
-and is injected through ``TelethonSession(client_factory=...)``; there is no
-flag for it in the adapter.
+The source guard shows what our code can build; this shows what actually
+reached the sender, including anything Telethon might issue on its own
+through ``_call``. It subclasses the adapter's ``_GatewayClient`` and is
+injected through ``TelethonSession(client_factory=...)``; there is no flag
+for it in the adapter. ``ALLOWED`` is the reviewer's own copy, deliberately
+not imported from the adapter, so the two must agree independently.
 """
 
 from __future__ import annotations
@@ -5943,7 +6773,7 @@ from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Any
 
-from telethon import TelegramClient
+from telegram_mcp.telegram.telethon_adapter import _GatewayClient, qualified
 
 PHASE: ContextVar[str] = ContextVar("telegram_mcp_rpc_phase", default="unscoped")
 
@@ -5967,7 +6797,6 @@ ALLOWED: dict[str, frozenset[str]] = {
             "account.GetPasswordRequest",
             "auth.CheckPasswordRequest",
             "updates.GetStateRequest",
-            "updates.GetDifferenceRequest",
             "users.GetUsersRequest",
         }
     ),
@@ -5983,13 +6812,6 @@ ALLOWED: dict[str, frozenset[str]] = {
 }
 
 
-def qualified(request: Any) -> str:
-    while type(request).__name__.startswith("InvokeWith") and hasattr(request, "query"):
-        request = request.query
-    module = type(request).__module__.rsplit(".", 1)[-1]
-    return f"{module}.{type(request).__name__}"
-
-
 def violations(log: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return [
         (phase, name)
@@ -5999,10 +6821,9 @@ def violations(log: list[tuple[str, str]]) -> list[tuple[str, str]]:
 
 
 def recording_factory(log: list[tuple[str, str]]) -> Callable[..., Any]:
-    class RecordingClient(TelegramClient):  # type: ignore[misc]
+    class RecordingClient(_GatewayClient):
         async def _call(self, sender, request, ordered=False, flood_sleep_threshold=None):  # type: ignore[no-untyped-def]
-            for item in request if isinstance(request, list) else [request]:
-                log.append((PHASE.get(), qualified(item)))
+            log.append((PHASE.get(), qualified(request)))
             return await super()._call(sender, request, ordered, flood_sleep_threshold)
 
     def factory(path: str, api_id: int, api_hash: str, **kwargs: Any) -> Any:
@@ -6135,6 +6956,7 @@ async def seed(
         await b.send_message(a, text)
     created = await b(functions.messages.CreateChatRequest(users=[a, c_user], title="4b group"))
     group = created.updates.chats[0]
+    await b.send_message(types.PeerChat(group.id), f"group {marker}")  # something A must not mark read
     async for dialog in c.iter_dialogs():  # C learns the group from its own dialog list
         if dialog.id == -group.id:
             await c.send_message(dialog.entity, f"from C {marker}")  # C is not a project member
@@ -6144,38 +6966,53 @@ async def seed(
     channel = (
         await b(functions.channels.CreateChannelRequest(title="4b channel", about="", broadcast=True))
     ).chats[0]
-    await b.send_message(channel, f"post {marker}")
+    post = await b.send_message(channel, f"post {marker}")
     await b(functions.channels.InviteToChannelRequest(channel, [a]))
     await b(functions.messages.EditChatTitleRequest(chat_id=group.id, title="4b group renamed"))
-    return {"a_id": a.id, "group_id": group.id, "channel_id": channel.id}
+    return {"a_id": a.id, "group_id": group.id, "channel_id": channel.id, "post_id": post.id}
 ```
 
 ```python
 # tests/telegram/witness.py
 """The independent read-state witness (spec §38.3), run as its own process.
 
-It opens B's session (never A's) and prints B's read_outbox_max_id for the DM
-with A: a marker Telegram reports from the recipient's side, which the
-gateway process cannot forge.
+It opens B's session (never A's) and prints, as JSON, three markers that
+Telegram reports from B's side, which the gateway process cannot forge:
+
+- ``dm_outbox``: B's ``read_outbox_max_id`` in the DM with A. It moves if A reads B's messages.
+- ``group_outbox``: the same for the basic group. C stays idle for the whole window.
+- ``channel_views``: the view counter of B's channel post. It moves only on
+  ``GetMessagesViews``, which the gateway never sends.
 """
 
 import asyncio
+import json
 import sys
 
 from telethon import TelegramClient, functions, types
 
 
-async def main(path: str, api_id: int, api_hash: str, a_id: int) -> None:
+async def main(path: str, api_id: int, api_hash: str, a_id: int, group_id: int,
+               channel_id: int, post_id: int) -> None:
     client = TelegramClient(path, api_id, api_hash, receive_updates=False)
     await client.connect()
-    peer = await client.get_input_entity(a_id)
-    result = await client(functions.messages.GetPeerDialogsRequest(peers=[types.InputDialogPeer(peer)]))
-    print(result.dialogs[0].read_outbox_max_id)
+    a = await client.get_input_entity(a_id)
+    group = await client.get_input_entity(-group_id)
+    channel = await client.get_input_entity(int(f"-100{channel_id}"))
+    dialogs = await client(functions.messages.GetPeerDialogsRequest(
+        peers=[types.InputDialogPeer(a), types.InputDialogPeer(group)]))
+    outbox = {type(d.peer).__name__: d.read_outbox_max_id for d in dialogs.dialogs}
+    posts = await client(functions.channels.GetMessagesRequest(channel, [types.InputMessageID(post_id)]))
+    print(json.dumps({
+        "dm_outbox": outbox["PeerUser"],
+        "group_outbox": outbox["PeerChat"],
+        "channel_views": posts.messages[0].views,
+    }))
     await client.disconnect()
 
 
 if __name__ == "__main__":
-    asyncio.run(main(sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])))
+    asyncio.run(main(sys.argv[1], int(sys.argv[2]), sys.argv[3], *map(int, sys.argv[4:8])))
 ```
 
 (`witness.py` passes `api_hash` on argv inside a test process that talks to public test accounts only; that is acceptable for the harness and is never done by `src/`. If the owner prefers, it can read the Keychain itself: `read_api_hash()`.)
@@ -6184,6 +7021,7 @@ if __name__ == "__main__":
 # tests/telegram/test_testdc.py
 """End to end on Telegram's test DC (opt-in: --run-telegram-testdc)."""
 
+import json
 import secrets
 import subprocess
 import sys
@@ -6242,12 +7080,14 @@ async def test_the_four_tools_on_the_test_dc(tmp_path):
     assert seeded["a_id"] == a_id
     await b.disconnect()  # the witness opens B's session in its own process
 
-    def witness() -> int:
+    def witness() -> dict:
         out = subprocess.run(  # noqa: S603 -- fixed argv
-            [sys.executable, "-m", "tests.telegram.witness", str(tmp_path / "b"), str(dc.api_id), dc.api_hash, str(a_id)],
+            [sys.executable, "-m", "tests.telegram.witness", str(tmp_path / "b"), str(dc.api_id),
+             dc.api_hash, str(a_id), str(seeded["group_id"]), str(seeded["channel_id"]),
+             str(seeded["post_id"])],
             capture_output=True, text=True, check=True, timeout=60,
         )
-        return int(out.stdout.strip())
+        return json.loads(out.stdout)
 
     before = witness()
 
@@ -6256,8 +7096,8 @@ async def test_the_four_tools_on_the_test_dc(tmp_path):
     scope = scope_handlers(conn, session, discovery)
     projects = project_handlers(conn)
     project_ref = projects["project create"]({"slug": "testdc", "display_name": "Test DC"})["project_ref"]
-    # allow + add the DM and the group; the channel stays outside the project
-    for kind in ("private", "group"):
+    # allow + add every chat kind the fixture made: each is touched by the read tools
+    for kind in ("private", "group", "channel"):
         found = await scope["scope discover"]({})
         handle = next(s["handle"] for s in found["selections"] if s["chat_type"] == kind)
         scope["scope allow"]({"handle": handle})
@@ -6284,8 +7124,8 @@ async def test_the_four_tools_on_the_test_dc(tmp_path):
         return request.validated_args, authority.snapshot(tool, request)
 
     chats = await reads.list_chats(*snap("telegram_list_chats", limit=20, chat_type="any", archived="include"))
-    assert {c["chat_type"] for c in chats["chats"]} == {"private", "group"}
-    await reads.get_unread(*snap("telegram_get_unread", limit=30, include_muted=True, chat_type="any"))
+    assert {c["chat_type"] for c in chats["chats"]} == {"private", "group", "channel"}
+    unread_before = await reads.get_unread(*snap("telegram_get_unread", limit=30, include_muted=True, chat_type="any"))
     await reads.resolve_peer(*snap("telegram_resolve_peer", query="4b", chat_type="any", limit=10))
     for chat in chats["chats"]:
         page = await reads.get_messages(*snap("telegram_get_messages", peer_ref=chat["peer_ref"], limit=30))
@@ -6295,7 +7135,13 @@ async def test_the_four_tools_on_the_test_dc(tmp_path):
         if chat["chat_type"] == "private":
             assert any(marker in (m["text"] or "") for m in page["messages"])
 
-    assert witness() == before, "a read tool moved B's read_outbox_max_id"
+    # Independent: markers Telegram reports from B's side (DM, group, channel views).
+    assert witness() == before, "a read tool moved a read marker or a view counter"
+    # Not independent (read through the gateway itself), recorded as such: A's unread counts.
+    unread_after = await reads.get_unread(*snap("telegram_get_unread", limit=30, include_muted=True, chat_type="any"))
+    counts = lambda body: {c["peer_ref"]: c["unread_count"] for c in body["chats"]}  # noqa: E731
+    assert counts(unread_after) == counts(unread_before)
+    assert unread_after["total_unread_visible"] == unread_before["total_unread_visible"]
     assert violations(log) == [], violations(log)
 
     await session.stop()
