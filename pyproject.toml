@@ -38,6 +38,10 @@ mypy_path = "src"
 module = "jsonschema.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "telethon.*"
+ignore_missing_imports = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/telegram_mcp"]
 

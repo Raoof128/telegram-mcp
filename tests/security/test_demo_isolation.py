@@ -6,7 +6,13 @@ from telegram_mcp import config as config_module
 
 
 def test_no_telethon_import():
-    assert "telethon" not in sys.modules
+    import subprocess
+
+    probe = "import sys, telegram_mcp.server, telegram_mcp.config; print('telethon' in sys.modules)"
+    done = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, timeout=60, check=True
+    )
+    assert done.stdout.strip() == "False"
     assert not hasattr(config_module, "Telethon")
     import telegram_mcp.config
 
