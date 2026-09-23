@@ -62,4 +62,30 @@ async def seed(
     post = await b.send_message(channel, f"post {marker}")
     await b(functions.channels.InviteToChannelRequest(channel, [a]))
     await b(functions.messages.EditChatTitleRequest(chat_id=group.id, title="4b group renamed"))
-    return {"a_id": a.id, "group_id": group.id, "channel_id": channel.id, "post_id": post.id}
+    forum = (
+        await b(
+            functions.channels.CreateChannelRequest(
+                title="4c forum", about="", megagroup=True, forum=True
+            )
+        )
+    ).chats[0]
+    await b(functions.channels.InviteToChannelRequest(forum, [a]))
+    topics = {}
+    for name in ("alpha", "beta"):
+        created = await b(
+            functions.messages.CreateForumTopicRequest(peer=forum, title=f"topic {name}")
+        )
+        topic_id = next(u.id for u in created.updates if hasattr(u, "id"))
+        topics[name] = topic_id
+        for i in range(3):
+            await b.send_message(forum, f"topic-{name} {i} {marker}", reply_to=topic_id)
+    for i in range(3):
+        await b.send_message(forum, f"general {i} {marker}")  # no reply_to: the General topic
+    return {
+        "a_id": a.id,
+        "group_id": group.id,
+        "channel_id": channel.id,
+        "post_id": post.id,
+        "forum_id": forum.id,
+        "topics": topics,
+    }
