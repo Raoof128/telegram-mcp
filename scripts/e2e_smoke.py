@@ -1394,6 +1394,83 @@ def phase4a_catalogue(ledger: Ledger) -> None:
     ledger.run(area, "demo server still has no sensitive route", demo_still_refuses)
 
 
+def phase4b_reads(ledger: Ledger) -> None:
+    """The four Telegram tools through real ingress + coordinator, on a fake transport."""
+    area = "Phase 4b — Telegram reads (fake transport)"
+    results: dict[str, Any] = {}
+
+    def drive() -> dict[str, Any]:
+        if results:
+            return results
+        import asyncio
+        import tempfile
+
+        sys.path.insert(0, str(REPO))
+        from tests.authority_fixtures import PROJECT_REF
+        from tests.integration.test_phase4a_end_to_end import CODEX, call
+        from tests.integration.test_phase4b_end_to_end import MARKER, _close, _world
+
+        class _Patch:  # _world only needs chdir from monkeypatch
+            def chdir(self, path: Any) -> None:
+                os.chdir(path)
+
+        async def main() -> dict[str, Any]:
+            here = os.getcwd()
+            out: dict[str, Any] = {}
+            with tempfile.TemporaryDirectory(dir="/tmp") as short:
+                world = await _world(Path(short), _Patch())
+                try:
+                    out["chats"] = await call(
+                        world, CODEX, "telegram_list_chats", {"project_ref": PROJECT_REF}
+                    )
+                    out["messages"] = await call(
+                        world,
+                        CODEX,
+                        "telegram_get_messages",
+                        {"project_ref": PROJECT_REF, "peer_ref": world["refs"]["user:100"]},
+                    )
+                    out["unread"] = await call(
+                        world, CODEX, "telegram_get_unread", {"project_ref": PROJECT_REF}
+                    )
+                    world["conn"].commit()
+                    out["at_rest"] = any(
+                        MARKER.encode() in p.read_bytes() for p in Path(short).glob("meta.db*")
+                    )
+                    out["calls"] = list(world["fake"].calls)
+                finally:
+                    await _close(world)
+                    os.chdir(here)
+            return out
+
+        results.update(asyncio.run(main()))
+        return results
+
+    def list_and_read():
+        out = drive()
+        assert out["chats"]["ok"] and out["messages"]["ok"], (out["chats"], out["messages"])
+        assert out["messages"]["meta"]["disclosure"]["receipt_ref"].startswith("tdr_")
+        return f"{len(out['chats']['data']['chats'])} chats, {len(out['messages']['data']['messages'])} messages, receipts"
+
+    def unread_exact():
+        body = drive()["unread"]
+        assert body["ok"] and body["data"]["total_is_exact"] is True, body
+        return f"total_unread_visible={body['data']['total_unread_visible']}, exact"
+
+    def no_body_at_rest():
+        assert drive()["at_rest"] is False
+        return "message marker absent from meta.db, -wal, -shm"
+
+    def only_reviewed_calls():
+        calls = set(drive()["calls"])
+        assert calls <= {"messages.GetPeerDialogsRequest", "messages.GetHistoryRequest"}, calls
+        return ", ".join(sorted(calls))
+
+    ledger.run(area, "list_chats + get_messages through ingress with receipts", list_and_read)
+    ledger.run(area, "get_unread total is exact over the project", unread_exact)
+    ledger.run(area, "no message body at rest", no_body_at_rest)
+    ledger.run(area, "only reviewed RPCs reached the transport", only_reviewed_calls)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Phase 1 + Phase 2 end-to-end smoke")
     parser.add_argument("--verbose", action="store_true", help="print tracebacks for failures")
@@ -1412,6 +1489,7 @@ def main() -> int:
         phase2a_runtime(ledger, sandbox)
         phase2_consent(ledger)
         phase4a_catalogue(ledger)
+        phase4b_reads(ledger)
         conn = state.get("conn")
         if conn is not None:
             conn.close()

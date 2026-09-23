@@ -4,23 +4,28 @@
 `telegram_resolve_project` succeed for real: authenticated loopback ingress,
 a daemon-delivered consent prompt answered by the packaged agent, the Phase-3
 coordinator, a signed receipt that verifies persisted and offline, ledger
-rows, one audit event, and a refreshed anchor. 4b and 4c are not started.
+rows, one audit event, and a refreshed anchor. **Phase 4b is implemented on
+branch `phase-4b`** (see "Phase 4b" below): a daemon, Touch ID admin approvals,
+raw reviewed login, and `list_chats`, `resolve_peer`, `get_messages` and
+`get_unread` through the same chain, against a fake Telegram transport. 4c is
+not started.
 
-**NOT production.** Nothing here has touched Telegram. No Telegram login,
-session file, service account, LaunchAgent or tunnel ingress is claimed. The
-other seven sensitive tools still return `POLICY_UNCONFIGURED`.
+**NOT production.** Nothing here has touched Telegram. The Test DC harness
+exists but has not been run (owner credentials). No Telegram login, session
+file, service account, LaunchAgent or tunnel ingress is claimed.
+`get_context` and both searches still return `POLICY_UNCONFIGURED`.
 
 ## Reproducibility
 
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                      # 706 passed, 8 skipped
-uv run python scripts/e2e_smoke.py                    # 45 passed, 0 failed
+uv run pytest -q                                      # 860 passed, 10 skipped (4b)
+uv run python scripts/e2e_smoke.py                    # 49 passed, 0 failed (4b)
 uv run pytest tests/formal -q -s                      # 624 states, 18 assertions
 uv run ruff check src tests scripts                   # clean
 uv run ruff format --check src tests scripts          # clean
-uv run mypy src/telegram_mcp                          # clean, 71 files
+uv run mypy src/telegram_mcp                          # clean, 85 files (4b)
 uv build                                              # sdist + wheel
 uv run pytest tests/integration/test_phase4a_touch_id.py --run-platform-gated -q -s   # owner-run, Touch ID
 ```
@@ -122,3 +127,71 @@ The prompter's single reader loop also removes the mid-frame desync the reviewer
 5. Owner-run: `tests/integration/test_phase4a_touch_id.py --run-platform-gated`.
 6. Make display names prompt-safe (reject or isolate bidi controls, LRM/RLM, U+061C, U+2028/2029) in `project create` and the agent's renderer before any name reaches a prompt.
 7. Add an authority check before the first Telegram RPC (revalidation still runs at step 8).
+
+---
+
+# Phase 4b — Telethon adapter, live admin approvals, login, four tools
+
+Plan: `docs/superpowers/plans/2026-09-23-telegram-mcp-phase-4b-adapter-and-tools.md`
+(revision 4). Design: revision 3 with the §3.8 revision-4 notes. It was
+executed inline, task by task, test first. Each commit was made on a green
+full gate. The ledger is in the plan's workspace.
+
+## 4b.1 Scope, as delivered
+
+- **Tools.** `telegram_list_chats`, `telegram_resolve_peer`, `telegram_get_messages` and `telegram_get_unread` run through the 4a ingress, consent and coordinator. The universe is the project's readable members, fetched with `GetPeerDialogs`. Pagination is anchored keyset with constant-size state.
+- **The adapter owns the wire.** `_GatewayClient._call` makes one send per call: no retry, sleep, flood cache or hidden migrate RPC. Each request must be on the current operation's allowlist and is charged to its work budget. Login is raw reviewed requests; Telethon's helpers are never called. The side-effect review is in `docs/verification/telegram-rpc-review.md`.
+- **Admin approvals.** Gated admin commands are approved with Touch ID on the unchanged consent wire. Secrets bind into the signed request by keyed digest, and each token is bound to its exact request.
+- **Pre-consent refusal.** Telegram tools refuse before consent without a usable session (`TelethonSession.readiness()`). Authority is re-checked before the first RPC.
+- **Retryability.** It comes only from `results.RETRYABILITY`, which is §27.1 verbatim.
+- **Topic titles.** `topic_title` is always `null`, because titles need an unreviewed RPC.
+
+## 4b.2 Evidence (default suite and smoke; fake transport)
+
+| Claim | Test |
+|---|---|
+| No retry, resend or hidden sleep at login | `test_auth_restart_is_one_request_and_no_retry`, `test_auth_restart_is_raised_once_with_no_hidden_sleep` (a real `TelegramClient` with a fake sender), `test_login_is_raw_reviewed_requests_and_never_resends` |
+| Unreviewed requests never reach the sender | `test_an_unreviewed_request_is_refused_before_the_client`, `test_outside_an_operation_or_its_allowlist_nothing_is_sent` |
+| Approval bound to the exact request | `test_a_token_is_bound_to_the_exact_request_including_secrets`, `test_a_token_expires`, the swapped-args replay in `test_serve_admin_path_gates_through_the_approver` |
+| Authority moved during consent → no RPC | `test_scope_mode_change_during_prompt_refuses` (Review Focus 1) |
+| Outside-project sender gets no ref | `test_sender_outside_project_gets_null_ref` |
+| Pagination never silently ends | `test_a_large_project_pages_to_the_end_with_constant_state` (1,100 chats), `test_a_deleted_message_does_not_end_paging` |
+| Reservation dominates the Phase-3 measurement | `test_actual_charge_never_exceeds_the_reservation`, over every tool and egress mode |
+| Local logout forgets the in-memory key | `test_logout_local_forgets_the_in_memory_client` |
+| Unreachable Telegram is a state, not a crash | `test_an_unreachable_telegram_does_not_stop_the_daemon` |
+| No body at rest; only reviewed RPCs | `test_list_chats_then_get_messages_with_receipts_and_no_body_at_rest`; the four smoke rows under "Phase 4b — Telegram reads" |
+| Production-shape admin socket | `test_production_shape_socket_is_group_0660_and_needs_the_installer` |
+
+## 4b.3 Control runs (each observed failing, then restored)
+
+- **RPC guard.** A planted `functions.messages.ReadHistoryRequest` in the adapter made `test_every_rpc_reference_is_reviewed` and `test_no_prohibited_symbol_appears_in_src` fail.
+- **Estimator.** Weakening `bounds._W` from U+0001 to `a` made all four exposure-invariant cases fail.
+
+## 4b.4 Owner-pending (not run here; no claim made)
+
+1. **Test DC run.** First create the Keychain item: `security add-generic-password -s telegram-mcp -a api_hash -w`. Then run `TG_TESTDC_API_ID=… TG_TESTDC_DC=… TG_TESTDC_IP=… uv run pytest tests/telegram/test_testdc.py --run-telegram-testdc -q -s`. This is the read-state witness:
+   - B-side DM and group read markers and the channel post views (independent);
+   - A's unread counts (read through the gateway, so not independent);
+   - the runtime recorder;
+   - the marker leak sweep.
+
+   The fixture builder and witness have never run.
+2. **Installed host boundary.** `tests/integration/test_daemon.py::test_the_installed_runtime_directory_has_the_production_boundary --run-platform-gated` skips until the installer has run.
+3. **Carried from 4a.** `tests/integration/test_phase4a_touch_id.py --run-platform-gated`.
+4. **Signed agent bundle.** `build/consent-signed` does not yet contain the Task 2 renderer fix. Re-package it before relying on the paired agent.
+
+## 4b.5 Recorded deviations
+
+- **Login-Keychain `api_hash`** (design §3.5): dev only, Test DC and the dedicated account only. It closes when the `telegram-mcpd` store exists.
+- **Development daemon** (`admin_group` unset): uid-only socket, directory created at `0700`. It is **not** evidence of §9.4 conformity; the production shape is exercised only by the group-mode test and the platform-gated host check.
+- **Chat universe** (design §3.8): `GetPeerDialogs` over project members instead of paging `GetDialogs`. This is narrower than §17.4 requires.
+
+## 4b.6 Gate contributions — all still PARTIAL
+
+| Gate | 4b contribution | Missing |
+|---|---|---|
+| E (scope) | owner mode (an empty allowlist denies), per-member authority, owner chat-kind switches | the live Test DC run |
+| H (authority) | a pre-retrieval re-check; live Touch ID admin approvals bound to exact requests | the installed-host run |
+| O (provable disclosure) | receipts for Telegram-shaped disclosures (fake transport) | a real Telegram disclosure |
+| P (egress/exposure) | egress levels on message text; a reservation proven to dominate the measurement | — |
+| R (read-only) | the owned wire boundary, the reviewed set, AST and runtime guards | the Test DC witness and recorder run |

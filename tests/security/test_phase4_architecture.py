@@ -260,3 +260,10 @@ def test_the_read_service_surface_is_the_reviewed_one():
     for name in expected:
         params = list(inspect.signature(getattr(TelegramReadService, name)).parameters)
         assert params == ["self", "arguments", "snapshot"], name
+
+
+def test_write_rpcs_live_only_in_the_fixture_builder():
+    builder = Path(__file__).resolve().parents[1] / "telegram" / "fixture_builder.py"
+    assert builder.exists()
+    for path, tree in _modules():
+        assert "fixture_builder" not in {n.rsplit(".", 1)[-1] for n in _imports(tree)}, path
