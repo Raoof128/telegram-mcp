@@ -204,12 +204,16 @@ def test_v3_rows_survive_v4(tmp_path):
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
         )
     ]
-    before = {
-        t: conn.execute(f"SELECT * FROM {t} ORDER BY 1").fetchall()
+    columns = {
+        t: ", ".join(r[1] for r in conn.execute(f"PRAGMA table_info({t})"))
         for t in tables
         if t != "schema_version"
     }
+    before = {
+        t: conn.execute(f"SELECT {c} FROM {t} ORDER BY 1").fetchall() for t, c in columns.items()
+    }
     assert migrate(conn, MIGRATIONS) == 4
-    for table, rows in before.items():
-        assert conn.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall() == rows, table
+    for table, cols in columns.items():  # every v3 column of every v3 row, unchanged
+        after = conn.execute(f"SELECT {cols} FROM {table} ORDER BY 1").fetchall()
+        assert after == before[table], table
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []

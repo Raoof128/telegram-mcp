@@ -137,11 +137,36 @@ def add_destination(
     return ref
 
 
-def add_recipient(conn: Any, *, now: datetime) -> str:
+def add_recipient(conn: Any, *, now: datetime, display_name: str | None = None) -> str:
+    if display_name is not None and (
+        not isinstance(display_name, str) or not 0 < len(display_name.strip()) <= 200
+    ):
+        raise DirectoryError("display name refused")
     ref, stamp = refs.mint("recipient"), timeutil.iso(now)
     with write_tx(conn):
-        conn.execute("INSERT INTO recipients (ref, created_at) VALUES (?, ?)", (ref, stamp))
+        conn.execute(
+            "INSERT INTO recipients (ref, display_name, created_at) VALUES (?, ?, ?)",
+            (ref, display_name.strip() if display_name else None, stamp),
+        )
     return ref
+
+
+def named_recipients(conn: Any) -> list[tuple[str, str]]:
+    """Enabled recipients with a display name: ``(ref, name)`` (D7 resolution)."""
+    rows = conn.execute(
+        "SELECT ref, display_name FROM recipients WHERE enabled = 1 AND display_name IS NOT NULL ORDER BY id"
+    )
+    return [(str(r[0]), str(r[1])) for r in rows]
+
+
+def group_destinations(conn: Any) -> list[tuple[str, str, str]]:
+    """Enabled group and channel destinations: ``(ref, display name, location name)`` (D7)."""
+    rows = conn.execute(
+        "SELECT d.ref, d.display_name, l.name FROM destinations d JOIN locations l ON l.id = d.location_id"
+        " WHERE d.enabled = 1 AND (d.platform_identity GLOB 'group:*' OR d.platform_identity GLOB 'channel:*')"
+        " ORDER BY d.id"
+    )
+    return [(str(r[0]), str(r[1]), str(r[2])) for r in rows]
 
 
 def add_contact_point(

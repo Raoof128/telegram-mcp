@@ -419,6 +419,8 @@ SCHEMA_V3: tuple[str, ...] = _statements(_SCHEMA_V3_SQL)
 
 # comms v0.3 Part D: assembled across Part D's tasks before the single merge.
 _SCHEMA_V4_SQL = """
+-- D7 (P §18): a person's display name, the owner's own label (never a provider identity).
+ALTER TABLE recipients ADD COLUMN display_name TEXT;
 -- D1 (design D.4): a group is one Telegram group or channel destination, one to one.
 CREATE TABLE groups (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE,
   destination_id INTEGER NOT NULL UNIQUE REFERENCES destinations(id) ON DELETE RESTRICT,
