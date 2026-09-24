@@ -47,6 +47,10 @@ ignore_missing_imports = true
 module = "telethon.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "sqlcipher3.*"
+ignore_missing_imports = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/comms", "src/telegram_mcp", "transports/whatsapp/src/whatsvault"]
 
