@@ -23,6 +23,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from telegram_mcp.authority.cursors import project_scope_digest
+from telegram_mcp.consent.admin_summaries import summarize
 from telegram_mcp.consent.broker import ConsentBroker, ConsentError
 from telegram_mcp.consent.challenge import display_digest, jcs_dumps, synthetic_exposure_digest
 from telegram_mcp.consent.prompter import PromptDenied, Prompter, PromptUnavailable
@@ -30,7 +31,7 @@ from telegram_mcp.storage.authority_view import load_security
 
 __all__ = ["SECRET_ARGS", "AdminApprover", "sentinel_ref"]
 
-SECRET_ARGS = frozenset({"phone", "code", "password"})
+SECRET_ARGS = frozenset({"phone", "code", "password", "identity"})
 _REQUEST_DOMAIN = b"telegram-mcp-admin-request/v1\0"
 _SECRET_DOMAIN = b"telegram-mcp-admin-secret/v1\0"
 _SENTINEL_DOMAIN = b"telegram-mcp-sentinel/v1\0"
@@ -101,7 +102,7 @@ class AdminApprover:
         principal, account, policy_epoch = self._refs()
         security_epoch, _locked = load_security(self._conn)
         display: dict[str, Any] = {
-            "action_display": command,
+            "action_display": summarize(command, args),
             "client_display": "Operator (admin socket)",
             "peer_display": None,
             "project_display": [],

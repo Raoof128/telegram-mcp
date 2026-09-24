@@ -405,3 +405,59 @@ async def test_a_long_page_is_fitted_under_the_cap(world):
     args, s = snap("telegram_get_messages", peer_ref=refs["user:100"], limit=10)
     out = await reads.get_messages(args, s)
     assert 0 < len(out["messages"]) < 10 and "_next_cursor" in out
+
+
+def _spy_admit_live(monkeypatch):
+    """Record every class decision retrieval asks the one evaluator for (Task 4A)."""
+    import telegram_mcp.telegram.reads as reads_module
+
+    seen: list[tuple[str | None, bool]] = []
+    real = reads_module.admit_live
+
+    def spy(view, request, **facts):
+        verdict = real(view, request, **facts)
+        seen.append((request.peer_identity, verdict))
+        return verdict
+
+    monkeypatch.setattr(reads_module, "admit_live", spy)
+    return seen
+
+
+async def _refused_by_owner_class(world, monkeypatch, *, sql, identity):
+    conn, fake, reads, snap, refs = world
+    conn.execute(f"UPDATE policy_state SET {sql}, policy_epoch = policy_epoch + 1")
+    conn.commit()
+    seen = _spy_admit_live(monkeypatch)
+    args, s = snap("telegram_get_messages", peer_ref=refs[identity], limit=30)
+    with pytest.raises(RetrievalRefusal) as exc:
+        await reads.get_messages(args, s)
+    assert exc.value.code == "NOT_ACCESSIBLE"
+    assert (identity, False) in seen  # the evaluator's owner_class step denied it
+    assert "messages.GetHistoryRequest" not in fake.calls
+
+
+async def test_an_archived_member_is_not_readable_when_archived_chats_are_excluded(
+    world, monkeypatch
+):
+    await _refused_by_owner_class(
+        world, monkeypatch, sql="include_archived = 0", identity="channel:7"
+    )
+
+
+async def test_a_private_member_is_not_readable_when_private_chats_are_excluded(world, monkeypatch):
+    await _refused_by_owner_class(
+        world, monkeypatch, sql="include_private = 0", identity="user:100"
+    )
+
+
+async def test_a_group_member_is_not_readable_when_groups_are_excluded(world, monkeypatch):
+    await _refused_by_owner_class(world, monkeypatch, sql="include_groups = 0", identity="chat:9")
+
+
+async def test_a_channel_member_is_not_readable_when_channels_are_excluded(world, monkeypatch):
+    await _refused_by_owner_class(
+        world,
+        monkeypatch,
+        sql="include_archived = 1, include_channels = 0",
+        identity="channel:7",
+    )

@@ -13,15 +13,15 @@ data without a receipt.
 
 from __future__ import annotations
 
-import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from telegram_mcp.disclosure.audit.anchor import AnchorError, write_anchor
+from telegram_mcp.disclosure.audit.anchor import AnchorError, latch_degraded, write_anchor
 from telegram_mcp.disclosure.audit.chain import (
+    APPEND_GUARD,
     append_event,
     immediate_transaction,
     mint_event_id,
@@ -40,7 +40,7 @@ from telegram_mcp.disclosure.receipts import (
     mint_disclosure_ref,
     sign_payload,
 )
-from telegram_mcp.storage.settings import get_setting, set_setting
+from telegram_mcp.storage.settings import get_setting
 
 __all__ = [
     "DISCLOSURE_STEPS",
@@ -73,7 +73,6 @@ DISCLOSURE_STEPS: tuple[str, ...] = (
 # A single process-wide guard, acquired BEFORE step 11 and held across step
 # 12. Marking the chain ANCHOR_PENDING only after committing would leave a
 # window in which a second caller commits and the chain goes two ahead.
-_APPEND_GUARD = threading.Lock()
 
 _SEARCH_TOOLS = frozenset({"telegram_search_messages", "telegram_cross_project_search"})
 
@@ -316,9 +315,7 @@ class DisclosureCoordinator:
         }
 
     def _latch_degraded(self, disclosure_ref: str, reason: str) -> None:
-        set_setting(self._conn, "audit.integrity_degraded", 1)
-        set_setting(self._conn, "audit.degraded_disclosure_ref", disclosure_ref)
-        set_setting(self._conn, "audit.degraded_reason", reason)
+        latch_degraded(self._conn, reason=reason, disclosure_ref=disclosure_ref)
 
     # -- the transaction ----------------------------------------------------
 
@@ -469,7 +466,7 @@ class DisclosureCoordinator:
             actual = buckets_for(tool_name, data, client_id=snapshot.client_id)
 
             # ==== DISCLOSURE BARRIER: steps 11 and 12 under one guard =======
-            with _APPEND_GUARD:
+            with APPEND_GUARD:
                 self._checkpoint("commit_disclosure")
                 try:
                     with immediate_transaction(self._conn):

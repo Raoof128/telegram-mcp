@@ -393,3 +393,14 @@
 - **Files changed:** the plan, `AGENT.md`, this file.
 - **Verification:** Every code block parses; the guard predictions were checked.
 - **Follow-ups:** inline execution.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase 5a implemented on `phase-5a`.
+- **Summary:** The operator surface and one policy engine (plan rev 3, 12 tasks). Five shipped defects fixed; four gaps recorded for 5b.
+- **Files changed:** see the matching `AGENT.md` entry.
+- **Verification:** pytest 1493 passed, 10 skipped; smoke 60/60; formal 624/18; ruff, format, mypy and build clean.
+- **Follow-ups:**
+  - Branch review, then the merge decision.
+  - The 5b plan.
+  - No production claim.

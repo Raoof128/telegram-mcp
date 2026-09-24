@@ -450,3 +450,37 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
 - **Files changed:** the plan, `AGENT.md`, `CHANGELOG.md`.
 - **Verification:** 64 code blocks parse; the new class guard flags exactly the four `reads.py` sites Task 4A removes; no placeholders.
 - **Follow-ups:** execute inline on `phase-5a` in the order 1, 2, 3, 4, 4A, 5, 9, 6, 7, 8, 10, 11.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase 5a executed inline from plan revision 3, on branch `phase-5a` (12 tasks: 1–11 plus 4A).
+- **Summary:** The operator surface and the one policy engine are wired through the daemon:
+  - three transaction-runner kinds, with a fixed BUSY refusal on lock contention;
+  - an audited lock/unlock that refreshes the anchor and has a tested degraded-recovery path;
+  - one evaluator with traces, and retrieval deciding chat class through it with live facts (4A);
+  - metadata-effective access with conditional `owner_class` rows;
+  - `policy explain/simulate/diff`, with semantic simulate-equals-commit over all 16 simulatable commands and bound, capped `tps_` stages;
+  - checkpoint verification by recorded key (`none` distinct from `verified`);
+  - withheld-disclosure truth in `disclosure show/verify`, and optional `exposure status` filters;
+  - rename, members, remove-peer, overlap, instruction, cross-search grants, `scope remove`, `client disable`;
+  - Touch ID summaries of at most 160 codepoints;
+  - completeness pinned by name, and a pinned `serve` verb.
+
+  Five shipped defects were fixed (see `docs/verification/phase-5.md` §5a.3), and four shipped gaps were recorded for 5b (§5a.4).
+- **Rulings:**
+  - `ADMIN_EVENTS` was already exported (plan P13 was wrong).
+  - One commit (7dd7c79) landed on a red lint gate. It was fixed in the next commit, and every later commit went through a fail-fast gate script.
+  - Test adjustments: C408, RUF059, and PLE2502 (a literal U+202E, now an escape).
+  - The Task 3 command set was extended for Task 9.
+  - Task 6's test count is 25, not 26.
+  - The production `assert` became an explicit fail-closed raise.
+- **Files changed:** `src/telegram_mcp/{authority/{policy,effective,staging}.py, storage/{db,refstore,authority_view,effective_access}.py, disclosure/{coordinator,seams,search_authority,keys,lineage}.py, disclosure/audit/{chain,anchor}.py, telegram/reads.py, ipc/admin.py, ipc/handlers/{_wrapper,projects,scope,clients,policy,audit,inspect}.py, consent/{admin_summaries,admin_approval}.py, runtime/composition.py, cli.py}`, the new tests, `scripts/e2e_smoke.py`, `docs/verification/phase-5.md`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** the full gate on `phase-5a`:
+  - `uv sync --locked` OK; contracts check OK (23 files);
+  - pytest 1493 passed, 10 skipped; smoke 60/60; formal 624 states, 18 assertions;
+  - ruff, format and mypy clean (96 source files); build OK.
+- **Follow-ups:**
+  - Self-review of the whole branch (no subagents, per the owner).
+  - The merge decision (owner).
+  - The 5b plan.
+  - No production claim.
