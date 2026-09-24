@@ -44,6 +44,12 @@ def pytest_addoption(parser):
         default=False,
         help="run tests against Telegram's test DC (needs TG_TESTDC_* and the Keychain item)",
     )
+    parser.addoption(
+        "--run-live-acceptance",
+        action="store_true",
+        default=False,
+        help="run the adapter conformance suite against live accounts (evidence only)",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
