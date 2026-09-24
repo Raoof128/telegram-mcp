@@ -75,6 +75,7 @@
 - Modify: every importer (32 files, found with `grep -rln "transports.telegram.opaque\|transports.telegram.canonical" src tests scripts`), repointed by the AST-based rewriter used in 5b-1/5b-3 (`PYTHONPATH=scripts python -m migration.rewrite` style, or a one-off AST pass): import statements only.
 - Create: `src/comms/core/refs.py`, `src/comms/core/timeutil.py`.
 - Modify: `tests/security/test_comms_layering.py`, `tests/security/test_ai_boundary.py`.
+- Create: `tests/security/test_comms_wire_frozen.py` (P2).
 - Create: `tests/core/__init__.py`, `tests/core/test_refs_and_time.py`, `tests/unit/test_core_moves.py`.
 
 **Interfaces (produced):**
@@ -144,7 +145,13 @@ The key never appears in an exception, `repr` or log.
   - `test_the_key_never_appears_in_errors` (the hex key absent from `str(exc)` and `repr(exc)`).
   - `test_write_tx_commits_and_rolls_back`, `test_write_tx_refuses_nesting`, `test_io_guard_refuses_inside_a_transaction`, `test_migrate_is_rerunnable_and_versioned`, `test_lock_contention_raises_after_the_timeout` (two connections, one thread, `timeout` shortened via a parameter of the test's own `connect`, not of `open_comms_db`).
 - [ ] **Step 2: Run; expected: all fail (module absent).**
-- [ ] **Step 3: Implement** as specified.
+- [ ] **Step 3: Implement** as specified, and add to `pyproject.toml` beside the existing overrides (P1):
+
+  ```toml
+  [[tool.mypy.overrides]]
+  module = "sqlcipher3.*"
+  ignore_missing_imports = true
+  ```
 - [ ] **Step 4:** Pass; gate green. Commit: `feat: comms.db on SQLCipher, fail-closed open (wrong key, keyless create, short key), write_tx and io_guard`.
 
 ---
