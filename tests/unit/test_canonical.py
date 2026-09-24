@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from comms.transports.telegram.canonical import jcs_dumps
+from comms.core.canonical import jcs_dumps
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTORS = ROOT / "tests" / "fixtures" / "canonical" / "jcs_vectors.json"
@@ -69,6 +69,4 @@ def test_extra_inputs_are_identical(value):
 def test_there_is_exactly_one_jcs_implementation():
     src = ROOT / "src"
     hits = [p for p in src.rglob("*.py") if "def jcs_dumps(" in p.read_text()]
-    assert [p.relative_to(ROOT).as_posix() for p in hits] == [
-        "src/comms/transports/telegram/canonical.py"
-    ]
+    assert [p.relative_to(ROOT).as_posix() for p in hits] == ["src/comms/core/canonical.py"]

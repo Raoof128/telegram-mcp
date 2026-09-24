@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from comms.transports.telegram.canonical import jcs_dumps
+from comms.core.canonical import jcs_dumps
 
 __all__ = [
     "DATA_BYTES_MAX",

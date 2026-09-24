@@ -1193,7 +1193,7 @@ def phase4c_reads(ledger: Ledger) -> None:
         sys.path.insert(0, str(REPO))
         from telethon.tl import types
 
-        from comms.transports.telegram.canonical import jcs_dumps
+        from comms.core.canonical import jcs_dumps
         from comms.transports.telegram.storage.refstore import RefStore
         from tests.authority_fixtures import BETA_REF, PROJECT_REF, seed_second_project
         from tests.integration.test_phase4a_end_to_end import CODEX, call

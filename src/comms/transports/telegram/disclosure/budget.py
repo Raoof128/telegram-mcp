@@ -24,7 +24,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from comms.transports.telegram.canonical import jcs_dumps
+from comms.core.canonical import jcs_dumps
+from comms.core.opaque import mint_opaque_ref
 from comms.transports.telegram.disclosure.measure import (
     RECORD_ELEMENT,
     bytes_disclosed,
@@ -32,7 +33,6 @@ from comms.transports.telegram.disclosure.measure import (
     records_disclosed,
 )
 from comms.transports.telegram.keys.store import load_key
-from comms.transports.telegram.opaque import mint_opaque_ref
 from comms.transports.telegram.storage.settings import get_setting
 
 __all__ = [

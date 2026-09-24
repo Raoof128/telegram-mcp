@@ -23,8 +23,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from comms.transports.telegram.canonical import jcs_dumps
-from comms.transports.telegram.opaque import mint_opaque_ref
+from comms.core.canonical import jcs_dumps
+from comms.core.opaque import mint_opaque_ref
 
 __all__ = [
     "APPENDIX_K_FIELDS",

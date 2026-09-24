@@ -12,6 +12,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from comms.core.canonical import jcs_dumps
+from comms.core.opaque import validate_ref_format
 from comms.transports.telegram.authority.policy import (
     AuthorityRequest,
     AuthorityView,
@@ -20,8 +22,6 @@ from comms.transports.telegram.authority.policy import (
     TraceStep,
     evaluate_with_trace,
 )
-from comms.transports.telegram.canonical import jcs_dumps
-from comms.transports.telegram.opaque import validate_ref_format
 
 __all__ = [
     "AccessRow",

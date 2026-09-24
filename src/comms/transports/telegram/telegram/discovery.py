@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from comms.transports.telegram.opaque import mint_opaque_ref
+from comms.core.opaque import mint_opaque_ref
 
 __all__ = ["DiscoveryStore"]
 

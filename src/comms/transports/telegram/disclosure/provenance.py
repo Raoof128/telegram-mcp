@@ -16,7 +16,7 @@ import hashlib
 from collections.abc import Mapping
 from typing import Any
 
-from comms.transports.telegram.canonical import jcs_dumps
+from comms.core.canonical import jcs_dumps
 from comms.transports.telegram.disclosure.egress import effective_egress_level
 from comms.transports.telegram.disclosure.measure import RECORD_ELEMENT, MeasurementError
 

@@ -10,7 +10,7 @@ the caller as non-enumerating ``REF_NOT_FOUND``/``NOT_ACCESSIBLE``
 
 from __future__ import annotations
 
-from comms.transports.telegram.opaque import validate_ref_format as _validate_shape
+from comms.core.opaque import validate_ref_format as _validate_shape
 
 __all__ = ["REF_PREFIXES", "validate_ref_format"]
 

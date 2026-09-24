@@ -8,7 +8,7 @@ import sqlite3
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from comms.transports.telegram.canonical import jcs_dumps
+from comms.core.canonical import jcs_dumps
 from comms.transports.telegram.disclosure import receipts
 from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
 from comms.transports.telegram.disclosure.keys import publish_verification_key

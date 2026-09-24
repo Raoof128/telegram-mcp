@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from comms.transports.telegram.opaque import mint_opaque_ref
+from comms.core.opaque import mint_opaque_ref
 
 __all__ = ["Binding", "Staged", "StagingRegistry"]
 

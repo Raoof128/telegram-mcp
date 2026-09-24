@@ -6,7 +6,7 @@ import pytest
 from telethon import errors
 from telethon.tl import types
 
-from comms.transports.telegram.canonical import jcs_dumps
+from comms.core.canonical import jcs_dumps
 from comms.transports.telegram.disclosure.coordinator import RetrievalRefusal
 from comms.transports.telegram.disclosure.seams import CoordinatorAuthority
 from comms.transports.telegram.keys.store import load_key, provision_missing

@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 
+from comms.core.canonical import jcs_dumps
 from comms.transports.telegram.authority.policy import (
     AuthorityView,
     ClientProjectGrant,
@@ -23,7 +24,6 @@ from comms.transports.telegram.authority.policy import (
     ProjectState,
     make_view,
 )
-from comms.transports.telegram.canonical import jcs_dumps
 
 __all__ = [
     "grant_digest",

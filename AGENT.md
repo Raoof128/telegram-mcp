@@ -543,3 +543,40 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
 - **Files changed:** `src/comms/transports/telegram/{canonical,cli,doctor,opaque}.py`, `disclosure/{budget,coordinator,receipts,seams,verify}.py` (`exposure.py` deleted), `storage/migrations.py`, `ipc/{admin,__init__}.py`, `ipc/handlers/*`, `keys/{registry,store,__init__}.py`, `runtime/{bootstrap,composition,daemon,lifecycle}.py`, `authority/refs.py`, `contracts/{meta,manifest}.json`; deleted `consent/`, `ipc/rendezvous.py`, `keys/pairing.py`, `agent/`, `scripts/{package_agent.sh,consent-agent.plist}`; `scripts/{extract_contracts.py,e2e_smoke.py,install_paths.sh}`; `formal/{model.py,README.md}`, `SECURITY-MANIFEST.json`; tests throughout (new: `test_canonical`, `test_receipt_migration`, `test_receipts_v2`, `test_owner_direct_disclosure`, `test_receipt_v2_meta`, `test_invariant_mutations`, `test_admin_peer_authority`, `test_retired_keys`, `test_ai_boundary`, `test_tombstones`, `test_test_accounting`); `.claude/settings.json`; `docs/comms-spec-v0.2.md`; `docs/verification/comms-5b3{.md,-collected-before.txt,-collected-after.txt,-classification.json}`; `CLAUDE.md`, `AGENT.md`, `CHANGELOG.md`.
 - **Verification:** Full gate at branch head: contracts OK (23 files); Telegram 1427 passed/4 skipped; smoke 52/52; formal 544 states, 22 assertions; ruff/format/mypy clean; build OK; WhatsVault 539 passed. Test accounting: 196 IDs left the collection, 183 removed with consent and 13 replaced by named owner-direct tests, 0 unexplained (pinned by a test).
 - **Follow-ups:** merge and push need the owner's approval. Runbook (owner-approved, outside every gate): delete the paired Secure Enclave approval key and pins, uninstall the old consent bundle and LaunchAgent. Next: 5b-4 campaign core. Deferred minor: intermittent uvicorn lifespan traceback at smoke shutdown. No production claim.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms 5b-4: the campaign core, fake transports only (branch `comms-5b4`). Design rev 4, plan rev 3, executed inline and test-first.
+- **Summary:** `comms.core` now holds a transport-neutral campaign core.
+  - **Primitives.** `canonical` and `opaque` moved in as single copies, alongside `refs`, `timeutil` and `domains`.
+  - **Storage.** A SQLCipher `comms.db` that fails closed: a wrong, short or missing key, or a plaintext file, is refused. Migrations are atomic. Schema v1 carries identity/origin binding triggers and immutability.
+  - **Directory.** Delivery identities are shared between endpoints: a user and their private chat are one identity, and Telegram peer kinds are marked.
+  - **Resolution.** Every target resolves with its origin paths.
+  - **Events.** A typed, finite-domain event log.
+  - **Transport contract.** No I/O in `prepare` or `still_valid`; `ResultKind` semantics are pinned.
+  - **Reducer.** One reducer writes job state. The exhaustive table names the two descents, the claim and its attempt are atomic, and early provider updates are reconciled on bind.
+  - **Freeze.** Generations, idempotency keys and three distinct digests.
+  - **Engine.** Only an exception raised by `deliver` becomes an outcome.
+  - **Operations.** Cancel, retry, resolution, and provider updates with `pending_match`.
+  - **Scheduling and recovery.** `run_due` enforces the time gate. `recover` repairs state and never resends.
+  - **Formal.** A bounded model (96,528 states, 11 properties, each mutation-tested) and a 300-sequence differential walk against the library.
+- **Files changed:**
+  - `src/comms/core/{canonical,opaque,refs,timeutil,domains}.py`, `storage/`, `campaigns/{directory,resolve,drafts,events}.py`, `delivery/{transport,reducer,freeze,engine,operations,scheduling,recovery}.py`;
+  - `formal/campaign_model.py`, `pyproject.toml`;
+  - 31 importers repointed; `tests/core/*`;
+  - `tests/security/{test_comms_wire_frozen,test_comms_layering,test_ai_boundary}.py`, `tests/unit/{test_core_moves,test_canonical}.py`, `tests/formal/test_campaign_model{,_mutations}.py`;
+  - the design (rev 4) and the plan (rev 3), `docs/verification/comms-5b4.md`, `CLAUDE.md`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** Full gate at branch head:
+  - Telegram 2215 passed, 4 skipped; smoke 52/52;
+  - formal: 544/22, plus the campaign model at 96,528 states and 11 properties;
+  - ruff, format and mypy (110 files) clean; build OK;
+  - WhatsVault 539 passed, and its subtree is byte-identical to `main`;
+  - the freeze of 5,000 endpoints takes 341 ms (budget 3 s);
+  - the differential walk runs 3,803 steps with a planted-defect teeth test;
+  - every source §31 line is mapped to an existing test, and a test pins that.
+- **Follow-ups:**
+  - The owner must rule on a spec contradiction: §5.4's snapshot preimage includes identities, while §9/R22 require opaque-ref-only digests in events. The implementation keeps the snapshot digest out of events.
+  - The model bound is 2 jobs; 3 exceeds the 60 s ceiling.
+  - Merging and pushing need the owner's approval.
+  - Next phases: 5c (chain-backed audit), 5d (real adapters and webhooks), 5e (CLI/admin and the key supply).
+  - No production claim.

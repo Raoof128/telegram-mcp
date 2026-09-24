@@ -12,8 +12,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from comms.core.opaque import mint_opaque_ref
 from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
-from comms.transports.telegram.opaque import mint_opaque_ref
 
 __all__ = ["PEER_TYPES", "PeerRow", "RefStore"]
 
