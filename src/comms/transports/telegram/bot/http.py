@@ -38,6 +38,7 @@ BOT_METHODS = frozenset(
         "deleteMessage",
         "forwardMessage",
         "pinChatMessage",
+        "unpinChatMessage",
         "getChat",
         "getChatMember",
         "getChatAdministrators",

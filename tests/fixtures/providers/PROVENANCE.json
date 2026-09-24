@@ -7,6 +7,20 @@
       "sha256": "e2ef732ab73c2024c2eff2a2bd638e348d57ca9f6bea24c842e09fc11e3882dc",
       "source": "https://core.telegram.org/bots/api#banchatmember — hand-built from the documented envelope, not a live capture"
     },
+    "telegram_bot/admin_400_not_enough_rights_promote.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "8694b6730d2e5d40ea4c427174ef3d6cde56df87613b3d03927c34957d96e030",
+      "source": "https://core.telegram.org/bots/api#promotechatmember — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/admin_400_not_modified.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "8d1309f8f54f7545a24c8e5688542e1bfd2b9ce3f1f5716d05b68a57be8dad27",
+      "source": "https://core.telegram.org/bots/api#promotechatmember — hand-built from the documented envelope, not a live capture"
+    },
     "telegram_bot/admin_400_user_is_admin.json": {
       "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
       "captured": "2026-09-25",

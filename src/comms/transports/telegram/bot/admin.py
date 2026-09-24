@@ -16,6 +16,7 @@ from typing import Any
 from comms.core.providers.capability import Capability
 from comms.core.providers.protocols import ProviderResult, ProviderTarget, SemanticOperation
 from comms.core.providers.semantics import SEMANTICS
+from comms.transports.telegram.bot.admin_chat import CHAT_REQUESTS
 from comms.transports.telegram.bot.admin_members import MEMBER_REQUESTS
 from comms.transports.telegram.bot.classify import classify_admin
 from comms.transports.telegram.bot.http import BotApi, BotResponse, BotTransportError
@@ -24,7 +25,7 @@ __all__ = ["BotAdmin"]
 
 ACTOR = "telegram_bot"
 Request = Callable[[int, Mapping[str, Any]], tuple[str, dict[str, Any]]]
-_REQUESTS: Mapping[Capability, Request] = {**MEMBER_REQUESTS}
+_REQUESTS: Mapping[Capability, Request] = {**MEMBER_REQUESTS, **CHAT_REQUESTS}
 assert all(not SEMANTICS[(c, ACTOR)].steps for c in _REQUESTS)  # no saga is ever one call
 
 

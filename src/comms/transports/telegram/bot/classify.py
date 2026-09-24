@@ -58,6 +58,7 @@ ADMIN_REFUSALS: Mapping[str, str] = MappingProxyType(
     {
         **dict.fromkeys(
             (
+                "Bad Request: not enough rights",
                 "Bad Request: not enough rights to restrict/unrestrict chat member",
                 "Bad Request: not enough rights to change chat permissions",
                 "Bad Request: user is an administrator of the chat",
@@ -74,6 +75,16 @@ ADMIN_REFUSALS: Mapping[str, str] = MappingProxyType(
         "Bad Request: user not found": "TARGET_NOT_FOUND",
         "Bad Request: PARTICIPANT_ID_INVALID": "TARGET_NOT_FOUND",
         "Bad Request: chat not found": "DESTINATION_NOT_FOUND",
+    }
+)
+
+
+# A set-state call refused only because the exact state already holds: the effect is there.
+ALREADY_SET = frozenset(
+    {
+        "Bad Request: chat title is not modified",
+        "Bad Request: chat description is not modified",
+        "Bad Request: CHAT_NOT_MODIFIED",
     }
 )
 
@@ -125,7 +136,8 @@ def classify_send(outcome: BotResponse | BotTransportError) -> Classified:
 def classify_admin(outcome: BotResponse | BotTransportError) -> ProviderResult:
     """An admin call: ``SUCCEEDED`` on ``ok=true``; ``FAILED`` only for a named case (a code
     from ``ADMIN_REFUSALS``, ``RATE_LIMITED`` with its ``retry_after``, or
-    ``PROVIDER_UNAVAILABLE`` when no connection was made); ``OUTCOME_UNKNOWN`` otherwise."""
+    ``PROVIDER_UNAVAILABLE`` when no connection was made); ``OUTCOME_UNKNOWN`` otherwise.
+    A set-state refusal that says the state already holds (``ALREADY_SET``) is ``SUCCEEDED``."""
     envelope = _parsed(outcome)
     if envelope is ResultKind.FAILED_TRANSIENT:
         return ProviderResult("FAILED", "PROVIDER_UNAVAILABLE")
@@ -137,7 +149,10 @@ def classify_admin(outcome: BotResponse | BotTransportError) -> ProviderResult:
     code = envelope.get("error_code")
     if code == 429 and (retry := _retry_after(envelope)):
         return ProviderResult("FAILED", "RATE_LIMITED", detail={"retry_after": retry})
-    refusal = ADMIN_REFUSALS.get(str(envelope.get("description")))
+    description = str(envelope.get("description"))
+    if code == 400 and description in ALREADY_SET:
+        return ProviderResult("SUCCEEDED", None, detail={"already_set": True})
+    refusal = ADMIN_REFUSALS.get(description)
     if code in (400, 403) and refusal is not None:
         return ProviderResult("FAILED", refusal)
     return ProviderResult("OUTCOME_UNKNOWN", None)
