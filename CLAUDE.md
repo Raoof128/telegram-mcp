@@ -72,7 +72,7 @@ uv sync --locked
 uv run python scripts/extract_contracts.py --check
 uv run pytest -q                                  # 1519 passed, 10 skipped
 uv run python scripts/e2e_smoke.py                # 60 checks, end to end
-uv run pytest tests/formal -q -s                  # 624 states, 18 assertions
+uv run pytest tests/formal -q -s                  # 544 states, 22 assertions
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
 uv run mypy src/comms src/telegram_mcp

@@ -16,8 +16,9 @@
     "language": "Python 3.12",
     "bounds": { "MAX_SEQ": 3 },
     "state_variables": 20,
-    "assertions": 18,
-    "reachable_states": 624,
+    "bookkeeping_variables": 13,
+    "assertions": 22,
+    "reachable_states": 544,
     "command": "uv run pytest tests/formal -q"
   },
   "audit_chain": {
