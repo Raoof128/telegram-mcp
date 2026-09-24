@@ -13,7 +13,9 @@ import httpx
 
 from comms.core.delivery.transport import DeliveryIntent, FrozenDelivery, ResultKind
 from comms.core.providers.capability import Capability, CapabilityState
-from comms.core.providers.protocols import ProviderTarget
+from comms.core.providers.protocols import ProviderTarget, SemanticOperation
+from comms.core.providers.semantics import SEMANTICS
+from comms.transports.telegram.bot.admin import BotAdmin
 from comms.transports.telegram.bot.capability import BotCapability
 from comms.transports.telegram.bot.delivery import BotDelivery
 from comms.transports.telegram.bot.http import BotApi
@@ -108,3 +110,32 @@ def capability_failed_lookup_is_never_available(mode: Mode) -> None:
     }
     states = _capability(mode, routes).snapshot("telegram_bot", _GROUP).states
     assert CapabilityState.AVAILABLE not in states.values()
+
+
+def _admin(mode: Mode, answer: object, seen: list) -> BotAdmin:
+    if mode.live:
+        raise Skip("NOT_CONFIGURED")
+    methods = ("banChatMember", "unbanChatMember", "restrictChatMember")
+    return BotAdmin(
+        BotApi(Secrets(), version=1, transport=routed(dict.fromkeys(methods, answer), seen))
+    )
+
+
+@REGISTRY.case("telegram_bot", "admin")
+def admin_single_call_operations_make_one_call(mode: Mode) -> None:
+    for cap in sorted(BotAdmin.operations):
+        assert not SEMANTICS[(cap, "telegram_bot")].steps
+    seen: list = []
+    result = _admin(mode, "admin_true", seen).invoke(
+        SemanticOperation(Capability.MEMBER_BAN, {"user_id": 42}), _GROUP, "k"
+    )
+    assert result.outcome == "SUCCEEDED" and len(seen) == 1
+
+
+@REGISTRY.case("telegram_bot", "admin")
+def admin_ambiguity_is_outcome_unknown(mode: Mode) -> None:
+    seen: list = []
+    result = _admin(mode, httpx.ReadTimeout, seen).invoke(
+        SemanticOperation(Capability.MEMBER_UNBAN, {"user_id": 42}), _GROUP, "k"
+    )
+    assert result.outcome == "OUTCOME_UNKNOWN" and len(seen) == 1

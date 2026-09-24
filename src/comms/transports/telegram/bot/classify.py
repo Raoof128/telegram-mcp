@@ -15,12 +15,22 @@ connecting — is ``OUTCOME_UNKNOWN``.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any
 
 from comms.core.delivery.transport import ResultKind
+from comms.core.providers.protocols import ProviderResult
 from comms.transports.telegram.bot.http import BotResponse, BotTransportError
 
-__all__ = ["PERMANENT_DESCRIPTIONS", "Classified", "classify_send"]
+__all__ = [
+    "ADMIN_REFUSALS",
+    "PERMANENT_DESCRIPTIONS",
+    "Classified",
+    "classify_admin",
+    "classify_send",
+]
 
 # Exact descriptions the Bot API returns for sends that were refused and will stay refused.
 PERMANENT_DESCRIPTIONS = frozenset(
@@ -43,6 +53,31 @@ PERMANENT_DESCRIPTIONS = frozenset(
 )
 
 
+# Exact descriptions of refused admin calls, and the code each maps to.
+ADMIN_REFUSALS: Mapping[str, str] = MappingProxyType(
+    {
+        **dict.fromkeys(
+            (
+                "Bad Request: not enough rights to restrict/unrestrict chat member",
+                "Bad Request: not enough rights to change chat permissions",
+                "Bad Request: user is an administrator of the chat",
+                "Bad Request: can't remove chat owner",
+                "Bad Request: CHAT_ADMIN_REQUIRED",
+                "Bad Request: RIGHT_FORBIDDEN",
+                "Forbidden: bot was kicked from the group chat",
+                "Forbidden: bot was kicked from the supergroup chat",
+                "Forbidden: bot is not a member of the channel chat",
+                "Forbidden: bot is not a member of the supergroup chat",
+            ),
+            "NOT_AUTHORIZED",
+        ),
+        "Bad Request: user not found": "TARGET_NOT_FOUND",
+        "Bad Request: PARTICIPANT_ID_INVALID": "TARGET_NOT_FOUND",
+        "Bad Request: chat not found": "DESTINATION_NOT_FOUND",
+    }
+)
+
+
 @dataclass(frozen=True)
 class Classified:
     kind: ResultKind
@@ -53,12 +88,26 @@ class Classified:
 _UNKNOWN = Classified(ResultKind.OUTCOME_UNKNOWN)
 
 
-def classify_send(outcome: BotResponse | BotTransportError) -> Classified:
+def _parsed(outcome: BotResponse | BotTransportError) -> Mapping[str, Any] | ResultKind:
+    """The envelope, or the verdict every Bot API call shares when there is none to read."""
     if isinstance(outcome, BotTransportError):
-        return Classified(ResultKind.FAILED_TRANSIENT) if outcome.stage == "not_sent" else _UNKNOWN
+        return ResultKind.FAILED_TRANSIENT if outcome.stage == "not_sent" else _UNKNOWN.kind
     envelope = outcome.envelope
     if outcome.http_status >= 500 or envelope is None or not isinstance(envelope.get("ok"), bool):
-        return _UNKNOWN
+        return _UNKNOWN.kind
+    return envelope
+
+
+def _retry_after(envelope: Mapping[str, Any]) -> int | None:
+    parameters = envelope.get("parameters")
+    retry = parameters.get("retry_after") if isinstance(parameters, dict) else None
+    return retry if type(retry) is int and retry > 0 else None
+
+
+def classify_send(outcome: BotResponse | BotTransportError) -> Classified:
+    envelope = _parsed(outcome)
+    if isinstance(envelope, ResultKind):
+        return Classified(envelope)
     if envelope["ok"]:
         result = envelope.get("result")
         message_id = result.get("message_id") if isinstance(result, dict) else None
@@ -66,11 +115,29 @@ def classify_send(outcome: BotResponse | BotTransportError) -> Classified:
         return Classified(ResultKind.ACCEPTED, provider_message_ref=ref)
     code = envelope.get("error_code")
     if code == 429:
-        parameters = envelope.get("parameters")
-        retry = parameters.get("retry_after") if isinstance(parameters, dict) else None
-        if type(retry) is int and retry > 0:
-            return Classified(ResultKind.FAILED_TRANSIENT, retry_after=retry)
-        return _UNKNOWN
+        retry = _retry_after(envelope)
+        return Classified(ResultKind.FAILED_TRANSIENT, retry_after=retry) if retry else _UNKNOWN
     if code in (400, 403) and envelope.get("description") in PERMANENT_DESCRIPTIONS:
         return Classified(ResultKind.FAILED_PERMANENT)
     return _UNKNOWN
+
+
+def classify_admin(outcome: BotResponse | BotTransportError) -> ProviderResult:
+    """An admin call: ``SUCCEEDED`` on ``ok=true``; ``FAILED`` only for a named case (a code
+    from ``ADMIN_REFUSALS``, ``RATE_LIMITED`` with its ``retry_after``, or
+    ``PROVIDER_UNAVAILABLE`` when no connection was made); ``OUTCOME_UNKNOWN`` otherwise."""
+    envelope = _parsed(outcome)
+    if envelope is ResultKind.FAILED_TRANSIENT:
+        return ProviderResult("FAILED", "PROVIDER_UNAVAILABLE")
+    if isinstance(envelope, ResultKind):
+        return ProviderResult("OUTCOME_UNKNOWN", None)
+    if envelope["ok"]:
+        result = envelope.get("result")
+        return ProviderResult("SUCCEEDED", None, detail=result if isinstance(result, dict) else {})
+    code = envelope.get("error_code")
+    if code == 429 and (retry := _retry_after(envelope)):
+        return ProviderResult("FAILED", "RATE_LIMITED", detail={"retry_after": retry})
+    refusal = ADMIN_REFUSALS.get(str(envelope.get("description")))
+    if code in (400, 403) and refusal is not None:
+        return ProviderResult("FAILED", refusal)
+    return ProviderResult("OUTCOME_UNKNOWN", None)
