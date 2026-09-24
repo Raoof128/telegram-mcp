@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from comms.core import timeutil
+from comms.core.audit.integrity import require_not_degraded
 from comms.core.campaigns.drafts import LifecycleError, load
 from comms.core.campaigns.resolve import path_is_valid
 from comms.core.delivery.reducer import Evidence, bind_provider_ref, reduce
@@ -98,6 +99,7 @@ class Engine:
         """Deliver every PENDING job of the campaign's current generation, transport by transport."""
         require_lease(lease)
         conn = self._conn
+        require_not_degraded(conn)  # A8: no new effect starts while the audit trail is degraded
         campaign = load(conn, cmp)
         generation_id = campaign["generation_id"]
         if campaign["lifecycle"] != "SENDING" or generation_id is None:

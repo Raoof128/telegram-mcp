@@ -12,7 +12,13 @@ from typing import Any
 from comms.core import timeutil
 from comms.core.storage.db import write_tx
 
-__all__ = ["AuditIntegrityDegraded", "is_degraded", "latch_degraded"]
+__all__ = [
+    "AuditIntegrityDegraded",
+    "clear_degraded",
+    "is_degraded",
+    "latch_degraded",
+    "require_not_degraded",
+]
 
 
 class AuditIntegrityDegraded(Exception):
@@ -35,4 +41,19 @@ def latch_degraded(conn: Any, *, reason: str, now: datetime) -> None:
             "UPDATE audit_integrity SET state = 'degraded', reason = coalesce(reason, ?),"
             " since = coalesce(since, ?) WHERE id = 1 AND state = 'ok'",
             (reason, timeutil.iso(now)),
+        )
+
+
+def require_not_degraded(conn: Any) -> None:
+    """Called at every new-effect boundary: a claim, an execution, a scheduled start,
+    a provider mutation, and any retention, import or rotation mutation."""
+    if is_degraded(conn):
+        raise AuditIntegrityDegraded
+
+
+def clear_degraded(conn: Any, *, now: datetime) -> None:
+    """Only ``audit repair`` calls this, after its own verifier passes (Task B21)."""
+    with write_tx(conn):
+        conn.execute(
+            "UPDATE audit_integrity SET state = 'ok', reason = NULL, since = NULL WHERE id = 1"
         )
