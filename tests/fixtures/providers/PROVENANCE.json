@@ -42,6 +42,27 @@
       "sha256": "e6cf6d50f12ed8375e167ec2f07b31140f67f775e5dd5933a14caf98da944ff1",
       "source": "https://core.telegram.org/bots/api#banchatmember — hand-built from the documented envelope, not a live capture"
     },
+    "telegram_bot/createChatInviteLink_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "f42af61c91fc709004fa365ed1bf4938373a58281ea45b08a9c59e792e7dbfd9",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/createForumTopic_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "2b86357b5368cc69b14ef63448fbac79bd58592abbdc7e1afb8840ef168516cf",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/create_ok_without_ref.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "a7d17a3f76262e592a90b1dd62acd73d465e334e356ffb72fd821e1aa29d0cf2",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
+    },
     "telegram_bot/getChatMember_admin_subset.json": {
       "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
       "captured": "2026-09-25",
@@ -111,6 +132,13 @@
       "provider": "telegram_bot_api",
       "sha256": "58157822e1a3a796fa85997c6df6f1eea5e4d3bcc1e26b4534165a819586b968",
       "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/join_400_hide_requester_missing.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "953d98c2dc9a167f43e7b718eddcd6ddd90ac51c36d0ee4975b0b30bd0c52ade",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
     },
     "telegram_bot/sendMessage_400_chat_not_found.json": {
       "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
@@ -188,6 +216,20 @@
       "provider": "telegram_bot_api",
       "sha256": "22211893982c3b9a1e0163032c7a85174ab9ab765c5ccdd9e0f30192de0b11fc",
       "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/topic_400_not_a_forum.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "e680b29dd4336903fe34c5f2ca330ecaa1aea5884ed3b3f0428443e9d890fa83",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/topic_400_not_modified.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "d56a1be6fb5fc297af074c7236879452ac5d3f0f24852a7852fd855f31083340",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
     }
   }
 }

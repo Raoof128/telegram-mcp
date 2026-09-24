@@ -75,6 +75,8 @@ ADMIN_REFUSALS: Mapping[str, str] = MappingProxyType(
         "Bad Request: user not found": "TARGET_NOT_FOUND",
         "Bad Request: PARTICIPANT_ID_INVALID": "TARGET_NOT_FOUND",
         "Bad Request: chat not found": "DESTINATION_NOT_FOUND",
+        "Bad Request: HIDE_REQUESTER_MISSING": "TARGET_NOT_FOUND",
+        "Bad Request: the chat is not a forum": "UNAVAILABLE",
     }
 )
 
@@ -85,6 +87,8 @@ ALREADY_SET = frozenset(
         "Bad Request: chat title is not modified",
         "Bad Request: chat description is not modified",
         "Bad Request: CHAT_NOT_MODIFIED",
+        "Bad Request: TOPIC_NOT_MODIFIED",
+        "Bad Request: USER_ALREADY_PARTICIPANT",
     }
 )
 
