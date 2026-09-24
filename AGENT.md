@@ -503,3 +503,27 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
   - The 5b-1 plan.
   - The out-of-repo steps (GitHub rename, archive, folder and memory move) come up for separate approval.
   - No production claim.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms 5b-1, rename and restructure (mechanical), on branch `comms-5b1`.
+- **Summary:** The Telegram implementation was relocated from `telegram_mcp` to `comms.transports.telegram` by pure prefix move.
+  - `comms.core` exists, is empty and is guarded by permanent layering tests (static and dynamic imports, transport strings, transport isolation, and a planted-violation proof).
+  - `telegram_mcp` is a two-file CLI forwarder; the `telegram-mcp` and `comms` console scripts both work.
+  - **Proof:** AST equivalence against BASE `27af242` (96 modules, 23 data files, order-sensitive); the 29 protocol constants are unchanged; `uv.lock` is unchanged.
+  - **Plan method:** the plan was dry-run in a throwaway worktree before execution (8 defects fixed first). Execution found one more, which the dry run had masked (see the rulings).
+- **Rulings:** `sys.modules[__name__]` for the planted test; a fail-closed existence check on the isolation guard; the entry-point test excluded from the leftover-literal scan.
+- **Files changed:**
+  - moved: `src/telegram_mcp/**` → `src/comms/transports/telegram/**`;
+  - new: `src/comms/{__init__,core/__init__,transports/__init__}.py`, `src/telegram_mcp/{__init__,cli}.py`, `scripts/migration/*`, the 4 new test files, `tests/fixtures/migration/protocol_constants.json`, `docs/verification/comms-5b1.md`;
+  - edited: `pyproject.toml`, `SECURITY-MANIFEST.json`, `.gitignore`, `CLAUDE.md`, `tests/agent/stub_broker.py` (docstring), `AGENT.md`, `CHANGELOG.md`;
+  - plus import-only rewrites across `src`, `tests` and `scripts`.
+- **Verification:**
+  - `uv sync --locked` OK; contracts OK (23 files);
+  - pytest 1514 passed, 11 skipped; smoke 60/60; formal 624/18;
+  - ruff and format clean (231 files); mypy clean (101 files); build OK.
+- **Follow-ups:**
+  - The merge decision for `comms-5b1`.
+  - Then the 5b-2 plan (the WhatsVault subtree import at `b6fd51a`).
+  - The out-of-repo steps (GitHub rename, folder and memory move) remain separately approved.
+  - No production claim.

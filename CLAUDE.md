@@ -34,6 +34,11 @@ metadata-effective access and `policy explain/simulate/diff` (semantic
 simulate-equals-commit over every simulatable command; bound `tps_` stages).
 Evidence: `docs/verification/phase-5.md`. 5b (revoke, rotation, retention,
 recovery, chain epochs) is designed, not built.
+**Comms consolidation 5b-1** (branch `comms-5b1`): the Telegram implementation was relocated
+mechanically to `comms.transports.telegram` (AST-equivalent to its pre-move tree;
+design `docs/superpowers/specs/2026-09-24-comms-consolidation-design.md`). The
+`telegram-mcp` and `comms` CLIs both work, and every frozen wire, logger name and
+on-host identifier is unchanged. Evidence: `docs/verification/comms-5b1.md`.
 Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 
 ## Non-negotiables
@@ -61,12 +66,12 @@ Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 1493 passed, 10 skipped
+uv run pytest -q                                  # 1514 passed, 11 skipped
 uv run python scripts/e2e_smoke.py                # 60 checks, end to end
 uv run pytest tests/formal -q -s                  # 624 states, 18 assertions
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
-uv run mypy src/telegram_mcp
+uv run mypy src/comms src/telegram_mcp
 uv build
 ```
 
@@ -85,9 +90,13 @@ broker — and prints one ledger. Both must pass before any claim of done.
 
 ## Map
 
+Telegram code lives in `src/comms/transports/telegram/` (paths below are relative
+to it unless they start at the repo root). `src/comms/core/` is empty and guarded
+until 5b-2; `src/telegram_mcp/` is only the legacy CLI forwarder.
+
 | Area | Where |
 |---|---|
-| Ten frozen tool contracts | `src/telegram_mcp/contracts/*.json`, loaded by `contract.py` |
+| Ten frozen tool contracts | `contracts/*.json`, loaded by `contract.py` |
 | MCP surface | `server.py`, `dispatch.py`, `validation.py`, `results.py` |
 | Runtime lifecycle, lock, launcher | `runtime/` |
 | Keys, pairing pins | `keys/` |

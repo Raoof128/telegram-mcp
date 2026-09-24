@@ -1,8 +1,8 @@
 """Broker-side driver for the consent agent's rendezvous scenarios.
 
 The plan calls this a stub broker. It drives the **real** Python halves —
-``telegram_mcp.ipc.rendezvous.serve_rendezvous`` for RV-1 and
-``telegram_mcp.consent.broker.ConsentBroker`` for issuance and exact-once
+``comms.transports.telegram.ipc.rendezvous.serve_rendezvous`` for RV-1 and
+``comms.transports.telegram.consent.broker.ConsentBroker`` for issuance and exact-once
 consume — because a hand-written stub would only prove the agent agrees with
 the stub. What these scenarios exercise is byte agreement between the real
 broker and the real agent binary, which is the whole point of the gate.
