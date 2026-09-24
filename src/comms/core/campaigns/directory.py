@@ -337,3 +337,9 @@ def remove_audience_member(conn: Any, audience_ref: str, member_ref: str) -> Non
         )
         if cur.rowcount != 1:
             raise DirectoryError("unknown membership")
+
+
+def destination_id(conn: Any, destination_ref: str) -> int | None:
+    """The row id of a destination ref (read-only; for provider-object refs, D8)."""
+    row = conn.execute("SELECT id FROM destinations WHERE ref = ?", (destination_ref,)).fetchone()
+    return int(row[0]) if row else None
