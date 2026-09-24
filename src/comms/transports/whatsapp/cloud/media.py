@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import urljoin
 
 import httpx
@@ -89,6 +90,20 @@ class MediaOps:
         if not isinstance(media_id, str) or not media_id.isdigit():
             return ProviderResult("OUTCOME_UNKNOWN", None)
         return ProviderResult("SUCCEEDED", None, provider_ref=media_id)
+
+    def info(self, media_id: str) -> dict[str, Any]:
+        """``media.inspect``: type, size and digest — never the download URL."""
+        if not isinstance(media_id, str) or not media_id.isascii() or not media_id.isdigit():
+            raise ValueError("media id refused")
+        info = self._api.media_info(media_id)
+        envelope = info.envelope or {}
+        if info.http_status != 200 or not isinstance(envelope.get("mime_type"), str):
+            raise MediaRefused("media info unavailable")
+        return {
+            "mime_type": envelope["mime_type"],
+            "file_size": envelope.get("file_size"),
+            "sha256": envelope.get("sha256"),
+        }
 
     def delete(self, media_id: str) -> ProviderResult:
         """``media.delete`` (destructive, resolve-only)."""

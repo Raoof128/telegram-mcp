@@ -26,7 +26,15 @@ from comms.core.providers.protocols import ProviderResult
 from comms.transports.whatsapp.cloud.classify import admin_call
 from comms.transports.whatsapp.cloud.http import GraphApi, GraphResponse
 
-__all__ = ["TemplateCatalog", "TemplateOps", "TemplatePage", "schema_version"]
+__all__ = [
+    "TemplateCatalog",
+    "TemplateOps",
+    "TemplatePage",
+    "check_create",
+    "check_delete",
+    "check_edit",
+    "schema_version",
+]
 
 _NAME = re.compile(r"\A[a-z0-9_]{1,512}\Z")
 _LANGUAGE = re.compile(r"\A[a-z]{2,3}(_[A-Z]{2})?\Z")
@@ -55,6 +63,30 @@ class TemplateCatalog:
 class TemplatePage:
     items: tuple[Mapping[str, Any], ...]
     next_cursor: str | None
+
+
+def check_create(body: Mapping[str, Any]) -> None:
+    """A template definition, checked without a call (D17: the executor validates first)."""
+    if (
+        set(body) != {"name", "language", "category", "components"}
+        or not (isinstance(body["name"], str) and _NAME.match(body["name"]))
+        or not (isinstance(body["language"], str) and _LANGUAGE.match(body["language"]))
+        or body["category"] not in _CATEGORIES
+        or not isinstance(body["components"], list)
+    ):
+        raise ValueError("template definition refused")
+
+
+def check_edit(template_id: object, body: Mapping[str, Any]) -> None:
+    if not isinstance(template_id, str) or not template_id.isdigit():
+        raise ValueError("template id refused")
+    if set(body) != {"components"} or not isinstance(body["components"], list):
+        raise ValueError("template edit refused")
+
+
+def check_delete(name: object) -> None:
+    if not isinstance(name, str) or not _NAME.match(name):
+        raise ValueError("template name refused")
 
 
 class TemplateOps:
@@ -91,14 +123,7 @@ class TemplateOps:
         return len(entries)
 
     def create(self, body: Mapping[str, Any]) -> ProviderResult:
-        if (
-            set(body) != {"name", "language", "category", "components"}
-            or not (isinstance(body["name"], str) and _NAME.match(body["name"]))
-            or not (isinstance(body["language"], str) and _LANGUAGE.match(body["language"]))
-            or body["category"] not in _CATEGORIES
-            or not isinstance(body["components"], list)
-        ):
-            raise ValueError("template definition refused")
+        check_create(body)
         result = admin_call(lambda: self._api.create_template(body))
         if result.outcome != "SUCCEEDED":
             return result
@@ -108,15 +133,11 @@ class TemplateOps:
         return ProviderResult("SUCCEEDED", None, provider_ref=template_id, detail=result.detail)
 
     def edit(self, template_id: str, body: Mapping[str, Any]) -> ProviderResult:
-        if not isinstance(template_id, str) or not template_id.isdigit():
-            raise ValueError("template id refused")
-        if set(body) != {"components"} or not isinstance(body["components"], list):
-            raise ValueError("template edit refused")
+        check_edit(template_id, body)
         return admin_call(lambda: self._api.edit_template(template_id, body))
 
     def delete(self, name: str) -> ProviderResult:
-        if not isinstance(name, str) or not _NAME.match(name):
-            raise ValueError("template name refused")
+        check_delete(name)
         return admin_call(lambda: self._api.delete_template(name))
 
 

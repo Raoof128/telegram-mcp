@@ -19,7 +19,7 @@ from tests.core.audit.legacy_fixtures import comms_world
 from tests.core.campaign_helpers import NOW
 
 CTX = CallContext(client_ref="cli_" + "c" * 26)
-TG_USER, WA_PHONE = "4242", "+61400000001"
+TG_USER, WA_PHONE = "908180", "+61400000001"  # digits base32 refs never hold
 _SERIAL = count(1)
 
 
@@ -39,6 +39,7 @@ def _created(capability):
         C.GROUP_INVITE_RESET: f"https://chat.whatsapp.com/Inv{n:04d}",
         C.TOPIC_CREATE: str(n),
         C.MESSAGE_SEND: str(100 + n),
+        C.TEMPLATE_CREATE: str(5_000_000 + n),
     }.get(capability)
 
 

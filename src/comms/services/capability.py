@@ -11,7 +11,7 @@ the caller's answer. Network: never called inside a comms.db transaction.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -24,6 +24,7 @@ from comms.core.providers.protocols import (
     ProviderResult,
     ProviderTarget,
 )
+from comms.core.providers.semantics import SUPPORT
 
 __all__ = ["AUTHORITY_ORDER", "STATE_CODE", "CapabilityService"]
 
@@ -119,10 +120,44 @@ class CapabilityService:
             self._cache.pop((actor, target.destination_ref), None)
         return result
 
-    def for_group(self, group_ref: str, targets: Mapping[str, ProviderTarget]) -> dict[str, Any]:
+    def for_group(
+        self, group_ref: str, targets: Mapping[str, ProviderTarget], *, refresh: bool = False
+    ) -> dict[str, Any]:
         """P §35's shape: each actor's available-or-not states, by capability id."""
         actors = {}
         for actor in sorted(targets):
-            states = self.snapshot(actor, targets[actor]).states
+            states = self.snapshot(actor, targets[actor], refresh=refresh).states
             actors[actor] = {cap.value: state.value for cap, state in states.items()}
         return {"group_ref": group_ref, "actors": actors}
+
+    def refresh(self, group_ref: str, targets: Mapping[str, ProviderTarget]) -> dict[str, Any]:
+        """``capability.refresh``: the group's matrix from fresh snapshots."""
+        return self.for_group(group_ref, targets, refresh=True)
+
+    def get(
+        self, group_ref: str, actor: str, target: ProviderTarget, capability: Capability
+    ) -> dict[str, Any]:
+        """``capability.get``: one actor's state for one capability at one group."""
+        return {
+            "group_ref": group_ref,
+            "actor": actor,
+            "capability": capability.value,
+            "state": self.state(actor, target, capability).value,
+        }
+
+    def for_actor(self, actor: str, groups: Sequence[tuple[str, ProviderTarget]]) -> dict[str, Any]:
+        """``capability.for_actor``: one actor's states across groups."""
+        return {
+            "actor": actor,
+            "groups": {
+                group: {c.value: s.value for c, s in self.snapshot(actor, t).states.items()}
+                for group, t in groups
+            },
+        }
+
+    def list(self) -> dict[str, list[str]]:
+        """``capability.list``: every capability id each configured actor can ever offer."""
+        return {
+            actor: sorted(c.value for c, actors in SUPPORT.items() if actor in actors)
+            for actor in sorted(self._providers)
+        }

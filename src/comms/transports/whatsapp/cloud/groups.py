@@ -21,6 +21,12 @@ from comms.core.providers.capability import CapabilityState as S
 from comms.core.providers.protocols import ProviderResult, ProviderTarget, SemanticOperation
 from comms.transports.whatsapp.cloud.classify import admin_call
 from comms.transports.whatsapp.cloud.http import GraphApi, GraphTransportError
+from comms.transports.whatsapp.cloud.templates import (
+    TemplateOps,
+    check_create,
+    check_delete,
+    check_edit,
+)
 
 __all__ = ["GROUP_CAPABILITIES", "GroupDiscovery", "WhatsAppAdmin", "group_id_of"]
 
@@ -141,13 +147,67 @@ def _mark_read(api: GraphApi, _contact: str, args: Mapping[str, Any]) -> Provide
     return admin_call(lambda: api.mark_read(args["message_id"]))
 
 
+def account_of(target: ProviderTarget) -> str:
+    kind, sep, waba_id = target.identity.partition(":")
+    if target.actor != ACTOR or kind != "waba" or not sep or not waba_id.isdigit():
+        raise ValueError("not the whatsapp business account")
+    return waba_id
+
+
+def _template_create_args(args: Mapping[str, Any]) -> None:
+    check_create(args)
+
+
+def _template_create(api: GraphApi, _waba: str, args: Mapping[str, Any]) -> ProviderResult:
+    return TemplateOps(api).create(args)
+
+
+def _template_edit_args(args: Mapping[str, Any]) -> None:
+    if set(args) != {"template_id", "components"}:
+        raise ValueError("operation arguments are malformed")
+    check_edit(args["template_id"], {"components": args["components"]})
+
+
+def _template_edit(api: GraphApi, _waba: str, args: Mapping[str, Any]) -> ProviderResult:
+    return TemplateOps(api).edit(args["template_id"], {"components": args["components"]})
+
+
+def _template_delete_args(args: Mapping[str, Any]) -> None:
+    if set(args) != {"name"}:
+        raise ValueError("operation arguments are malformed")
+    check_delete(args["name"])
+
+
+def _template_delete(api: GraphApi, _waba: str, args: Mapping[str, Any]) -> ProviderResult:
+    return TemplateOps(api).delete(args["name"])
+
+
+def _media_delete_args(args: Mapping[str, Any]) -> None:
+    if set(args) != {"media_id"} or not (
+        isinstance(args["media_id"], str)
+        and args["media_id"].isascii()
+        and args["media_id"].isdigit()
+    ):
+        raise ValueError("operation arguments are malformed")
+
+
+def _media_delete(api: GraphApi, _waba: str, args: Mapping[str, Any]) -> ProviderResult:
+    return admin_call(lambda: api.delete_media(args["media_id"]))
+
+
 Check = Callable[[Mapping[str, Any]], None]
 Call = Callable[[GraphApi, str, Mapping[str, Any]], ProviderResult]
-_OPERATIONS: Mapping[C, tuple[Check, Call]] = {
-    C.GROUP_MEMBER_REMOVE: (_remove_args, _remove),
-    C.GROUP_INVITE_RESET: (_reset_args, _reset),
-    C.GROUP_SETTINGS_UPDATE: (_settings_args, _settings),
-    C.MESSAGE_MARK_READ: (_mark_read_args, _mark_read),  # D14: a contact, not a group
+Where = Callable[[ProviderTarget], str]
+# capability → (argument check, the call, what the target must be)
+_OPERATIONS: Mapping[C, tuple[Check, Call, Where]] = {
+    C.GROUP_MEMBER_REMOVE: (_remove_args, _remove, group_id_of),
+    C.GROUP_INVITE_RESET: (_reset_args, _reset, group_id_of),
+    C.GROUP_SETTINGS_UPDATE: (_settings_args, _settings, group_id_of),
+    C.MESSAGE_MARK_READ: (_mark_read_args, _mark_read, contact_of),  # D14
+    C.TEMPLATE_CREATE: (_template_create_args, _template_create, account_of),  # D17
+    C.TEMPLATE_EDIT: (_template_edit_args, _template_edit, account_of),
+    C.TEMPLATE_DELETE: (_template_delete_args, _template_delete, account_of),
+    C.MEDIA_DELETE: (_media_delete_args, _media_delete, account_of),
 }
 
 
@@ -167,12 +227,10 @@ class WhatsAppAdmin:
         operation = _OPERATIONS.get(op.capability)
         if operation is None:
             raise NotImplementedError("whatsapp_cloud does not perform this operation")
-        where = (
-            contact_of(target) if op.capability not in GROUP_CAPABILITIES else group_id_of(target)
-        )
-        check, call = operation
+        check, call, where = operation
+        place = where(target)
         check(op.args)
-        return call, where
+        return call, place
 
     def invoke(self, op: SemanticOperation, target: ProviderTarget, op_key: str) -> ProviderResult:
         call, where = self._request(op, target)
