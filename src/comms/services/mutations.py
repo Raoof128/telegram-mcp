@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 from comms.core import domains, refs
@@ -33,7 +34,7 @@ from comms.core.audit.writer import AnchorFailed, AuditTx, AuditWriter
 from comms.core.campaigns.directory import destination_id
 from comms.core.canonical import jcs_dumps
 from comms.core.errors import CommsError
-from comms.core.objects import KIND_PREFIX, object_ref
+from comms.core.objects import KIND_PREFIX, message_identity, object_ref
 from comms.core.providers.capability import Capability
 from comms.core.providers.protocols import (
     AdminOperations,
@@ -82,6 +83,18 @@ def request_digest(tool: str, args: Mapping[str, Any], targets: Mapping[str, Any
 def op_key(client_ref: str, request_id: str) -> str:
     body = jcs_dumps({"client": client_ref, "request": request_id})
     return hashlib.sha256(domains.ADMIN_OP + body).hexdigest()
+
+
+# What a provider may report about a success, and the values it may take (P §72).
+_REPORTED = MappingProxyType({"scope": frozenset({"local", "everyone", "provider_defined"})})
+
+
+def _reported(result: ProviderResult) -> dict[str, Any]:
+    return {
+        key: value
+        for key, allowed in _REPORTED.items()
+        if isinstance(value := result.detail.get(key), str) and value in allowed
+    }
 
 
 def _check_request(request_id: object) -> None:
@@ -177,8 +190,9 @@ class MutationExecutor:
         *,
         object_kind: str | None = None,
     ) -> MutationOutcome:
-        """``object_kind`` names what a CREATE makes: its provider ref becomes a durable object
-        ref in the result, and a success without one is ``OUTCOME_UNKNOWN`` (A19)."""
+        """``object_kind`` names what the call makes: its provider ref becomes a durable object
+        ref in the result. A CREATE's success without one is ``OUTCOME_UNKNOWN`` (A19); a send
+        without one (a proven duplicate) succeeds with no ref."""
         _check_request(request_id)
         if object_kind is not None and object_kind not in KIND_PREFIX:
             raise CommsError("INVALID_ARGUMENT")
@@ -327,19 +341,25 @@ class MutationExecutor:
                 result = ProviderResult("OUTCOME_UNKNOWN", None)
             self._crash("after_call")
             state = result.outcome
-            if object_kind is not None and index == len(steps) - 1 and state == "SUCCEEDED":
-                if not result.provider_ref:
-                    state = "OUTCOME_UNKNOWN"  # created, but nothing to name it by
-                else:
+            last = index == len(steps) - 1
+            if last and state == "SUCCEEDED":
+                created.update(_reported(result))
+            if object_kind is not None and last and state == "SUCCEEDED":
+                if result.provider_ref:
+                    identity = result.provider_ref
+                    if object_kind == "message":
+                        identity = message_identity(target.identity, identity)
                     created["object_ref"] = object_ref(
                         conn,
                         object_kind,
                         target.transport,
                         target.actor,
                         destination_id(conn, target.destination_ref),
-                        result.provider_ref,
+                        identity,
                         now=self._writer.now(),
                     )
+                elif SEMANTICS[(op.capability, target.actor)].retry_class == "CREATE":
+                    state = "OUTCOME_UNKNOWN"  # created, but nothing to name it by
             try:
                 self._record_step(
                     mutation_id, op_ref, step.step_no, capability, "IN_FLIGHT", state, result.code

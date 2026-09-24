@@ -51,7 +51,7 @@ class FakeServer:
     def clock(self):
         return self.now
 
-    async def send_text_once(self, peer, text, random_id, *, timeout):
+    async def send_text_once(self, peer, text, random_id, *, timeout, reply_to=None):
         assert timeout > 0
         self.calls.append((random_id, text, timeout))
         step = self.script.pop(0)

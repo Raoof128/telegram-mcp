@@ -23,11 +23,12 @@ from typing import Any
 
 from comms.core.campaigns.directory import destination_id, has_recipient, member_identity
 from comms.core.errors import CommsError
-from comms.core.objects import latest_object, resolve_object
+from comms.core.objects import latest_object
 from comms.core.providers.capability import Capability as C
-from comms.core.providers.protocols import ProviderResult, ProviderTarget, SemanticOperation
+from comms.core.providers.protocols import ProviderTarget
 from comms.services.capability import CapabilityService
-from comms.services.mutations import CallContext, MutationExecutor, MutationOutcome
+from comms.services.mutations import CallContext, MutationExecutor
+from comms.services.writes import ProviderWrites, summary, transport_of
 
 __all__ = ["ADMIN", "MEMBERSHIP", "GroupService"]
 
@@ -87,6 +88,7 @@ _INVITE_ONLY = frozenset({"whatsapp"})
 _RENAMED: Mapping[tuple[str, str], Mapping[str, str]] = MappingProxyType(
     {("group.info.set_title", "whatsapp"): {"title": "subject"}}
 )
+# A caller's object argument → (object kind, the provider field its identity fills).
 _OBJECT_ARGS = {"invite": ("invite", "invite_link"), "topic": ("topic", "message_thread_id")}
 
 
@@ -105,19 +107,11 @@ _MEMBER_ARG: Mapping[str, Callable[[str], dict[str, Any]]] = MappingProxyType(
 )
 
 
-def _transport(targets: Mapping[str, ProviderTarget]) -> str:
-    transports = {t.transport for t in targets.values()}
-    if len(transports) != 1:
-        raise CommsError("INVALID_ARGUMENT")
-    (transport,) = transports
-    return transport
-
-
 class GroupService:
     def __init__(
         self, conn: Any, capability: CapabilityService, executor: MutationExecutor
     ) -> None:
-        self._conn, self._capability, self._executor = conn, capability, executor
+        self._conn, self._writes = conn, ProviderWrites(conn, capability, executor)
 
     def member(
         self,
@@ -134,13 +128,20 @@ class GroupService:
         by_transport = MEMBERSHIP.get(tool)
         if by_transport is None or not targets or not isinstance(args, Mapping):
             raise CommsError("INVALID_ARGUMENT")
-        transport = _transport(targets)
+        transport = transport_of(targets)
         if set(args) & ({"user_id", "wa_id"} | set(_FIXED.get(tool, {}))):
             raise CommsError("INVALID_ARGUMENT")  # the member is the recipient, never an arg
         head = {"group": group, "recipient": recipient, "operation": tool.rsplit(".", 1)[1]}
         if tool == "group.member.add" and transport in _INVITE_ONLY:
-            return {**head, "result": "INVITE_REQUIRED", "code": None, "actor": None,
-                    "op_ref": None, "replayed": False, "invite": None}  # fmt: skip
+            return {
+                **head,
+                "result": "INVITE_REQUIRED",
+                "code": None,
+                "actor": None,
+                "op_ref": None,
+                "replayed": False,
+                "invite": None,
+            }
         capability = by_transport.get(transport)
         if capability is None:
             raise CommsError("PROVIDER_UNSUPPORTED")
@@ -154,10 +155,17 @@ class GroupService:
                 raise CommsError("NOT_FOUND")
             member = _MEMBER_ARG[transport](identity)
         call = {**args, **_FIXED.get(tool, {}), **member}
-        chosen, target, outcome = self._write(
-            ctx, tool, targets, capability, call, request_id, actor
+        chosen, target, outcome = self._writes.write(
+            ctx,
+            tool,
+            targets,
+            capability,
+            call,
+            request_id,
+            actor,
+            object_kind=_CREATES.get(capability),
         )
-        result = {**head, **_summary(chosen, outcome)}
+        result = {**head, **summary(chosen, outcome)}
         if tool == "group.member.invite":
             result["invite"] = outcome.result.get("object_ref")
         if tool == "group.member.add":
@@ -180,79 +188,31 @@ class GroupService:
         by_transport = ADMIN.get(tool)
         if by_transport is None or not targets or not isinstance(args, Mapping):
             raise CommsError("INVALID_ARGUMENT")
-        transport = _transport(targets)
+        transport = transport_of(targets)
         capability = by_transport.get(transport)
         if capability is None:
             raise CommsError("PROVIDER_UNSUPPORTED")
         renamed = _RENAMED.get((tool, transport), {})
         call = {renamed.get(k, k): v for k, v in args.items() if k not in _OBJECT_ARGS}
-        objects = {k: v for k, v in args.items() if k in _OBJECT_ARGS}
-        chosen, _target, outcome = self._write(
-            ctx, tool, targets, capability, call, request_id, actor, objects=objects
+        objects = {_OBJECT_ARGS[k]: v for k, v in args.items() if k in _OBJECT_ARGS}
+        chosen, _target, outcome = self._writes.write(
+            ctx,
+            tool,
+            targets,
+            capability,
+            call,
+            request_id,
+            actor,
+            objects=objects,
+            object_kind=_CREATES.get(capability),
         )
         return {
             "group": group,
             "operation": tool,
-            **_summary(chosen, outcome),
+            **summary(chosen, outcome),
             "object": outcome.result.get("object_ref"),
         }
-
-    # -- the one write path -------------------------------------------------------------------
-
-    def _write(
-        self,
-        ctx: CallContext,
-        tool: str,
-        targets: Mapping[str, ProviderTarget],
-        capability: C,
-        args: Mapping[str, Any],
-        request_id: str,
-        actor: str | None,
-        *,
-        objects: Mapping[str, Any] | None = None,
-    ) -> tuple[str, ProviderTarget, MutationOutcome]:
-        chosen = self._capability.choose_actor(targets, capability, preferred=actor)
-        target = targets[chosen]
-        call = dict(args)
-        for name, ref in (objects or {}).items():  # a ref becomes its provider identity here
-            kind, field = _OBJECT_ARGS[name]
-            identity = self._object(ref, kind, target)
-            call[field] = int(identity) if field == "message_thread_id" else identity
-        self._capability.require_for_write(chosen, target, capability)
-        outcome = self._executor.provider(
-            ctx,
-            "comms_" + tool.replace(".", "_"),
-            target,
-            SemanticOperation(capability, call),
-            request_id,
-            object_kind=_CREATES.get(capability),
-        )
-        if outcome.state == "FAILED":
-            self._capability.authoritative(chosen, target, ProviderResult("FAILED", outcome.code))
-        return chosen, target, outcome
-
-    def _object(self, ref: object, kind: str, target: ProviderTarget) -> str:
-        if not isinstance(ref, str):
-            raise CommsError("INVALID_ARGUMENT")
-        found = resolve_object(self._conn, ref, kind)
-        if found.transport != target.transport or found.destination_id != destination_id(
-            self._conn, target.destination_ref
-        ):
-            raise CommsError("NOT_FOUND")  # another group's object is not this group's
-        if kind == "topic" and not found.provider_identity.isdigit():
-            raise CommsError("NOT_FOUND")
-        return found.provider_identity
 
     def _invite(self, target: ProviderTarget) -> str | None:
         where = destination_id(self._conn, target.destination_ref)
         return latest_object(self._conn, "invite", target.transport, where)
-
-
-def _summary(actor: str, outcome: MutationOutcome) -> dict[str, Any]:
-    return {
-        "result": outcome.state,
-        "code": outcome.code,
-        "actor": actor,
-        "op_ref": outcome.op_ref,
-        "replayed": outcome.replayed,
-    }

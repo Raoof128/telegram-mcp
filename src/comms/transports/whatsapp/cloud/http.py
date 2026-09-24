@@ -80,6 +80,11 @@ class GraphApi:
         """``POST /{phone-number-id}/messages``: one send, never retried."""
         return self._post(f"/{API_VERSION}/{self._phone}/messages", body)
 
+    def mark_read(self, message_id: str) -> GraphResponse:
+        """``POST /{phone-number-id}/messages`` with ``status: read``: one call, never retried."""
+        body = {"messaging_product": "whatsapp", "status": "read", "message_id": message_id}
+        return self._post(f"/{API_VERSION}/{self._phone}/messages", body)
+
     def list_templates(
         self, *, limit: int, after: str | None = None, name: str | None = None
     ) -> GraphResponse:

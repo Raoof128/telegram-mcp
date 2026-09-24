@@ -4,7 +4,9 @@
 ``invoke`` validates the arguments with the pure request tables, then asks the adapter for one
 administrative RPC (``admin_request``) on the session's loop through the injected ``run``. A
 saga (``member.remove``) is never one call here; the executor runs its steps (D4). A private
-chat is not a group. MTProto admin RPCs carry no idempotency key, so ``op_key`` is not sent.
+chat is not a group. MTProto admin RPCs carry no idempotency key, so ``op_key`` is not sent —
+except ``message.send`` (D14), whose ``random_id`` is derived from it (A20) and which runs
+through ``user.send`` with its one reconciliation.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from comms.core import timeutil
+from comms.core.delivery.transport import DeliveryResult, ResultKind
 from comms.core.providers.capability import Capability
 from comms.core.providers.protocols import (
     ContextPage,
@@ -23,8 +26,11 @@ from comms.core.providers.protocols import (
 )
 from comms.core.providers.semantics import SEMANTICS
 from comms.transports.telegram.peers import unmark_chat_id
+from comms.transports.telegram.telegram.errors import GatewayError
 from comms.transports.telegram.user.admin_chat import CHAT_SPECS, group_create
 from comms.transports.telegram.user.admin_members import MEMBER_SPECS
+from comms.transports.telegram.user.admin_messages import MESSAGE_SPECS
+from comms.transports.telegram.user.send import TextSender, random_id_for, send
 
 __all__ = ["UserAdmin"]
 
@@ -34,11 +40,14 @@ MAX_LOG_PAGE = 100
 _SPECS: Mapping[Capability, Callable[[Mapping[str, Any]], dict[str, Any]]] = {
     **MEMBER_SPECS,
     **CHAT_SPECS,
+    **MESSAGE_SPECS,
 }
 assert all(not SEMANTICS[(c, ACTOR)].steps for c in _SPECS)  # no saga is ever one call
 
 
-class AdminSession(Protocol):
+class AdminSession(TextSender, Protocol):
+    def input_peer(self, peer_type: str, peer_id: int) -> Any: ...
+
     async def admin_request(
         self,
         capability: Capability,
@@ -85,11 +94,32 @@ class UserAdmin:
 
     def invoke(self, op: SemanticOperation, target: ProviderTarget, op_key: str) -> ProviderResult:
         spec, peer_type, peer_id = self._request(op, target)
+        if op.capability is Capability.MESSAGE_SEND:
+            return self._send(spec, peer_type, peer_id, target.identity, op_key)
         return self._run(  # type: ignore[no-any-return]
             self._session.admin_request(
                 op.capability, peer_type, peer_id, spec, timeout=ADMIN_TIMEOUT_S
             )
         )
+
+    def _send(
+        self, spec: Mapping[str, Any], peer_type: str, peer_id: int, chat: str, op_key: str
+    ) -> ProviderResult:
+        try:
+            peer = self._session.input_peer(peer_type, peer_id)
+        except GatewayError:
+            return ProviderResult("FAILED", "PROVIDER_UNAVAILABLE")  # provably unsent
+        delivered: DeliveryResult = self._run(
+            send(
+                self._session,
+                peer,
+                chat,
+                spec["text"],
+                random_id_for(op_key),
+                reply_to=spec.get("reply_to_message_id"),
+            )
+        )
+        return _sent(delivered)
 
     def create_group(self, args: Mapping[str, Any]) -> ProviderResult:
         """``group.create`` (CREATE, resolve-only): no destination; the ref is the new chat's
@@ -133,3 +163,17 @@ class UserAdmin:
         )
         next_cursor = str(min(e[0] for e in events)) if len(events) == limit else None
         return ContextPage(items, "telegram_live", next_cursor)
+
+
+def _sent(delivered: DeliveryResult) -> ProviderResult:
+    """A keyed send's delivery result as an operation outcome; the ref is the message id."""
+    if delivered.kind is ResultKind.ACCEPTED:
+        ref = delivered.provider_message_ref
+        message_id = ref.rsplit(":", 1)[1] if ref else None
+        return ProviderResult("SUCCEEDED", None, provider_ref=message_id)
+    if delivered.kind is ResultKind.FAILED_PERMANENT:
+        return ProviderResult("FAILED", "NOT_AUTHORIZED")
+    if delivered.kind is ResultKind.FAILED_TRANSIENT:
+        detail = {"retry_after": delivered.retry_after} if delivered.retry_after else {}
+        return ProviderResult("FAILED", "RATE_LIMITED", detail=detail)
+    return ProviderResult("OUTCOME_UNKNOWN", None)

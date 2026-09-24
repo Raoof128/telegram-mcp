@@ -58,6 +58,7 @@ class FakeGraph:
         self.sent = []  # message bodies, in order
         self.unknown_routes = []
         self._pending_statuses = []
+        self.read = []
         self._counter = 0
         self.templates = {
             ("nowruz_greeting", "en"): {
@@ -126,6 +127,11 @@ class FakeGraph:
         return self._error(400, 2500, "Unknown path components")
 
     def _send(self, message):
+        if message.get("status") == "read":  # mark-as-read (comms v0.3 D14): no message is sent
+            if message.get("messaging_product") != "whatsapp" or not message.get("message_id"):
+                return self._error(400, 100, "Invalid parameter")
+            self.read.append(message["message_id"])
+            return 200, {"success": True}, "application/json"
         if message.get("messaging_product") != "whatsapp" or "to" not in message or "type" not in message:
             return self._error(400, 100, "Invalid parameter")
         wamid = f"wamid.FAKE{self._next():08d}"

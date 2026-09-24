@@ -38,6 +38,14 @@ GROUP_CAPABILITIES = (
 _PERMISSION_CODES = frozenset({3, 10, 200, 131005})
 _UNKNOWN_PATH_CODES = frozenset({2500})
 _WA_ID = re.compile(r"\A[0-9]{8,15}\Z")
+_CONTACT = re.compile(r"\A\+[0-9]{8,15}\Z")
+_WAMID = re.compile(r"\A[A-Za-z0-9._=+/-]{1,256}\Z")
+
+
+def contact_of(target: ProviderTarget) -> str:
+    if target.actor != ACTOR or not _CONTACT.match(target.identity):
+        raise ValueError("not a whatsapp contact")
+    return target.identity
 
 
 def group_id_of(target: ProviderTarget) -> str:
@@ -122,12 +130,24 @@ def _settings(api: GraphApi, group_id: str, args: Mapping[str, Any]) -> Provider
     return admin_call(lambda: api.update_group(group_id, args))
 
 
+def _mark_read_args(args: Mapping[str, Any]) -> None:
+    if set(args) != {"message_id"} or not (
+        isinstance(args["message_id"], str) and _WAMID.match(args["message_id"])
+    ):
+        raise ValueError("operation arguments are malformed")
+
+
+def _mark_read(api: GraphApi, _contact: str, args: Mapping[str, Any]) -> ProviderResult:
+    return admin_call(lambda: api.mark_read(args["message_id"]))
+
+
 Check = Callable[[Mapping[str, Any]], None]
 Call = Callable[[GraphApi, str, Mapping[str, Any]], ProviderResult]
 _OPERATIONS: Mapping[C, tuple[Check, Call]] = {
     C.GROUP_MEMBER_REMOVE: (_remove_args, _remove),
     C.GROUP_INVITE_RESET: (_reset_args, _reset),
     C.GROUP_SETTINGS_UPDATE: (_settings_args, _settings),
+    C.MESSAGE_MARK_READ: (_mark_read_args, _mark_read),  # D14: a contact, not a group
 }
 
 
@@ -147,14 +167,17 @@ class WhatsAppAdmin:
         operation = _OPERATIONS.get(op.capability)
         if operation is None:
             raise NotImplementedError("whatsapp_cloud does not perform this operation")
-        group_id = group_id_of(target)
+        where = (
+            contact_of(target) if op.capability not in GROUP_CAPABILITIES else group_id_of(target)
+        )
         check, call = operation
         check(op.args)
-        return call, group_id
+        return call, where
 
     def invoke(self, op: SemanticOperation, target: ProviderTarget, op_key: str) -> ProviderResult:
-        call, group_id = self._request(op, target)
-        state = self._discovery.states.get(op.capability, S.UNKNOWN)
-        if state is not S.AVAILABLE:
-            return ProviderResult("FAILED", state.value)  # gated: nothing sent, nothing simulated
-        return call(self._api, group_id, op.args)
+        call, where = self._request(op, target)
+        if op.capability in GROUP_CAPABILITIES:  # groups are gated by discovery (P §16)
+            state = self._discovery.states.get(op.capability, S.UNKNOWN)
+            if state is not S.AVAILABLE:
+                return ProviderResult("FAILED", state.value)  # nothing sent, nothing simulated
+        return call(self._api, where, op.args)

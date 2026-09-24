@@ -38,14 +38,16 @@ def _created(capability):
         C.INVITE_CREATE: f"https://t.me/+AbCdEf{n:04d}",
         C.GROUP_INVITE_RESET: f"https://chat.whatsapp.com/Inv{n:04d}",
         C.TOPIC_CREATE: str(n),
+        C.MESSAGE_SEND: str(100 + n),
     }.get(capability)
 
 
 class Admin:
     """Real adapter validation; outcomes scripted as "ok", "refused", "unknown" or a code."""
 
-    def __init__(self, validator, outcome="ok"):
+    def __init__(self, validator, outcome="ok", details=None):
         self.validator, self.outcome, self.calls = validator, outcome, []
+        self.details = details or {}
 
     def validate(self, op, target):
         self.validator.validate(op, target)
@@ -58,7 +60,12 @@ class Admin:
             return ProviderResult("FAILED", "NOT_AUTHORIZED")
         if self.outcome != "ok":
             return ProviderResult("FAILED", self.outcome)
-        return ProviderResult("SUCCEEDED", None, provider_ref=_created(op.capability))
+        return ProviderResult(
+            "SUCCEEDED",
+            None,
+            provider_ref=_created(op.capability),
+            detail=self.details.get(op.capability, {}),
+        )
 
 
 class Provider:
@@ -87,16 +94,23 @@ def group_world(tmp_path):
     return w
 
 
-def group_service(world, *, state=S.AVAILABLE, outcome="ok"):
+def fixtures(world, *, state=S.AVAILABLE, outcome="ok", details=None, states=None):
+    """(capability service, executor, admins) over real adapter validation."""
     admins = {
-        "telegram_bot": Admin(BotAdmin(Tripwire()), outcome),
-        "telegram_user": Admin(UserAdmin(Tripwire(), run=_never, clock=lambda: NOW), outcome),
-        "whatsapp_cloud": Admin(WhatsAppAdmin(Tripwire(), Tripwire()), outcome),
+        "telegram_bot": Admin(BotAdmin(Tripwire()), outcome, details),
+        "telegram_user": Admin(
+            UserAdmin(Tripwire(), run=_never, clock=lambda: NOW), outcome, details
+        ),
+        "whatsapp_cloud": Admin(WhatsAppAdmin(Tripwire(), Tripwire()), outcome, details),
     }
     capability = CapabilityService(
-        {actor: Provider(state) for actor in admins},
+        {actor: Provider((states or {}).get(actor, state)) for actor in admins},
         clock=lambda: NOW,
         max_age=timedelta(minutes=5),
     )
-    executor = MutationExecutor(world["writer"], admins)
+    return capability, MutationExecutor(world["writer"], admins), admins
+
+
+def group_service(world, *, state=S.AVAILABLE, outcome="ok"):
+    capability, executor, admins = fixtures(world, state=state, outcome=outcome)
     return GroupService(world["conn"], capability, executor), admins

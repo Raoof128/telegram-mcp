@@ -18,7 +18,14 @@ from comms.core import refs, timeutil
 from comms.core.errors import CommsError
 from comms.core.storage.db import write_tx
 
-__all__ = ["KIND_PREFIX", "ProviderObject", "latest_object", "object_ref", "resolve_object"]
+__all__ = [
+    "KIND_PREFIX",
+    "ProviderObject",
+    "latest_object",
+    "message_identity",
+    "object_ref",
+    "resolve_object",
+]
 
 KIND_PREFIX = MappingProxyType(
     {kind: refs.CORE_PREFIXES[kind] for kind in ("message", "invite", "template", "topic", "media")}
@@ -34,6 +41,11 @@ class ProviderObject:
     actor: str
     destination_id: int | None
     provider_identity: str = field(repr=False)
+
+
+def message_identity(chat: str, message_id: object) -> str:
+    """A message's provider identity: its chat and its id in that chat (one rule; D8, D14)."""
+    return f"{chat}:{message_id}"
 
 
 def object_ref(

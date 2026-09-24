@@ -61,6 +61,7 @@ def test_oracle_serves_every_endpoint_the_adapter_calls():
         ),
         "reset_group_invite": lambda: api.reset_group_invite("120363049891234567"),
         "update_group": lambda: api.update_group("120363049891234567", {"subject": "New"}),
+        "mark_read": lambda: api.mark_read("wamid.HBgLNjE0MDAwMDAwMDEVAgASGBQ"),
     }
     public = {
         name

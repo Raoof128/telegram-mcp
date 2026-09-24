@@ -32,7 +32,7 @@ ACTOR = "telegram_user"
 
 class TextSender(Protocol):
     async def send_text_once(
-        self, peer: Any, text: str, random_id: int, *, timeout: float
+        self, peer: Any, text: str, random_id: int, *, timeout: float, reply_to: int | None = None
     ) -> SendAttempt: ...
 
 
@@ -55,12 +55,15 @@ async def send(
     random_id: int,
     *,
     clock: Callable[[], float] = time.monotonic,
+    reply_to: int | None = None,
 ) -> DeliveryResult:
     started = clock()
 
     async def attempt() -> SendAttempt:
         remaining = RECONCILE_WINDOW_S - (clock() - started)
-        return await session.send_text_once(peer, text, random_id, timeout=remaining)
+        return await session.send_text_once(
+            peer, text, random_id, timeout=remaining, reply_to=reply_to
+        )
 
     first = await attempt()
     if first.outcome in ("sent", "duplicate"):

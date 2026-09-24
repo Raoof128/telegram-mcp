@@ -22,7 +22,7 @@ class FakeSession:
             raise GatewayError("NOT_ACCESSIBLE")
         return (peer_type, peer_id)
 
-    async def send_text_once(self, peer, text, random_id, *, timeout):
+    async def send_text_once(self, peer, text, random_id, *, timeout, reply_to=None):
         self.sent.append((peer, text, random_id))
         step = self.script.pop(0) if self.script else "ok"
         if step == "flood":

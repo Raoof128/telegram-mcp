@@ -623,6 +623,36 @@ def _group_migrate(
     return functions.messages.MigrateChatRequest(peer_id)
 
 
+def _message_edit(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    peer = session._admin_peer(peer_type, peer_id)
+    return functions.messages.EditMessageRequest(peer, spec["message_id"], message=spec["text"])
+
+
+def _message_delete(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    if peer_type == "channel":  # always for everyone in a supergroup or channel
+        channel = session._admin_channel(peer_id)
+        return functions.channels.DeleteMessagesRequest(channel, [spec["message_id"]])
+    return functions.messages.DeleteMessagesRequest([spec["message_id"]], revoke=spec["revoke"])
+
+
+def _message_pin(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    peer = session._admin_peer(peer_type, peer_id)
+    return functions.messages.UpdatePinnedMessageRequest(
+        peer, spec["message_id"], unpin=True if not spec["pinned"] else None
+    )
+
+
+def _delete_scope(peer_type: str, spec: Mapping[str, Any]) -> str:
+    """The scope a delete actually had (P §72): a basic-group delete without revoke is local."""
+    return "everyone" if peer_type == "channel" or spec.get("revoke") else "local"
+
+
 def _invite_link(result: Any) -> str | None:
     link = getattr(result, "link", None) if isinstance(result, types.ChatInviteExported) else None
     return link if isinstance(link, str) and link else None
@@ -675,6 +705,9 @@ _ADMIN_BUILDERS: Mapping[Capability, Callable[..., Any]] = MappingProxyType(
         Capability.MEMBER_RESTRICT: _restrict,
         Capability.ADMIN_PROMOTE: _admin_rights,
         Capability.ADMIN_DEMOTE: _admin_rights,
+        Capability.MESSAGE_EDIT: _message_edit,
+        Capability.MESSAGE_DELETE: _message_delete,
+        Capability.MESSAGE_PIN: _message_pin,
     }
 )
 
@@ -945,10 +978,13 @@ class TelethonSession:
         )
 
     async def send_text_once(
-        self, peer: Any, text: str, random_id: int, *, timeout: float
+        self, peer: Any, text: str, random_id: int, *, timeout: float, reply_to: int | None = None
     ) -> SendAttempt:
         """One ``messages.sendMessage`` carrying ``random_id`` (A20), classified; never retried."""
-        request = functions.messages.SendMessageRequest(peer, text, random_id=random_id)
+        replied = types.InputReplyToMessage(reply_to_msg_id=reply_to) if reply_to else None
+        request = functions.messages.SendMessageRequest(
+            peer, text, random_id=random_id, reply_to=replied
+        )
         try:
             result = await self.call_capability(
                 Capability.MESSAGE_SEND,
@@ -1035,6 +1071,10 @@ class TelethonSession:
             return ProviderResult("OUTCOME_UNKNOWN", None)
         if isinstance(result, types.messages.InvitedUsers) and result.missing_invitees:
             return ProviderResult("FAILED", "INVITE_REQUIRED")  # never turned into an invite link
+        if capability is Capability.MESSAGE_DELETE:
+            return ProviderResult(
+                "SUCCEEDED", None, detail={"scope": _delete_scope(peer_type, spec)}
+            )
         ref_of = _CREATED_REF.get(capability)
         if ref_of is None:
             return ProviderResult("SUCCEEDED", None)

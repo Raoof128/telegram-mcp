@@ -20,7 +20,7 @@ from comms.core import timeutil
 from comms.core.campaigns.directory import destination_id
 from comms.core.campaigns.history import identity_history
 from comms.core.errors import CommsError
-from comms.core.objects import object_ref
+from comms.core.objects import message_identity, object_ref
 from comms.core.providers.capability import Capability, CapabilityState
 from comms.core.providers.protocols import (
     ContextPage,
@@ -290,7 +290,7 @@ class ContextEngine:
                 target.transport,
                 target.actor,
                 destination_id(self._conn, target.destination_ref),
-                f"{target.identity}:{item['message_id']}",
+                message_identity(target.identity, item["message_id"]),
                 now=self._clock(),
             )
         return out

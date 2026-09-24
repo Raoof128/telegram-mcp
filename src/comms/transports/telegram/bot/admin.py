@@ -20,6 +20,7 @@ from comms.core.providers.semantics import SEMANTICS
 from comms.transports.telegram.bot.admin_chat import CHAT_REQUESTS
 from comms.transports.telegram.bot.admin_invites import INVITE_REQUESTS, REF_FIELDS
 from comms.transports.telegram.bot.admin_members import MEMBER_REQUESTS
+from comms.transports.telegram.bot.admin_messages import DELETE_SCOPE, MESSAGE_REQUESTS
 from comms.transports.telegram.bot.classify import classify_admin
 from comms.transports.telegram.bot.http import BotApi, BotResponse, BotTransportError
 
@@ -27,7 +28,13 @@ __all__ = ["BotAdmin"]
 
 ACTOR = "telegram_bot"
 Request = Callable[[int, Mapping[str, Any]], tuple[str, dict[str, Any]]]
-_REQUESTS: Mapping[Capability, Request] = {**MEMBER_REQUESTS, **CHAT_REQUESTS, **INVITE_REQUESTS}
+_REQUESTS: Mapping[Capability, Request] = {
+    **MEMBER_REQUESTS,
+    **CHAT_REQUESTS,
+    **INVITE_REQUESTS,
+    **MESSAGE_REQUESTS,
+}
+_REF_FIELDS: Mapping[Capability, str] = {**REF_FIELDS, Capability.MESSAGE_SEND: "message_id"}
 assert all(not SEMANTICS[(c, ACTOR)].steps for c in _REQUESTS)  # no saga is ever one call
 
 
@@ -58,7 +65,9 @@ class BotAdmin:
         except BotTransportError as exc:
             outcome = exc
         result = classify_admin(outcome)
-        field = REF_FIELDS.get(op.capability)
+        if op.capability is Capability.MESSAGE_DELETE and result.outcome == "SUCCEEDED":
+            return ProviderResult("SUCCEEDED", None, detail={"scope": DELETE_SCOPE})
+        field = _REF_FIELDS.get(op.capability)
         if field is None or result.outcome != "SUCCEEDED":
             return result
         ref = result.detail.get(field)
