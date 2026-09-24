@@ -18,6 +18,7 @@ from typing import Any
 
 from comms.core import timeutil
 from comms.core.keys import ids
+from comms.core.keys.purposes import PURPOSES
 from comms.core.storage.db import write_tx
 
 __all__ = ["KeySlotError", "KeySlotStore", "bootstrap_comms_audit_keys", "load_active"]
@@ -51,8 +52,15 @@ class KeySlotStore:
             os.chmod(directory, 0o700)
         self._dir = directory
 
+    def __repr__(self) -> str:
+        return "KeySlotStore(<redacted>)"
+
     def _purpose_dir(self, purpose: str) -> Path:
-        if not _PURPOSE.fullmatch(purpose):
+        if (
+            not isinstance(purpose, str)
+            or not _PURPOSE.fullmatch(purpose)
+            or purpose not in PURPOSES
+        ):
             raise KeySlotError("unknown key purpose")
         return self._dir / purpose
 
@@ -64,6 +72,8 @@ class KeySlotStore:
 
     def write_version(self, purpose: str, material: bytes) -> int:
         d = self._purpose_dir(purpose)
+        if PURPOSES[purpose].rotation == "refused":
+            raise KeySlotError("a retired key purpose is never minted")
         if not d.exists():
             d.mkdir(mode=0o700)
             os.chmod(d, 0o700)

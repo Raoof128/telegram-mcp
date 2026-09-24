@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from comms.core.keys.purposes import PURPOSES
+
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "comms"
 CORE = SRC / "core"
@@ -44,6 +46,8 @@ def _constants(path: Path) -> list[str]:
         if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
             text = node.value.decode("latin-1") if isinstance(node.value, bytes) else node.value
             if text.startswith(("comms-", "comms/")):  # widened for comms/audit-head-anchor (A6)
+                if isinstance(node.value, str) and text in PURPOSES:
+                    continue  # a registered key purpose name (B4), never a wire domain
                 found.append(repr(node.value))
     return found
 
