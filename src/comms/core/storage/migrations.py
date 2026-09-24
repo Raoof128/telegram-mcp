@@ -359,6 +359,25 @@ CREATE TRIGGER bot_update_offset_forward_only BEFORE UPDATE OF next_offset ON bo
 CREATE TABLE bot_updates (update_id INTEGER PRIMARY KEY CHECK (update_id >= 0), chat_id INTEGER,
   kind TEXT NOT NULL, payload TEXT NOT NULL, received_at TEXT NOT NULL);
 CREATE INDEX bot_updates_chat ON bot_updates (chat_id, update_id);
+-- A42 (Task C15): a provider request key (the MTProto random_id) is written on the attempt in
+-- the claim transaction, before the call. It is unique per transport actor across jobs; the
+-- same job's later attempts reuse it (that is the dedupe). Set once. outcome_code names why an
+-- attempt failed without a call (RANDOM_ID_COLLISION).
+ALTER TABLE delivery_attempts ADD COLUMN provider_request_key TEXT;
+ALTER TABLE delivery_attempts ADD COLUMN transport_actor TEXT;
+ALTER TABLE delivery_attempts ADD COLUMN outcome_code TEXT;
+CREATE INDEX delivery_attempts_request_key ON delivery_attempts (transport_actor, provider_request_key)
+  WHERE provider_request_key IS NOT NULL;
+CREATE TRIGGER attempts_request_key_set_once BEFORE UPDATE OF provider_request_key, transport_actor ON delivery_attempts
+  WHEN OLD.provider_request_key IS NOT NULL OR OLD.transport_actor IS NOT NULL
+    OR (NEW.provider_request_key IS NULL) <> (NEW.transport_actor IS NULL)
+  BEGIN SELECT RAISE(ABORT, 'provider request key is frozen'); END;
+CREATE TRIGGER attempts_request_key_scoped_unique BEFORE UPDATE OF provider_request_key ON delivery_attempts
+  WHEN EXISTS (SELECT 1 FROM delivery_attempts a WHERE a.transport_actor = NEW.transport_actor
+    AND a.provider_request_key = NEW.provider_request_key AND a.job_id <> NEW.job_id)
+  BEGIN SELECT RAISE(ABORT, 'provider request key collision'); END;
+CREATE TRIGGER attempts_outcome_code_set_once BEFORE UPDATE OF outcome_code ON delivery_attempts
+  WHEN OLD.outcome_code IS NOT NULL BEGIN SELECT RAISE(ABORT, 'outcome code is frozen'); END;
 """
 SCHEMA_V3: tuple[str, ...] = _statements(_SCHEMA_V3_SQL)
 

@@ -40,6 +40,7 @@ ADDED_IN_V03 = Counter(  # comms/core/domains.py, comms v0.3 Part A
         "b'comms-backup-signature/v1\\x00'": 1,
         "b'comms-backup-binding/v1\\x00'": 1,
         "b'comms-backup/v1\\x00'": 1,
+        "b'comms-mtproto-random-id/v1\\x00'": 1,  # Part C, A20
     }
 )
 

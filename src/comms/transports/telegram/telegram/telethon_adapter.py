@@ -37,6 +37,7 @@ from comms.transports.telegram.telegram.deadline import (
     WorkBudgetExceeded,
 )
 from comms.transports.telegram.telegram.errors import GatewayError
+from comms.transports.telegram.telegram.send_attempt import SendAttempt
 
 __all__ = [
     "ADMIN_RPCS",
@@ -48,6 +49,7 @@ __all__ = [
     "DialogView",
     "MessageView",
     "SearchPage",
+    "SendAttempt",
     "TelegramConfig",
     "TelethonSession",
     "capability_operation",
@@ -259,6 +261,26 @@ _UNAVAILABLE = (
     EOFError,  # asyncio.IncompleteReadError: the link dropped mid-read
 )
 _SESSION_NAME = "primary"
+# Documented refusals of messages.sendMessage: nothing was posted, and a resend cannot help.
+_SEND_REFUSED = (
+    errors.ChatWriteForbiddenError,
+    errors.UserBannedInChannelError,
+    errors.PeerIdInvalidError,
+    errors.ChannelPrivateError,
+    errors.InputUserDeactivatedError,
+    errors.UserIsBlockedError,
+    errors.MessageEmptyError,
+    errors.MessageTooLongError,
+)
+
+
+def _sent_message_id(result: Any, random_id: int) -> int | None:
+    if isinstance(result, types.UpdateShortSentMessage):
+        return int(result.id)
+    for update in getattr(result, "updates", None) or ():
+        if isinstance(update, types.UpdateMessageID) and update.random_id == random_id:
+            return int(update.id)
+    return None
 
 
 def translate(exc: BaseException) -> GatewayError:
@@ -476,6 +498,47 @@ class TelethonSession:
                 elif gateway.code == "ACCOUNT_UNAVAILABLE":
                     self.account_unavailable = True
             raise gateway from None
+
+    async def call_capability(
+        self,
+        capability: Capability,
+        request: Any,
+        *,
+        timeout: float,
+        passthrough: tuple[type[BaseException], ...] = (),
+    ) -> Any:
+        """One request of one capability's reviewed set (C14), one RPC, never retried here."""
+        return await self._call_reviewed(
+            request,
+            operation=capability_operation(capability),
+            client_ref="comms",
+            deadline=Deadline(max(0.001, timeout)),
+            budget=WorkBudget(max_rpcs=1),
+            passthrough=passthrough,
+        )
+
+    async def send_text_once(
+        self, peer: Any, text: str, random_id: int, *, timeout: float
+    ) -> SendAttempt:
+        """One ``messages.sendMessage`` carrying ``random_id`` (A20), classified; never retried."""
+        request = functions.messages.SendMessageRequest(peer, text, random_id=random_id)
+        try:
+            result = await self.call_capability(
+                Capability.MESSAGE_SEND,
+                request,
+                timeout=timeout,
+                passthrough=(errors.RandomIdDuplicateError, *_SEND_REFUSED),
+            )
+        except errors.RandomIdDuplicateError:
+            return SendAttempt("duplicate")
+        except _SEND_REFUSED:
+            return SendAttempt("refused")
+        except GatewayError as exc:
+            if exc.code == "FLOOD_WAIT":
+                return SendAttempt("flood", retry_after=exc.retry_after)
+            ambiguous = exc.code in ("TELEGRAM_UNAVAILABLE", "DEADLINE_EXCEEDED")
+            return SendAttempt("ambiguous" if ambiguous else "failed")
+        return SendAttempt("sent", message_id=_sent_message_id(result, random_id))
 
     # -- login and status (admin plane): raw reviewed requests only -----------
 

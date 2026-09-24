@@ -3,7 +3,8 @@
 ``normalize``, ``prepare`` and ``still_valid`` are pure (S3). ``prepare`` renders one
 ``sendMessage`` payload for text content, or ``Skip(CONTENT_UNSUPPORTED)``. The bot has no
 customer-service window, so ``still_valid`` is always ``True``. ``deliver`` makes exactly one
-``sendMessage`` call and classifies it (A19); it never retries, because the Bot API has no
+``sendMessage`` call and classifies it (A19); the provider ref is ``<marked chat>:<message id>``
+(Telegram message ids are unique only per chat); it never retries, because the Bot API has no
 idempotency key (A20) and every retry is an explicit Comms decision (A21).
 """
 
@@ -70,9 +71,10 @@ class BotDelivery:
             classified = classify_send(exc)
         else:
             classified = classify_send(outcome)
+        ref = classified.provider_message_ref
         return DeliveryResult(
             classified.kind,
-            provider_message_ref=classified.provider_message_ref,
+            provider_message_ref=f"{delivery.identity}:{ref}" if ref is not None else None,
             retry_after=classified.retry_after,
         )
 

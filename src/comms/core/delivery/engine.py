@@ -3,7 +3,8 @@
 Per job: claim in one transaction (revalidate, then compare-and-set with its attempt),
 ``deliver`` with no transaction open, then record the result in a second transaction.
 Only an exception raised by ``deliver`` becomes ``OUTCOME_UNKNOWN`` (S7); every other
-exception propagates and fails closed. Only the executor-lease holder may execute.
+exception propagates and fails closed. Only the executor-lease holder may execute. A transport's
+provider request key is persisted in the claim transaction, before ``deliver`` (A42).
 """
 
 from __future__ import annotations
@@ -121,6 +122,8 @@ class Engine:
             frozen = self._claim(job_id, generation_ref, transport)
             if not isinstance(frozen, tuple):
                 skipped += frozen == "skipped"
+                if frozen == "collision":
+                    outcomes[ResultKind.FAILED_PERMANENT.value] += 1  # never sent
                 continue
             delivery, attempt_id = frozen
             claimed += 1
@@ -171,6 +174,13 @@ class Engine:
             t = reduce(conn, job_id, None, Evidence.CLAIM, None, now=now)
             if t.disposition != "applied" or t.attempt_id is None:
                 return None
+            if _provider_key_collides(conn, transport, job_id, t.attempt_id, key):
+                reduce(conn, job_id, t.attempt_id, Evidence.RESULT, "FAILED_PERMANENT", now=now)
+                conn.execute(
+                    "UPDATE delivery_attempts SET outcome_code = 'RANDOM_ID_COLLISION' WHERE id = ?",
+                    (t.attempt_id,),
+                )
+                return "collision"
         delivery = FrozenDelivery(
             job_ref=ref,
             generation_ref=generation_ref,
@@ -181,3 +191,33 @@ class Engine:
             attempt_no=attempt_count + 1,
         )
         return delivery, t.attempt_id
+
+
+def _provider_key_collides(
+    conn: Any, transport: DeliveryTransport, job_id: int, attempt_id: int, idempotency_key: str
+) -> bool:
+    """A42: persist the transport's provider request key on the attempt before the call.
+
+    A transport opts in with ``provider_request_key(idempotency_key) -> str`` and an ``actor``
+    (the MTProto ``random_id``, Task C15). The key is unique per actor across jobs; another
+    job holding it is a collision, and this job is failed without a call.
+    """
+    keyer = getattr(transport, "provider_request_key", None)
+    if keyer is None:
+        return False
+    actor = getattr(transport, "actor", None)
+    request_key = keyer(idempotency_key)
+    if not isinstance(actor, str) or not isinstance(request_key, str) or not request_key:
+        raise TypeError("a keyed transport names its actor and a non-empty key")
+    taken = conn.execute(
+        "SELECT 1 FROM delivery_attempts WHERE transport_actor = ? AND provider_request_key = ?"
+        " AND job_id <> ?",
+        (actor, request_key, job_id),
+    ).fetchone()
+    if taken:
+        return True
+    conn.execute(
+        "UPDATE delivery_attempts SET provider_request_key = ?, transport_actor = ? WHERE id = ?",
+        (request_key, actor, attempt_id),
+    )
+    return False

@@ -120,11 +120,14 @@ def test_prepare_is_pure_no_io(monkeypatch):
     assert seen == []
 
 
-def test_accepted_returns_the_message_id_as_the_opaque_ref():
+def test_accepted_returns_the_chat_qualified_message_id_as_the_opaque_ref():
     seen = []
     transport = _transport(fixture_transport("sendMessage_ok"), seen)
     result = transport.deliver(_frozen(_prepared(transport)))
-    assert (result.kind, result.provider_message_ref) == (ResultKind.ACCEPTED, "4711")
+    assert (result.kind, result.provider_message_ref) == (
+        ResultKind.ACCEPTED,
+        "-1001234567890:4711",
+    )
     assert [r.url.path.rsplit("/", 1)[1] for r in seen] == ["sendMessage"]
 
 
