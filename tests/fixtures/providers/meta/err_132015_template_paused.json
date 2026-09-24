@@ -1,0 +1,1 @@
+{"http_status": 400, "body": {"error": {"message": "Template is Paused", "type": "OAuthException", "code": 132015, "fbtrace_id": "AFixtureTraceId"}}}

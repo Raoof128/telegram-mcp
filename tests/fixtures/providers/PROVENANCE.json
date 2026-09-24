@@ -1,5 +1,103 @@
 {
   "fixtures": {
+    "meta/err_100_invalid_parameter.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "8486bd141fe5f19d795befe698b7f40080f2230f4cdd70ad061f7ed0d223136c",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_130429_throughput.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "8c1351205cdfaf54e65dadc6de2004ff1d5949c070b702db359599ef45a09aa9",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_131000_generic.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "d2d2e1420cf6f8cde2523dff2e349e4007e5149e9b410ff6835f803203a24eb8",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_131026_undeliverable.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "5fbc97a27d33256e193cbc81ba2207bfd743485b727c0c659a4f3ad7146be4a3",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_131047_reengagement.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "12860368b814608e5b8dc84f665a0f7d076f63f8a7b4b4d0aa674d7c75e63a55",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_131056_pair_rate.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "0acb6995e4415a2fabcb3f033ce192990bba571776aacfa0a6f6e0fd59c8ce0c",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_132001_template_missing.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "7f560f65325bf503dc7740a81a35935051ffb08857d4c7074924dc85cee38bc2",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_132015_template_paused.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "acf6a6f51c43814e1ebf5edbc785aa1c1c7fb54bf6fb09c8521b4f368028afd1",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_190_token_expired.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "06fa3f87736ba38ea59f6d8c8f6566a9cf0ff01d8deb44689a7fb22d5ed0efa3",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_999999_unknown.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "849288204afe95b9ec287f5370aa390fb99f1e8ddc324367e988a6dc274024f6",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/http_502.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "00c90b679bca69c1bfb7d875626e287e19eecf473888c970553c95230c242593",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/malformed.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "18e53f22d5c077bad6e8b1d73b43c6ccf170c08a502a1834472f22de37be2582",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/send_ok.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "cd8a381ee74921edb6c8e040862a153c260a07064b460926b9c1acc978c3f94f",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/send_ok_without_id.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "2c81b010c819b53ab586f67af34981845ef4fd308e9929b0efe63d16d3607829",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
     "telegram_bot/admin_400_not_enough_rights.json": {
       "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
       "captured": "2026-09-25",

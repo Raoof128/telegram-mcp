@@ -1,0 +1,1 @@
+{"http_status": 429, "body": {"error": {"message": "Rate limit hit", "type": "OAuthException", "code": 130429, "fbtrace_id": "AFixtureTraceId", "error_data": {"messaging_product": "whatsapp", "details": "Cloud API message throughput has been reached."}}}}
