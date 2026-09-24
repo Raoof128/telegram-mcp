@@ -124,7 +124,7 @@ async def test_list_chats_then_get_messages_with_receipts_and_no_body_at_rest(
         assert body["ok"] is True, body
         assert body["data"]["messages"][0]["text"] == MARKER
         assert body["meta"]["content_trust"] == "untrusted_external_content"
-        assert world["agent"].prompts == 2
+        assert world["agent"].prompts == 0  # owner-direct: nothing is prompted
         world["conn"].commit()
         for path in Path(tmp_path).glob("meta.db*"):
             assert MARKER.encode() not in path.read_bytes(), path  # §19.4: no body at rest

@@ -45,6 +45,35 @@ OUTPUT_HEADINGS = {
 }
 
 META_HEADING = "### E.8 "
+
+# comms spec v0.2 (5b-3 design §2.1): the gateway releases only owner-direct
+# v2 receipts, so E.8's proof_payload shape is replaced and nothing else is.
+# Exact substitutions, each required to match once, keep the frozen fence
+# byte-for-byte everywhere they do not touch.
+V0_2_META_OVERLAY: tuple[tuple[str, str], ...] = (
+    (
+        (
+            '"committed_at", "consent_verified", "consent_key_id", "consent_challenge_digest",'
+            ' "canonical_result_provenance_digest", "canonical_coverage_digest"]'
+        ),
+        (
+            '"committed_at", "canonical_result_provenance_digest", "canonical_coverage_digest",'
+            ' "authorization_mode", "soft_threshold_exceeded"]'
+        ),
+    ),
+    ('"schema": {"const": "tg-mcp-disclosure/v1"}', '"schema": {"const": "tg-mcp-disclosure/v2"}'),
+    (
+        (
+            '                "consent_verified": {"const": true},\n'
+            '                "consent_key_id": {"type": "string", "minLength": 1, "maxLength": 160},\n'
+            '                "consent_challenge_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},\n'
+        ),
+        (
+            '                "authorization_mode": {"const": "owner_direct"},\n'
+            '                "soft_threshold_exceeded": {"type": "boolean"},\n'
+        ),
+    ),
+)
 ERROR_HEADING = "### E.9 "
 
 DESCRIPTIONS = {
@@ -101,6 +130,14 @@ def _first_fence(lines: list[str], start: int, end: int, marker: str) -> str:
     return "\n".join(lines[fence + 1 : close]) + "\n"
 
 
+def _apply_overlay(text: str, overlay: tuple[tuple[str, str], ...]) -> str:
+    for old, new in overlay:
+        if text.count(old) != 1:
+            raise ValueError("overlay does not match the frozen fence exactly once")
+        text = text.replace(old, new)
+    return text
+
+
 def extract_all() -> dict[str, str]:
     text = SPEC_PATH.read_text(encoding="utf-8")
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -117,7 +154,9 @@ def extract_all() -> dict[str, str]:
         end = _section_end(lines, head)
         out[f"{tool}.data.json"] = _first_fence(lines, head, end, marker)
     head = _find_heading(lines, META_HEADING)
-    out["meta.json"] = _first_fence(lines, head, _section_end(lines, head), META_HEADING)
+    out["meta.json"] = _apply_overlay(
+        _first_fence(lines, head, _section_end(lines, head), META_HEADING), V0_2_META_OVERLAY
+    )
     head = _find_heading(lines, ERROR_HEADING)
     out["error.json"] = _first_fence(lines, head, _section_end(lines, head), ERROR_HEADING)
     # Manifest with source hash, descriptions and Section-15 annotations.
@@ -133,6 +172,7 @@ def extract_all() -> dict[str, str]:
     manifest = {
         "source": "telegram-mcp-v0.1.10-final-engineering-spec.md",
         "source_sha256": EXPECTED_SHA256,
+        "overlays": {"meta.json": "comms-spec-v0.2 receipt v2"},
         "tools": sorted(INPUT_HEADINGS),
         "descriptions": {t: DESCRIPTIONS[t] for t in sorted(INPUT_HEADINGS)},
         "annotations": annotations,

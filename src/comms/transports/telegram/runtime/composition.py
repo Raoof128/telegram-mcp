@@ -28,7 +28,7 @@ from comms.transports.telegram.disclosure.keys import (
     ensure_current_published,
 )
 from comms.transports.telegram.disclosure.lineage import NoRestoreLineage
-from comms.transports.telegram.disclosure.seams import CoordinatorAuthority, CoordinatorConsent
+from comms.transports.telegram.disclosure.seams import CoordinatorAuthority
 from comms.transports.telegram.http_guards import DEFAULT_LIMITS, RateLimiter
 from comms.transports.telegram.ipc.admin import AdminRouter
 from comms.transports.telegram.ipc.handlers._wrapper import AuditSink
@@ -193,7 +193,6 @@ def build_runtime(
         anchor_path=anchor_path,
         ledger=BudgetLedger(conn),
         authority=authority,
-        consent=CoordinatorConsent(broker, prompter),
     )
     metadata = MetadataReadAdapter(mint_cursor=authority.mint_catalogue_cursor)
     routes: dict[str, Any] = {

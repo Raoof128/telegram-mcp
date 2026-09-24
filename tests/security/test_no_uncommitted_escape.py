@@ -1,5 +1,6 @@
 """No sensitive byte crosses the boundary before the anchor (design §2)."""
 
+from comms.transports.telegram.storage.settings import set_setting
 from tests.coordinator_fixtures import build_coordinator
 
 
@@ -53,7 +54,9 @@ async def test_a_successful_call_writes_only_after_the_anchor(tmp_path):
 async def test_a_refusal_before_retrieval_never_calls_the_adapter(tmp_path):
     calls: list[str] = []
 
-    coordinator, _conn, adapter = build_coordinator(tmp_path, approve=False)
+    coordinator, conn, adapter = build_coordinator(tmp_path)
+    # A hard-budget refusal: the one refusal left between snapshot and retrieval.
+    set_setting(conn, "exposure_budget.hard_records_per_client_global", 1)
     original = adapter.retrieve
 
     async def counted(*, tool_name: str, arguments: object):
@@ -66,5 +69,5 @@ async def test_a_refusal_before_retrieval_never_calls_the_adapter(tmp_path):
         tool_name="telegram_get_messages", arguments={}, adapter=adapter
     )
 
-    assert outcome.error_code == "CONSENT_DENIED"
-    assert calls == [], "the security barrier means no retrieval without consent"
+    assert outcome.error_code == "EXPOSURE_BUDGET_EXCEEDED"
+    assert calls == [], "the security barrier means no retrieval without a reservation"

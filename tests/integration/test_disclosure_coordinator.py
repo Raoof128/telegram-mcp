@@ -1,15 +1,13 @@
-"""The twelve-step disclosure transaction (design §2, §6.5)."""
+"""The ten-step disclosure transaction (design §2, §6.5)."""
 
 from comms.transports.telegram.disclosure.coordinator import DISCLOSURE_STEPS
 
 
-def test_the_twelve_steps_are_frozen_in_order():
+def test_the_ten_steps_are_frozen_in_order():
     assert DISCLOSURE_STEPS == (
         "freeze_arguments",
         "snapshot_authority",
         "estimate_exposure",
-        "consent_issue",
-        "consent_consume",
         "reserve_budget",
         "retrieve",
         "revalidate_authority",
@@ -20,9 +18,8 @@ def test_the_twelve_steps_are_frozen_in_order():
     )
 
 
-def test_retrieval_never_happens_before_consent_is_consumed():
-    # The security barrier: steps 1-6 must precede any adapter call.
-    assert DISCLOSURE_STEPS.index("retrieve") > DISCLOSURE_STEPS.index("consent_consume")
+def test_retrieval_never_happens_before_the_reservation():
+    # The security barrier: steps 1-4 must precede any adapter call.
     assert DISCLOSURE_STEPS.index("retrieve") > DISCLOSURE_STEPS.index("reserve_budget")
 
 
@@ -46,7 +43,9 @@ def _counts(conn):
     )
 
 
-@pytest.mark.parametrize("crash_at", DISCLOSURE_STEPS[:10])
+@pytest.mark.parametrize(
+    "crash_at", DISCLOSURE_STEPS[: DISCLOSURE_STEPS.index("commit_disclosure")]
+)
 async def test_crashing_before_commit_leaves_nothing_durable(crash_at, tmp_path):
     coordinator, conn, adapter = build_coordinator(tmp_path, crash_at=crash_at)
 
@@ -107,39 +106,6 @@ async def test_degraded_refuses_the_next_call_and_appends_nothing(tmp_path):
     # that grows here becomes unrecoverable at startup. The refusal is
     # therefore NOT audited, and the degraded record is the evidence.
     assert _counts(conn) == before
-
-
-async def test_consent_denial_retrieves_nothing(tmp_path):
-    coordinator, conn, adapter = build_coordinator(tmp_path, approve=False)
-
-    outcome = await coordinator.disclose(
-        tool_name="telegram_get_messages", arguments={}, adapter=adapter
-    )
-
-    assert outcome.error_code == "CONSENT_DENIED"
-    assert _counts(conn) == (0, 0, 0)
-
-
-async def test_one_snapshot_divergence_re_prompts_and_succeeds(tmp_path):
-    coordinator, _conn, adapter = build_coordinator(tmp_path, diverge_times=1)
-
-    outcome = await coordinator.disclose(
-        tool_name="telegram_get_messages", arguments={}, adapter=adapter
-    )
-
-    assert outcome.released, "§23C.3 requires exactly one automatic re-prompt"
-
-
-async def test_a_second_divergence_refuses_unretryably(tmp_path):
-    coordinator, conn, adapter = build_coordinator(tmp_path, diverge_times=2)
-
-    outcome = await coordinator.disclose(
-        tool_name="telegram_get_messages", arguments={}, adapter=adapter
-    )
-
-    assert outcome.error_code == "CONSENT_UNAVAILABLE"
-    assert outcome.retryable is False, "an agent must not spin through prompts"
-    assert _counts(conn) == (0, 0, 0)
 
 
 async def test_authority_moving_after_retrieval_emits_nothing(tmp_path):

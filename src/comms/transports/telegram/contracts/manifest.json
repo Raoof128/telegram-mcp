@@ -107,6 +107,9 @@
     "telegram_status.data.json",
     "telegram_status.input.json"
   ],
+  "overlays": {
+    "meta.json": "comms-spec-v0.2 receipt v2"
+  },
   "source": "telegram-mcp-v0.1.10-final-engineering-spec.md",
   "source_sha256": "36b67f488415f2ab1c44b8d906de7f192fbe0dc562a2aeac76938b24c4a61b0a",
   "tools": [

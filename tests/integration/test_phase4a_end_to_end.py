@@ -190,6 +190,7 @@ async def call(world, client, name, arguments, *, runtime=RUNTIME):
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params},
         )
     assert response.status_code == 200, response.text
+    assert "result" in response.json(), response.text
     return response.json()["result"]["structuredContent"]
 
 
@@ -224,7 +225,8 @@ async def test_list_projects_is_a_real_accounted_disclosure(world):
         proof_payload_sha256=d["proof_payload_sha256"],
         public_key_b64url=public,
     )
-    assert world["agent"].prompts == 1
+    assert d["proof_payload"]["schema"] == "tg-mcp-disclosure/v2"
+    assert world["agent"].prompts == 0  # owner-direct: nothing is prompted
     assert (world["services"].coordinator._anchor_path).exists()
 
 
@@ -242,78 +244,23 @@ async def test_concurrent_bearers_resolve_to_their_own_principal(world):
     )
     assert {p["project_ref"] for p in codex["data"]["projects"]} == {world["ops"], world["society"]}
     assert {p["project_ref"] for p in claude["data"]["projects"]} == {world["society"]}
-    assert world["agent"].prompts == 2
+    assert world["agent"].prompts == 0
 
 
-async def test_same_client_concurrency_prompts_once_per_call(world):
+async def test_same_client_concurrency_accounts_every_call(world):
     results = await asyncio.gather(
         *(call(world, CODEX, "telegram_list_projects", {}) for _ in range(3))
     )
     assert all(body["ok"] for body in results), results
-    assert world["agent"].prompts == 3  # no re-prompt: the snapshot never moved under a call
+    assert world["agent"].prompts == 0
     assert counts(world["conn"]) == (3, 3, 3)
 
 
-async def test_grant_revoked_during_prompt_refuses(world):
-    def revoke():
-        world["admin"].dispatch(
-            {
-                "cmd": "project revoke-client",
-                "args": {"presence": PROOF, "project_ref": world["ops"], "client_ref": CODEX},
-            }
-        )
-        world["agent"].before_approve = None
-
-    world["agent"].before_approve = revoke
-    body = await call(world, CODEX, "telegram_list_projects", {})
-    assert body["ok"] is False and body["error"]["code"] == "POLICY_CHANGED"
-    assert counts(world["conn"]) == (0, 0, 0)
-
-
-async def test_consent_timeout_is_denied_and_charges_nothing(world, monkeypatch):
-    world["agent"].mode = "silent"
-    consent = world["services"].coordinator._consent
-    monkeypatch.setattr(consent, "_wait_s", 0.3)
-    body = await call(world, CODEX, "telegram_list_projects", {})
-    assert body["error"]["code"] == "CONSENT_DENIED"
-    assert counts(world["conn"]) == (0, 0, 0)
-    assert world["services"].broker.pending_count() == 0
-
-
-async def test_no_agent_is_unavailable_at_once(world):
+async def test_a_disclosure_needs_no_agent(world):
     world["services"].prompter._drop()
-    started = time.monotonic()
     body = await call(world, CODEX, "telegram_list_projects", {})
-    assert body["error"]["code"] == "CONSENT_UNAVAILABLE"
-    assert time.monotonic() - started < 5
-
-
-async def test_cancellation_during_consent_never_reaches_retrieval(world):
-    from comms.transports.telegram.runtime.identity import resolve_principal
-
-    world["agent"].mode = "silent"
-    services = world["services"]
-    task = asyncio.create_task(
-        services.coordinator.disclose(
-            tool_name="telegram_list_projects",
-            arguments={"limit": 20},
-            adapter=_Exploding(),
-            principal=resolve_principal(world["conn"], CODEX),
-        )
-    )
-    while world["agent"].prompts == 0:
-        await asyncio.sleep(0.01)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert counts(world["conn"]) == (0, 0, 0)
-    assert services.broker.pending_count() == 0
-    assert services.coordinator._ledger._reservations == {}
-
-
-class _Exploding:
-    async def retrieve(self, **_kwargs):
-        raise AssertionError("retrieval ran after a cancelled consent")
+    assert body["ok"] is True
+    assert counts(world["conn"]) == (1, 1, 1)
 
 
 async def test_without_a_session_telegram_tools_refuse_before_any_prompt(world):
@@ -325,35 +272,3 @@ async def test_without_a_session_telegram_tools_refuse_before_any_prompt(world):
     )
     assert body["error"]["code"] == "AUTH_REQUIRED"  # this world has no Telegram session
     assert world["agent"].prompts == 0
-
-
-async def test_a_client_that_disconnects_mid_prompt_invalidates_its_challenge(world):
-    # Spec §9.8: if the originating MCP request is cancelled/disconnected before
-    # consent is consumed, the challenge MUST be invalidated.
-    world["agent"].delay = 1.5
-    token = mint_lease(
-        seed=world["seeds"][CODEX], client=CODEX, epoch=1, now=int(time.time()), runtime_id=RUNTIME
-    )
-    params = {
-        "name": "telegram_list_projects",
-        "arguments": {},
-        "_meta": {PROTOCOL_VERSION_META_KEY: "2026-07-28", CLIENT_CAPABILITIES_META_KEY: {}},
-    }
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Mcp-Protocol-Version": "2026-07-28",
-        "Mcp-Method": "tools/call",
-        "Mcp-Name": "telegram_list_projects",
-        "Accept": "application/json, text/event-stream",
-    }
-    async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{world['port']}", timeout=0.5) as http:
-        with pytest.raises(httpx.TimeoutException):
-            await http.post(
-                "/mcp",
-                headers=headers,
-                json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params},
-            )
-    await asyncio.sleep(0.3)
-    assert world["services"].broker.pending_count() == 0, "challenge outlived its request"
-    await asyncio.sleep(2.0)  # the operator's approval lands after the client left
-    assert counts(world["conn"]) == (0, 0, 0)
