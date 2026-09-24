@@ -61,6 +61,9 @@ class Registry:
 
         return register
 
+    def subset(self, adapter: str, contract: str) -> Registry:
+        return Registry({(adapter, contract): list(self.cases.get((adapter, contract), []))})
+
 
 @dataclass(frozen=True)
 class Failure:

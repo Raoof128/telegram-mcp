@@ -46,6 +46,7 @@ class ResultKind(StrEnum):
 
 class SkipReason(StrEnum):
     PLATFORM_INELIGIBLE = "platform_ineligible"
+    CONTENT_UNSUPPORTED = "content_unsupported"  # the transport cannot carry this content
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,7 @@ class FrozenDelivery:
 class DeliveryResult:
     kind: ResultKind
     provider_message_ref: str | None = None
+    retry_after: int | None = None  # seconds; a provider's documented back-off (FAILED_TRANSIENT)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", ResultKind(self.kind))

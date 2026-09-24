@@ -5,7 +5,6 @@ Envelopes are the fixtures under tests/fixtures/providers/telegram_bot (provenan
 
 import json
 import logging
-from pathlib import Path
 
 import httpx
 import pytest
@@ -19,31 +18,7 @@ from comms.transports.telegram.bot.http import (
     BotResponse,
     BotTransportError,
 )
-
-FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "providers" / "telegram_bot"
-CANARY = "7000000001:AAcanaryTOKENcanaryTOKENcanary12345"
-
-
-class Secrets:
-    def __init__(self, token=CANARY):
-        self.token = token.encode()
-
-    def get(self, item, version):
-        assert (item, version) == ("telegram-bot-token", 1)
-        return self.token
-
-
-def _fixture_transport(name, seen=None):
-    recorded = json.loads((FIXTURES / f"{name}.json").read_text())
-
-    def handler(request):
-        if seen is not None:
-            seen.append(request)
-        if "raw" in recorded:
-            return httpx.Response(recorded["http_status"], content=recorded["raw"].encode())
-        return httpx.Response(recorded["http_status"], json=recorded["body"])
-
-    return httpx.MockTransport(handler)
+from tests.transports.telegram_bot.helpers import CANARY, Secrets, fixture_transport, raising
 
 
 def _api(transport, token=CANARY):
@@ -52,15 +27,8 @@ def _api(transport, token=CANARY):
 
 def _classify(name):
     return classify_send(
-        _api(_fixture_transport(name)).call("sendMessage", {"chat_id": 1, "text": "hi"})
+        _api(fixture_transport(name)).call("sendMessage", {"chat_id": 1, "text": "hi"})
     )
-
-
-def _raising(exc_type):
-    def handler(request):
-        raise exc_type("boom", request=request)
-
-    return httpx.MockTransport(handler)
 
 
 def _outcome(api):
@@ -112,7 +80,7 @@ def test_5xx_and_malformed_are_outcome_unknown(name):
 
 @pytest.mark.parametrize("exc_type", [httpx.ConnectError, httpx.ConnectTimeout])
 def test_connect_failure_before_any_byte_is_failed_transient(exc_type):
-    assert classify_send(_outcome(_api(_raising(exc_type)))).kind is ResultKind.FAILED_TRANSIENT
+    assert classify_send(_outcome(_api(raising(exc_type)))).kind is ResultKind.FAILED_TRANSIENT
 
 
 @pytest.mark.parametrize(
@@ -126,7 +94,7 @@ def test_connect_failure_before_any_byte_is_failed_transient(exc_type):
     ],
 )
 def test_timeouts_and_resets_after_connecting_are_outcome_unknown(exc_type):
-    assert classify_send(_outcome(_api(_raising(exc_type)))).kind is ResultKind.OUTCOME_UNKNOWN
+    assert classify_send(_outcome(_api(raising(exc_type)))).kind is ResultKind.OUTCOME_UNKNOWN
 
 
 def test_the_permanent_table_is_closed_and_exact():
@@ -140,7 +108,7 @@ def test_the_permanent_table_is_closed_and_exact():
 
 def test_the_request_is_a_post_to_the_pinned_origin_with_the_token_in_the_path():
     seen = []
-    _api(_fixture_transport("sendMessage_ok", seen)).call(
+    _api(fixture_transport("sendMessage_ok", seen)).call(
         "sendMessage", {"chat_id": 1, "text": "hi"}
     )
     (request,) = seen
@@ -155,7 +123,7 @@ def test_the_request_is_a_post_to_the_pinned_origin_with_the_token_in_the_path()
 
 def test_method_not_in_closed_set_refused():
     seen = []
-    api = _api(_fixture_transport("sendMessage_ok", seen))
+    api = _api(fixture_transport("sendMessage_ok", seen))
     for method in ("logOut", "close", "sendMessage/../logOut", "setWebhook?x=1", ""):
         with pytest.raises(BotRefused):
             api.call(method, {})
@@ -165,16 +133,16 @@ def test_method_not_in_closed_set_refused():
 @pytest.mark.parametrize("token", ["", "not-a-token", "1:a/b", "1:a?b", "1:a b", "x:abc"])
 def test_a_malformed_token_is_refused_before_any_request(token):
     with pytest.raises(BotRefused):
-        _api(_fixture_transport("sendMessage_ok"), token=token)
+        _api(fixture_transport("sendMessage_ok"), token=token)
 
 
 def test_token_never_logged_or_in_errors(caplog):
     caplog.set_level(logging.DEBUG)
-    api = _api(_fixture_transport("sendMessage_ok"))
+    api = _api(fixture_transport("sendMessage_ok"))
     response = api.call("sendMessage", {"chat_id": 1, "text": "hi"})
     texts = [repr(api), repr(response), str(response)]
     for exc_type in (httpx.ConnectError, httpx.ReadTimeout):
-        exc = _outcome(_api(_raising(exc_type)))
+        exc = _outcome(_api(raising(exc_type)))
         assert isinstance(exc, BotTransportError)
         assert exc.__context__ is None and exc.__cause__ is None  # the httpx error held the URL
         texts += [str(exc), repr(exc), repr(exc.args)]
