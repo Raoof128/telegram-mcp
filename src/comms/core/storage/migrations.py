@@ -429,6 +429,18 @@ CREATE TRIGGER groups_are_group_destinations BEFORE INSERT ON groups
   BEGIN SELECT RAISE(ABORT, 'not a group destination'); END;
 CREATE TRIGGER groups_binding_immutable BEFORE UPDATE ON groups
   BEGIN SELECT RAISE(ABORT, 'a group mapping is immutable'); END;
+-- D1b (G13): durable opaque refs for provider objects. The provider identity stays inside
+-- SQLCipher; a binding never changes; only last_seen_at moves.
+CREATE TABLE provider_objects (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK (kind IN ('message','invite','template','topic','media')),
+  transport TEXT NOT NULL CHECK (transport IN ('telegram','whatsapp')), actor TEXT NOT NULL,
+  destination_id INTEGER REFERENCES destinations(id) ON DELETE RESTRICT,
+  provider_identity TEXT NOT NULL, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL);
+CREATE UNIQUE INDEX provider_objects_identity ON provider_objects
+  (kind, transport, actor, ifnull(destination_id, 0), provider_identity);
+CREATE TRIGGER provider_objects_binding_immutable BEFORE UPDATE OF ref, kind, transport, actor,
+  destination_id, provider_identity, created_at ON provider_objects
+  BEGIN SELECT RAISE(ABORT, 'a provider object binding is immutable'); END;
 """
 SCHEMA_V4: tuple[str, ...] = _statements(_SCHEMA_V4_SQL)
 
