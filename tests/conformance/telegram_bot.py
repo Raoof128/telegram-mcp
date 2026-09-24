@@ -12,11 +12,14 @@ from datetime import UTC, datetime
 import httpx
 
 from comms.core.delivery.transport import DeliveryIntent, FrozenDelivery, ResultKind
+from comms.core.providers.capability import Capability, CapabilityState
+from comms.core.providers.protocols import ProviderTarget
+from comms.transports.telegram.bot.capability import BotCapability
 from comms.transports.telegram.bot.delivery import BotDelivery
 from comms.transports.telegram.bot.http import BotApi
 from tests.conformance.registry import REGISTRY
 from tests.conformance.runner import Mode, Skip
-from tests.transports.telegram_bot.helpers import Secrets, fixture_transport, raising
+from tests.transports.telegram_bot.helpers import Secrets, fixture_transport, raising, routed
 
 NOW = datetime(2026, 9, 25, tzinfo=UTC)
 
@@ -71,3 +74,37 @@ def delivery_prepare_and_still_valid_touch_nothing(mode: Mode) -> None:
     finally:
         socket.socket.connect = real_connect  # type: ignore[method-assign]
     assert seen == []
+
+
+def _capability(mode: Mode, routes: dict) -> BotCapability:
+    if mode.live:
+        raise Skip("NOT_CONFIGURED")
+    return BotCapability.from_api(
+        BotApi(Secrets(), version=1, transport=routed(routes)), clock=lambda: NOW
+    )
+
+
+_GROUP = ProviderTarget("telegram", "telegram_bot", "dst_x", "-1001234567890")
+
+
+@REGISTRY.case("telegram_bot", "capability")
+def capability_never_claims_what_the_bot_api_lacks(mode: Mode) -> None:
+    routes = {
+        "getMe": "getMe_ok",
+        "getChat": "getChat_supergroup_forum",
+        "getChatMember": "getChatMember_creator",
+    }
+    states = _capability(mode, routes).snapshot("telegram_bot", _GROUP).states
+    for cap in (Capability.HISTORY_READ, Capability.HISTORY_SEARCH, Capability.GROUP_DELETE):
+        assert states[cap] is CapabilityState.PROVIDER_UNSUPPORTED
+
+
+@REGISTRY.case("telegram_bot", "capability")
+def capability_failed_lookup_is_never_available(mode: Mode) -> None:
+    routes = {
+        "getMe": "getMe_ok",
+        "getChat": httpx.ReadTimeout,
+        "getChatMember": "getChatMember_creator",
+    }
+    states = _capability(mode, routes).snapshot("telegram_bot", _GROUP).states
+    assert CapabilityState.AVAILABLE not in states.values()

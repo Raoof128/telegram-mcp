@@ -1,5 +1,75 @@
 {
   "fixtures": {
+    "telegram_bot/getChatMember_admin_subset.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "f13301c37d76d282145d3261f3727a3abd64abd35c11bc13a893132efc27e896",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatMember_creator.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "dec9cc0aad0db8f65fc4317f9478c03f9c1329088c08f9f31455274ab25fc9b8",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatMember_left.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "8a8ead3fe086fdfd8a25528be7edb4d1de95503419edb56674f135e8f61fa361",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatMember_member.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "1323b317ffb6c86ce6c85d57c8e8b3bf848954433e2ef231512854803d1ad743",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatMember_restricted_no_send.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "792a9583ab6aaf0cfcc87821c003fd45378e9f756635691f5223a024ac4d106d",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChat_403_kicked.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "e9b6547858a676193b22301ec5f910a19ec1432d2df9db80941ac6112af1e8bd",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChat_private.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "132767bf6c76cea88f209bfb4705d0ce1d907f87537bda9df2dbca0968868afb",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChat_supergroup_forum.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "563a959ed3472bdde63f5c87d5cb68a114dba72049eb7d1d1dc00fb5867706eb",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChat_supergroup_muted.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "ec97717840f72b7b3eaf01d2dd30a9225ced0452cd4fc42c39af1a3088628dad",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getMe_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "58157822e1a3a796fa85997c6df6f1eea5e4d3bcc1e26b4534165a819586b968",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
     "telegram_bot/sendMessage_400_chat_not_found.json": {
       "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
       "captured": "2026-09-25",

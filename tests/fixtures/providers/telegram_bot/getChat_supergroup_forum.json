@@ -1,0 +1,1 @@
+{"http_status": 200, "body": {"ok": true, "result": {"id": -1001234567890, "type": "supergroup", "title": "Fixture forum", "is_forum": true, "permissions": {"can_send_messages": true, "can_pin_messages": false, "can_manage_topics": false}}}}

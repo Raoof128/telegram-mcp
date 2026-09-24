@@ -36,3 +36,19 @@ def raising(exc_type):
         raise exc_type("boom", request=request)
 
     return httpx.MockTransport(handler)
+
+
+def routed(routes, seen=None):
+    """A transport answering each Bot API method from its own fixture (or exception type)."""
+
+    def handler(request):
+        if seen is not None:
+            seen.append(request)
+        method = request.url.path.rsplit("/", 1)[1]
+        answer = routes[method]
+        if isinstance(answer, type):
+            raise answer("boom", request=request)
+        recorded = json.loads((FIXTURES / f"{answer}.json").read_text())
+        return httpx.Response(recorded["http_status"], json=recorded["body"])
+
+    return httpx.MockTransport(handler)

@@ -1,0 +1,1 @@
+{"http_status": 200, "body": {"ok": true, "result": {"status": "restricted", "user": {"id": 7000000001, "is_bot": true, "first_name": "Fixture bot"}, "is_member": true, "can_send_messages": false, "can_pin_messages": false, "until_date": 0}}}

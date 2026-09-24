@@ -1,0 +1,1 @@
+{"http_status": 200, "body": {"ok": true, "result": {"status": "member", "user": {"id": 7000000001, "is_bot": true, "first_name": "Fixture bot"}}}}
