@@ -18,7 +18,7 @@ from typing import Any
 from comms.core import refs
 from comms.core.campaigns.directory import DirectoryError
 
-__all__ = ["Candidate", "Origin", "Targets", "path_is_valid", "resolve_targets"]
+__all__ = ["Candidate", "Origin", "Targets", "check_targets", "path_is_valid", "resolve_targets"]
 
 Targets = Mapping[str, Sequence[str]]
 _TARGET_KINDS = {
@@ -43,7 +43,7 @@ class Candidate:
     origins: tuple[Origin, ...]
 
 
-def _validated_targets(conn: Any, targets: Targets) -> list[tuple[str, str]]:
+def check_targets(conn: Any, targets: Targets) -> list[tuple[str, str]]:
     if not isinstance(targets, Mapping) or not set(targets) <= set(_TARGET_KINDS):
         raise DirectoryError("unknown target")
     found = []
@@ -77,7 +77,7 @@ def resolve_targets(conn: Any, targets: Targets, transports: frozenset[str]) -> 
         refs_.add(endpoint_ref)
         origins.add(Origin(endpoint_ref, path))
 
-    for kind, ref in _validated_targets(conn, targets):
+    for kind, ref in check_targets(conn, targets):
         stack: list[tuple[str, str, tuple[str, ...]]] = [(kind, ref, (ref,))]
         while stack:
             kind, ref, path = stack.pop()
