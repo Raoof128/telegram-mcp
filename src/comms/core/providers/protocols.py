@@ -107,6 +107,11 @@ class CapabilityProvider(Protocol):
 
 
 class AdminOperations(Protocol):
+    def validate(self, op: SemanticOperation, target: ProviderTarget) -> None:
+        """Pure: ``ValueError`` when the operation or its arguments are malformed for this
+        actor. The executor calls it before recording, so a refusal leaves no trace."""
+        ...
+
     def invoke(
         self, op: SemanticOperation, target: ProviderTarget, op_key: str
     ) -> ProviderResult: ...

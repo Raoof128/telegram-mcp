@@ -77,17 +77,23 @@ def _discovered(status: int, envelope: Mapping[str, Any] | None) -> S:
     return S.UNKNOWN
 
 
-def _remove(api: GraphApi, group_id: str, args: Mapping[str, Any]) -> ProviderResult:
+def _remove_args(args: Mapping[str, Any]) -> None:
     if set(args) != {"wa_id"} or not (
         isinstance(args["wa_id"], str) and _WA_ID.match(args["wa_id"])
     ):
         raise ValueError("operation arguments are malformed")
+
+
+def _remove(api: GraphApi, group_id: str, args: Mapping[str, Any]) -> ProviderResult:
     return admin_call(lambda: api.remove_group_participant(group_id, args["wa_id"]))
 
 
-def _reset(api: GraphApi, group_id: str, args: Mapping[str, Any]) -> ProviderResult:
+def _reset_args(args: Mapping[str, Any]) -> None:
     if args:
         raise ValueError("operation arguments are malformed")
+
+
+def _reset(api: GraphApi, group_id: str, args: Mapping[str, Any]) -> ProviderResult:
     result = admin_call(lambda: api.reset_group_invite(group_id))
     if result.outcome != "SUCCEEDED":
         return result
@@ -97,20 +103,31 @@ def _reset(api: GraphApi, group_id: str, args: Mapping[str, Any]) -> ProviderRes
     return ProviderResult("SUCCEEDED", None, provider_ref=link)
 
 
-def _settings(api: GraphApi, group_id: str, args: Mapping[str, Any]) -> ProviderResult:
-    checks = {
-        "subject": lambda v: isinstance(v, str) and 1 <= len(v) <= 100,
-        "description": lambda v: isinstance(v, str) and len(v) <= 2048,
-    }
-    if not args or not set(args) <= set(checks) or not all(checks[k](v) for k, v in args.items()):
+_SETTINGS = {
+    "subject": lambda v: isinstance(v, str) and 1 <= len(v) <= 100,
+    "description": lambda v: isinstance(v, str) and len(v) <= 2048,
+}
+
+
+def _settings_args(args: Mapping[str, Any]) -> None:
+    if (
+        not args
+        or not set(args) <= set(_SETTINGS)
+        or not all(_SETTINGS[k](v) for k, v in args.items())
+    ):
         raise ValueError("operation arguments are malformed")
+
+
+def _settings(api: GraphApi, group_id: str, args: Mapping[str, Any]) -> ProviderResult:
     return admin_call(lambda: api.update_group(group_id, args))
 
 
-_OPERATIONS: Mapping[C, Callable[[GraphApi, str, Mapping[str, Any]], ProviderResult]] = {
-    C.GROUP_MEMBER_REMOVE: _remove,
-    C.GROUP_INVITE_RESET: _reset,
-    C.GROUP_SETTINGS_UPDATE: _settings,
+Check = Callable[[Mapping[str, Any]], None]
+Call = Callable[[GraphApi, str, Mapping[str, Any]], ProviderResult]
+_OPERATIONS: Mapping[C, tuple[Check, Call]] = {
+    C.GROUP_MEMBER_REMOVE: (_remove_args, _remove),
+    C.GROUP_INVITE_RESET: (_reset_args, _reset),
+    C.GROUP_SETTINGS_UPDATE: (_settings_args, _settings),
 }
 
 
@@ -123,12 +140,21 @@ class WhatsAppAdmin:
     def __repr__(self) -> str:
         return "WhatsAppAdmin(<redacted>)"
 
-    def invoke(self, op: SemanticOperation, target: ProviderTarget, op_key: str) -> ProviderResult:
+    def validate(self, op: SemanticOperation, target: ProviderTarget) -> None:
+        self._request(op, target)
+
+    def _request(self, op: SemanticOperation, target: ProviderTarget) -> tuple[Call, str]:
         operation = _OPERATIONS.get(op.capability)
         if operation is None:
             raise ValueError("whatsapp_cloud does not perform this operation")
         group_id = group_id_of(target)
+        check, call = operation
+        check(op.args)
+        return call, group_id
+
+    def invoke(self, op: SemanticOperation, target: ProviderTarget, op_key: str) -> ProviderResult:
+        call, group_id = self._request(op, target)
         state = self._discovery.states.get(op.capability, S.UNKNOWN)
         if state is not S.AVAILABLE:
             return ProviderResult("FAILED", state.value)  # gated: nothing sent, nothing simulated
-        return operation(self._api, group_id, op.args)
+        return call(self._api, group_id, op.args)

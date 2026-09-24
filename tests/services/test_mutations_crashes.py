@@ -28,6 +28,9 @@ class Admin:
     def __init__(self, die_on=None):
         self.calls, self.die_on = [], die_on
 
+    def validate(self, op, target):
+        return None
+
     def invoke(self, op, target, key):
         self.calls.append(op.capability)
         if self.die_on is not None and len(self.calls) == self.die_on:

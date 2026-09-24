@@ -40,13 +40,19 @@ class BotAdmin:
     def __repr__(self) -> str:
         return "BotAdmin(<redacted>)"
 
-    def invoke(self, op: SemanticOperation, target: ProviderTarget, op_key: str) -> ProviderResult:
+    def validate(self, op: SemanticOperation, target: ProviderTarget) -> None:
+        self._request(op, target)
+
+    def _request(self, op: SemanticOperation, target: ProviderTarget) -> tuple[str, dict[str, Any]]:
         if target.actor != ACTOR:
             raise ValueError("not a telegram_bot destination")
         build = _REQUESTS.get(op.capability)
         if build is None:
             raise ValueError("the bot does not perform this operation as one call")
-        method, params = build(int(target.identity), op.args)
+        return build(int(target.identity), op.args)
+
+    def invoke(self, op: SemanticOperation, target: ProviderTarget, op_key: str) -> ProviderResult:
+        method, params = self._request(op, target)
         try:
             outcome: BotResponse | BotTransportError = self._api.call(method, params)
         except BotTransportError as exc:

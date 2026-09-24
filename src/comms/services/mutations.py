@@ -168,6 +168,12 @@ class MutationExecutor:
         adapter = self._admin.get(target.actor)
         if semantics is None or adapter is None or semantics.retry_class == "READ":
             raise CommsError("PROVIDER_UNSUPPORTED")
+        for index, capability in enumerate(semantics.steps or (op.capability,)):
+            extra = semantics.step_args[index] if semantics.step_args else {}
+            try:  # malformed arguments are refused before anything is recorded
+                adapter.validate(SemanticOperation(capability, {**op.args, **extra}), target)
+            except ValueError:
+                raise CommsError("INVALID_ARGUMENT") from None
         targets = {
             "actor": target.actor,
             "capability": op.capability.value,

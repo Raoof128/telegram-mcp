@@ -68,7 +68,10 @@ class UserAdmin:
     def __repr__(self) -> str:
         return "UserAdmin(<redacted>)"
 
-    def invoke(self, op: SemanticOperation, target: ProviderTarget, op_key: str) -> ProviderResult:
+    def validate(self, op: SemanticOperation, target: ProviderTarget) -> None:
+        self._request(op, target)
+
+    def _request(self, op: SemanticOperation, target: ProviderTarget) -> tuple[Any, str, int]:
         if target.actor != ACTOR:
             raise ValueError("not a telegram_user destination")
         build = _SPECS.get(op.capability)
@@ -78,6 +81,10 @@ class UserAdmin:
         peer_type, peer_id = unmark_chat_id(target.identity)
         if peer_type == "user":
             raise ValueError("a private chat is not a group")
+        return spec, peer_type, peer_id
+
+    def invoke(self, op: SemanticOperation, target: ProviderTarget, op_key: str) -> ProviderResult:
+        spec, peer_type, peer_id = self._request(op, target)
         return self._run(  # type: ignore[no-any-return]
             self._session.admin_request(
                 op.capability, peer_type, peer_id, spec, timeout=ADMIN_TIMEOUT_S

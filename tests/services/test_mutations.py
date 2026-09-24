@@ -39,6 +39,10 @@ class FakeAdmin:
             [],
         )
 
+    def validate(self, op, target):
+        if "bad" in op.args:
+            raise ValueError("operation arguments are malformed")
+
     def invoke(self, op, target, op_key_):
         keys = [
             r[0]
@@ -371,3 +375,13 @@ def test_an_operation_the_actor_does_not_support_is_refused_without_a_row(world)
         )
     assert refused.value.code == "PROVIDER_UNSUPPORTED"
     assert world["conn"].execute("SELECT count(*) FROM mutations").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("capability", [C.MEMBER_BAN, C.MEMBER_REMOVE])
+def test_malformed_arguments_are_refused_before_anything_is_recorded(world, capability):
+    admin = FakeAdmin(world["conn"])
+    op = SemanticOperation(capability, {"user_id": 42, "bad": True})
+    with pytest.raises(CommsError) as refused:
+        _executor(world, admin).provider(CTX, "comms_group_member_x", BOT, op, REQ)
+    assert refused.value.code == "INVALID_ARGUMENT"
+    assert admin.calls == [] and _mutation(world["conn"]) is None  # no row, no call, no event
