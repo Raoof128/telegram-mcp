@@ -428,3 +428,25 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
   - The owner's review of the plan, then native execution on branch `phase-5a` (no subagents, per the owner).
   - 5b and 5c plans after 5a merges.
   - No production claim.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase 5a plan revision 3, from the owner's review of revision 2.
+- **Summary:** 12 findings plus the presence-by-count note were each checked against the code. Ten were adopted:
+  - live `PeerFacts` go through the one evaluator (new Task 4A);
+  - a semantic simulate-equals-commit covers all 16 simulatable commands, including remove-peer and the ref-minting commands;
+  - bound, capped `tps_` stages;
+  - registry-based checkpoint verification, with `none` distinct from `verified`;
+  - `disclosure show`/`verify` keep the Phase-3 withheld truth;
+  - conditional `owner_class` rows that are diffed;
+  - optional `exposure status` filters;
+  - a failed rotation has no side effect;
+  - strict list commands and overlap arguments;
+  - presence pinned by name.
+
+  Two claims were rejected with receipts:
+  - `take()` does not consume valid handles (`discovery.py:46-51`); the review's test was adopted anyway.
+  - `consent approve` stays deferred per the approved design rev 2 G7, and the reason is recorded in the completeness test.
+- **Files changed:** the plan, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** 64 code blocks parse; the new class guard flags exactly the four `reads.py` sites Task 4A removes; no placeholders.
+- **Follow-ups:** execute inline on `phase-5a` in the order 1, 2, 3, 4, 4A, 5, 9, 6, 7, 8, 10, 11.

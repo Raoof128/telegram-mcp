@@ -385,3 +385,11 @@
 - **Follow-ups:**
   - The owner's review, then execution.
   - No production claim.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Phase 5a plan revision 3.
+- **Summary:** The owner's review folded in: 10 findings adopted, 2 rejected with evidence. Adds Task 4A (retrieval decides chat class through the evaluator).
+- **Files changed:** the plan, `AGENT.md`, this file.
+- **Verification:** Every code block parses; the guard predictions were checked.
+- **Follow-ups:** inline execution.
