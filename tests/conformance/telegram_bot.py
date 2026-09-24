@@ -13,10 +13,11 @@ import httpx
 
 from comms.core.delivery.transport import DeliveryIntent, FrozenDelivery, ResultKind
 from comms.core.providers.capability import Capability, CapabilityState
-from comms.core.providers.protocols import ProviderTarget, SemanticOperation
+from comms.core.providers.protocols import ContextQuery, ProviderTarget, SemanticOperation
 from comms.core.providers.semantics import SEMANTICS
 from comms.transports.telegram.bot.admin import BotAdmin
 from comms.transports.telegram.bot.capability import BotCapability
+from comms.transports.telegram.bot.context import BotContext, ContextRefused
 from comms.transports.telegram.bot.delivery import BotDelivery
 from comms.transports.telegram.bot.http import BotApi
 from tests.conformance.registry import REGISTRY
@@ -139,3 +140,39 @@ def admin_ambiguity_is_outcome_unknown(mode: Mode) -> None:
         SemanticOperation(Capability.MEMBER_UNBAN, {"user_id": 42}), _GROUP, "k"
     )
     assert result.outcome == "OUTCOME_UNKNOWN" and len(seen) == 1
+
+
+@REGISTRY.case("telegram_bot", "context")
+def context_never_claims_history(mode: Mode) -> None:
+    if mode.live:
+        raise Skip("NOT_CONFIGURED")
+    seen: list = []
+    context = BotContext(
+        BotApi(Secrets(), version=1, transport=routed({}, seen)), None, clock=lambda: NOW
+    )
+    for kind in ("history", "search"):
+        try:
+            context.read(ContextQuery(_GROUP, kind))
+        except ContextRefused as refused:
+            assert refused.code == "PROVIDER_UNSUPPORTED"
+        else:
+            raise AssertionError("history served by the bot")
+    assert seen == []
+
+
+@REGISTRY.case("telegram_bot", "context")
+def context_live_items_carry_provenance(mode: Mode) -> None:
+    if mode.live:
+        raise Skip("NOT_CONFIGURED")
+    routes = {
+        "getChat": "getChat_supergroup_forum",
+        "getChatAdministrators": "getChatAdministrators_ok",
+        "getChatMemberCount": "getChatMemberCount_ok",
+    }
+    context = BotContext(
+        BotApi(Secrets(), version=1, transport=routed(routes)), None, clock=lambda: NOW
+    )
+    page = context.read(ContextQuery(_GROUP, "info"))
+    assert page.provenance == "telegram_live" and all(
+        i["source"] == "telegram_live" for i in page.items
+    )

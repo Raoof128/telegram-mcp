@@ -42,6 +42,7 @@ BOT_METHODS = frozenset(
         "getChat",
         "getChatMember",
         "getChatAdministrators",
+        "getChatMemberCount",
         "banChatMember",
         "unbanChatMember",
         "restrictChatMember",

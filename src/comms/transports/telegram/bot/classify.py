@@ -22,7 +22,7 @@ from typing import Any
 
 from comms.core.delivery.transport import ResultKind
 from comms.core.providers.protocols import ProviderResult
-from comms.transports.telegram.bot.http import BotResponse, BotTransportError
+from comms.transports.telegram.bot.http import BotApi, BotResponse, BotTransportError
 
 __all__ = [
     "ADMIN_REFUSALS",
@@ -30,6 +30,7 @@ __all__ = [
     "Classified",
     "classify_admin",
     "classify_send",
+    "lookup",
 ]
 
 # Exact descriptions the Bot API returns for sends that were refused and will stay refused.
@@ -160,3 +161,24 @@ def classify_admin(outcome: BotResponse | BotTransportError) -> ProviderResult:
     if code in (400, 403) and refusal is not None:
         return ProviderResult("FAILED", refusal)
     return ProviderResult("OUTCOME_UNKNOWN", None)
+
+
+class LookupFailed(Exception):
+    def __init__(self, kind: ResultKind) -> None:
+        super().__init__(f"bot api lookup failed ({kind})")
+        self.kind = kind
+
+
+def lookup(api: BotApi, method: str, params: Mapping[str, Any]) -> Any:
+    """One read call's ``result``, or ``LookupFailed`` with the same named-case kind a send
+    would get (a documented refusal is ``FAILED_PERMANENT``)."""
+    try:
+        outcome: BotResponse | BotTransportError = api.call(method, params)
+    except BotTransportError as exc:
+        outcome = exc
+    kind = classify_send(outcome).kind
+    if kind is ResultKind.ACCEPTED and isinstance(outcome, BotResponse) and outcome.envelope:
+        if "result" in outcome.envelope:
+            return outcome.envelope["result"]
+        kind = ResultKind.OUTCOME_UNKNOWN
+    raise LookupFailed(kind)

@@ -63,6 +63,20 @@
       "sha256": "a7d17a3f76262e592a90b1dd62acd73d465e334e356ffb72fd821e1aa29d0cf2",
       "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
     },
+    "telegram_bot/getChatAdministrators_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "fac2d4c8d100d5ce79220e64cb415979f372c21c3f880313acb7412f4e1e874d",
+      "source": "https://core.telegram.org/bots/api#getchatadministrators — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatMemberCount_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "40c93039c1d6b24dc22af3339a1f53e294b87d773a631503dc242f245b029e16",
+      "source": "https://core.telegram.org/bots/api#getchatadministrators — hand-built from the documented types, not a live capture"
+    },
     "telegram_bot/getChatMember_admin_subset.json": {
       "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
       "captured": "2026-09-25",

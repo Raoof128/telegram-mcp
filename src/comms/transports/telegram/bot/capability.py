@@ -22,8 +22,8 @@ from comms.core.providers.capability import Capability as C
 from comms.core.providers.capability import CapabilityState as S
 from comms.core.providers.protocols import CapabilitySnapshot, ProviderTarget
 from comms.core.providers.semantics import SUPPORT
-from comms.transports.telegram.bot.classify import classify_send
-from comms.transports.telegram.bot.http import BotApi, BotRefused, BotResponse, BotTransportError
+from comms.transports.telegram.bot.classify import LookupFailed, lookup
+from comms.transports.telegram.bot.http import BotApi, BotRefused
 
 __all__ = ["TELEGRAM_CAPABILITIES", "BotCapability"]
 
@@ -60,28 +60,17 @@ _TOPICS = frozenset({C.TOPIC_CREATE, C.TOPIC_EDIT, C.TOPIC_CLOSE, C.TOPIC_REOPEN
 assert _BOT == _MESSAGES | _PRESENT | set(_RIGHT)  # every bot capability has exactly one rule
 
 
-class _LookupFailed(Exception):
-    def __init__(self, state: S) -> None:
-        self.state = state
-
-
 _FAILURE_STATE = {
     ResultKind.FAILED_PERMANENT: S.NOT_AUTHORIZED,
     ResultKind.FAILED_TRANSIENT: S.TEMPORARILY_UNAVAILABLE,
 }
 
 
-def _result(api: BotApi, method: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
-    try:
-        outcome: BotResponse | BotTransportError = api.call(method, params)
-    except BotTransportError as exc:
-        outcome = exc
-    kind = classify_send(outcome).kind
-    if kind is ResultKind.ACCEPTED and isinstance(outcome, BotResponse):
-        result = (outcome.envelope or {}).get("result")
-        if isinstance(result, dict):
-            return result
-    raise _LookupFailed(_FAILURE_STATE.get(kind, S.UNKNOWN))
+def _object(api: BotApi, method: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
+    result = lookup(api, method, params)
+    if not isinstance(result, dict):
+        raise LookupFailed(ResultKind.OUTCOME_UNKNOWN)
+    return result
 
 
 class BotCapability:
@@ -120,14 +109,14 @@ class BotCapability:
             return dict.fromkeys(_BOT, S.NOT_CONFIGURED)
         try:
             if self._me is None:
-                me = _result(self._api, "getMe", {}).get("id")
+                me = _object(self._api, "getMe", {}).get("id")
                 if type(me) is not int:
-                    raise _LookupFailed(S.UNKNOWN)
+                    raise LookupFailed(ResultKind.OUTCOME_UNKNOWN)
                 self._me = me
-            chat = _result(self._api, "getChat", {"chat_id": chat_id})
-            member = _result(self._api, "getChatMember", {"chat_id": chat_id, "user_id": self._me})
-        except _LookupFailed as failed:
-            return dict.fromkeys(_BOT, failed.state)
+            chat = _object(self._api, "getChat", {"chat_id": chat_id})
+            member = _object(self._api, "getChatMember", {"chat_id": chat_id, "user_id": self._me})
+        except LookupFailed as failed:
+            return dict.fromkeys(_BOT, _FAILURE_STATE.get(failed.kind, S.UNKNOWN))
         return {c: _state(c, chat, member) for c in _BOT}
 
 
