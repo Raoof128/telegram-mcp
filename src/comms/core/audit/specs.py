@@ -35,6 +35,11 @@ AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
         "commit_key_id": key_id,
         "generation": ref("generation"),
     },
+    "admin.signer_trust": {
+        "key_id": key_id,
+        "from_state": one_of({"ACTIVE", "TRUSTED_RETIRED", "VERIFICATION_ONLY"}),
+        "to_state": one_of({"TRUSTED_RETIRED", "VERIFICATION_ONLY", "REVOKED"}),
+    },
     "admin.key_rotation": {
         "purpose": one_of(set(PURPOSES)),
         "old_version": count(0),
@@ -49,6 +54,7 @@ SUBJECT_KINDS: dict[str, str | None] = {
     "system.audit_cutover": "cutover",
     "system.legacy_client_auth_revoked": "cutover",
     "campaign_event_committed": "event",
+    "admin.signer_trust": None,
     "admin.key_rotation": None,
 }
 

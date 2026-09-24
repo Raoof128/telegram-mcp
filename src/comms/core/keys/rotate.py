@@ -160,7 +160,7 @@ def rotate(
             if spec.public_registry:
                 conn.execute(
                     "UPDATE verification_keys SET trust_state = 'TRUSTED_RETIRED', retired_at = ?"
-                    " WHERE key_id = ?",
+                    " WHERE key_id = ? AND trust_state = 'ACTIVE'",  # a compromise mark stays
                     (stamp, old[1]),
                 )
         key_id = register_version(conn, purpose, version, material, stamp)

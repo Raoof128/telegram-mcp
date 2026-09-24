@@ -66,6 +66,11 @@ class AuditTx:
         self.conn, self._key, self._now = conn, key, now
         self.appended = False
 
+    @property
+    def stamp(self) -> str:
+        """This transaction's canonical time (every event in it shares one clock read)."""
+        return timeutil.iso(self._now)
+
     def _event(
         self,
         kind: str,

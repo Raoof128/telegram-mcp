@@ -258,6 +258,12 @@ ALTER TABLE generations ADD COLUMN campaign_commitment TEXT
 ALTER TABLE generations ADD COLUMN campaign_commit_key_id TEXT;
 CREATE TRIGGER generations_commitment_immutable BEFORE UPDATE OF campaign_commitment, campaign_commit_key_id
   ON generations BEGIN SELECT RAISE(ABORT, 'a campaign commitment is immutable'); END;
+CREATE TRIGGER verification_keys_trust_one_way BEFORE UPDATE OF trust_state ON verification_keys
+  WHEN (CASE NEW.trust_state WHEN 'ACTIVE' THEN 0 WHEN 'TRUSTED_RETIRED' THEN 1
+          WHEN 'VERIFICATION_ONLY' THEN 2 ELSE 3 END)
+     < (CASE OLD.trust_state WHEN 'ACTIVE' THEN 0 WHEN 'TRUSTED_RETIRED' THEN 1
+          WHEN 'VERIFICATION_ONLY' THEN 2 ELSE 3 END)
+  BEGIN SELECT RAISE(ABORT, 'signer trust is one-way'); END;
 """
 SCHEMA_V3: tuple[str, ...] = _statements(_SCHEMA_V3_SQL)
 
