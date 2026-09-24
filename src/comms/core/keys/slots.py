@@ -21,7 +21,15 @@ from comms.core.keys import ids
 from comms.core.keys.purposes import PURPOSES
 from comms.core.storage.db import write_tx
 
-__all__ = ["KeySlotError", "KeySlotStore", "bootstrap_comms_audit_keys", "load_active"]
+__all__ = [
+    "KeySlotError",
+    "KeySlotStore",
+    "active_version",
+    "bootstrap_comms_audit_keys",
+    "key_id_for",
+    "load_active",
+    "register_version",
+]
 
 _PURPOSE = re.compile(r"[a-z][a-z0-9-]{1,40}\Z")
 
@@ -115,6 +123,11 @@ def _active_row(conn: Any, purpose: str) -> tuple[int, str] | None:
     return (int(row[0]), str(row[1])) if row else None
 
 
+def active_version(conn: Any, purpose: str) -> tuple[int, str] | None:
+    """The ACTIVE ``(version, key_id)`` of a purpose, or ``None``."""
+    return _active_row(conn, purpose)
+
+
 def load_active(conn: Any, store: KeySlotStore, purpose: str) -> tuple[bytes, str]:
     """The active version's material and its recomputed, checked key ID."""
     row = _active_row(conn, purpose)
@@ -132,28 +145,40 @@ def load_active(conn: Any, store: KeySlotStore, purpose: str) -> tuple[bytes, st
     return material, stored_id
 
 
+def key_id_for(purpose: str, material: bytes) -> str:
+    """The key ID rule for a purpose's kind (one copy: ``comms.core.keys.ids``)."""
+    kind = PURPOSES[purpose].kind
+    if kind == "hmac":
+        return ids.hmac_key_id(material)
+    if kind == "ed25519":
+        return ids.ed25519_key_id(ids.ed25519_public(material))
+    raise KeySlotError("no key id rule for this key kind")
+
+
+def register_version(conn: Any, purpose: str, version: int, material: bytes, stamp: str) -> str:
+    """Record ``version`` as ACTIVE (and a signer's public half), in the caller's transaction."""
+    key_id = key_id_for(purpose, material)
+    conn.execute(
+        "INSERT INTO key_slots (purpose, version, key_id, state, created_at)"
+        " VALUES (?, ?, ?, 'ACTIVE', ?)",
+        (purpose, version, key_id, stamp),
+    )
+    if PURPOSES[purpose].public_registry:
+        conn.execute(
+            "INSERT INTO verification_keys (key_id, purpose, algorithm, public_key,"
+            " activated_at, trust_state) VALUES (?, ?, ?, ?, ?, 'ACTIVE')",
+            (key_id, purpose, PURPOSES[purpose].kind, ids.ed25519_public(material), stamp),
+        )
+    return key_id
+
+
 def bootstrap_comms_audit_keys(conn: Any, store: KeySlotStore, *, now: datetime) -> None:
     """Provision audit-chain-key (HMAC) and audit-checkpoint-key (Ed25519) v1. Idempotent."""
     stamp = timeutil.iso(now)
-    for purpose, kind in (("audit-chain-key", "hmac"), ("audit-checkpoint-key", "ed25519")):
+    for purpose in ("audit-chain-key", "audit-checkpoint-key"):
         if _active_row(conn, purpose) is not None:
             continue
         material = secrets.token_bytes(32)
         version = store.write_version(purpose, material)
-        if kind == "hmac":
-            key_id = ids.hmac_key_id(material)
-        else:
-            public = ids.ed25519_public(material)
-            key_id = ids.ed25519_key_id(public)
         with write_tx(conn):
-            conn.execute(
-                "INSERT INTO key_slots (purpose, version, key_id, state, created_at)"
-                " VALUES (?, ?, ?, 'ACTIVE', ?)",
-                (purpose, version, key_id, stamp),
-            )
-            if kind == "ed25519":
-                conn.execute(
-                    "INSERT INTO verification_keys (key_id, purpose, algorithm, public_key,"
-                    " activated_at, trust_state) VALUES (?, ?, 'ed25519', ?, ?, 'ACTIVE')",
-                    (key_id, purpose, public, stamp),
-                )
+            register_version(conn, purpose, version, material, stamp)

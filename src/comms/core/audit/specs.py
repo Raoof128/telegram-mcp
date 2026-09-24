@@ -11,6 +11,7 @@ from typing import Any
 
 from comms.core import domains
 from comms.core.campaigns.events import EVENT_TYPES
+from comms.core.keys.purposes import PURPOSES
 from comms.core.validators import Validator, count, digest, key_id, one_of
 
 __all__ = ["AUDIT_EVENT_SPECS", "SUBJECT_KINDS", "validate_audit_event"]
@@ -28,6 +29,12 @@ AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
         "comms_audit_key_id": key_id,
     },
     "system.legacy_client_auth_revoked": {"revoked_count": count(0), "security_epoch": count(1)},
+    "admin.key_rotation": {
+        "purpose": one_of(set(PURPOSES)),
+        "old_version": count(0),
+        "new_version": count(1),
+        "key_id": key_id,
+    },
 }
 # The ref kind each event's subject must carry (None: the event has no subject).
 SUBJECT_KINDS: dict[str, str | None] = {
@@ -35,6 +42,7 @@ SUBJECT_KINDS: dict[str, str | None] = {
     "system.test_marker": None,
     "system.audit_cutover": "cutover",
     "system.legacy_client_auth_revoked": "cutover",
+    "admin.key_rotation": None,
 }
 
 
