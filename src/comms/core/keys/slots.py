@@ -8,10 +8,8 @@ written once (``O_EXCL``), with the file and its directory fsynced. The SQL tabl
 
 from __future__ import annotations
 
-import os
 import re
 import secrets
-import stat
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +17,7 @@ from typing import Any
 
 from comms.core import timeutil
 from comms.core.keys import ids
+from comms.core.keys.files import VersionedFiles
 from comms.core.keys.purposes import PURPOSES
 from comms.core.storage.db import write_tx
 
@@ -41,82 +40,39 @@ class KeySlotError(Exception):
     """A key-slot operation was refused. Messages are fixed and never contain material."""
 
 
-def _fsync_dir(path: Path) -> None:
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-
-
 class KeySlotStore:
     def __init__(self, directory: Path) -> None:
-        directory = Path(directory)
-        if directory.exists():
-            if (
-                stat.S_IMODE(directory.stat().st_mode) & 0o077
-                or directory.stat().st_uid != os.getuid()
-            ):
-                raise KeySlotError("key slot directory permissions refused")
-        else:
-            directory.mkdir(mode=0o700, parents=True)
-            os.chmod(directory, 0o700)
-        self._dir = directory
+        self._files = VersionedFiles(Path(directory), error=KeySlotError, noun="key slot")
 
     def __repr__(self) -> str:
         return "KeySlotStore(<redacted>)"
 
-    def _purpose_dir(self, purpose: str) -> Path:
+    @staticmethod
+    def _check(purpose: str) -> str:
         if (
             not isinstance(purpose, str)
             or not _PURPOSE.fullmatch(purpose)
             or purpose not in PURPOSES
         ):
             raise KeySlotError("unknown key purpose")
-        return self._dir / purpose
+        return purpose
 
     def versions(self, purpose: str) -> list[int]:
-        d = self._purpose_dir(purpose)
-        if not d.exists():
-            return []
-        return sorted(int(p.name) for p in d.iterdir() if p.name.isdigit())
+        return self._files.versions(self._check(purpose))
 
     def write_version(self, purpose: str, material: bytes) -> int:
-        d = self._purpose_dir(purpose)
+        self._check(purpose)
         if PURPOSES[purpose].rotation == "refused":
             raise KeySlotError("a retired key purpose is never minted")
-        if not d.exists():
-            d.mkdir(mode=0o700)
-            os.chmod(d, 0o700)
-            _fsync_dir(self._dir)
         version = (self.versions(purpose) or [0])[-1] + 1
-        path = d / str(version)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            os.write(fd, material)
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        _fsync_dir(d)
+        self._files.write(purpose, version, material)
         return version
 
     def read(self, purpose: str, version: int) -> bytes:
-        path = self._purpose_dir(purpose) / str(int(version))
-        try:
-            st = path.stat()
-        except FileNotFoundError:
-            raise KeySlotError("key slot missing") from None
-        if stat.S_IMODE(st.st_mode) != 0o600:
-            raise KeySlotError("key slot permissions refused")
-        return path.read_bytes()
+        return self._files.read(self._check(purpose), version)
 
     def destroy(self, purpose: str, version: int) -> None:
-        path = self._purpose_dir(purpose) / str(int(version))
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            return
-        _fsync_dir(path.parent)
+        self._files.delete(self._check(purpose), version)
 
 
 def _active_row(conn: Any, purpose: str) -> tuple[int, str] | None:
