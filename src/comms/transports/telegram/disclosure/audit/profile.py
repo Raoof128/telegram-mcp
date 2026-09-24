@@ -12,13 +12,21 @@ from typing import Any
 
 from comms.core.audit.chain import ChainError, ChainProfile
 from comms.core.opaque import mint_opaque_ref
-from comms.transports.telegram.disclosure.audit.chain import (
-    CHECKPOINT_DOMAIN,
-    EVENT_DOMAIN,
-    GENESIS_DOMAIN,
-)
 
-__all__ = ["ADMIN_EVENTS", "ALLOWED_TOOL_NAMES", "EVENT_COLUMNS", "LEGACY_TELEGRAM"]
+__all__ = [
+    "ADMIN_EVENTS",
+    "ALLOWED_TOOL_NAMES",
+    "CHECKPOINT_DOMAIN",
+    "EVENT_COLUMNS",
+    "EVENT_DOMAIN",
+    "GENESIS_DOMAIN",
+    "LEGACY_TELEGRAM",
+]
+
+# The frozen legacy wire domains: defined once, here (comms v0.3 Task A5).
+EVENT_DOMAIN = b"telegram-mcp-audit-v1"
+GENESIS_DOMAIN = b"telegram-mcp-audit-genesis-v1"
+CHECKPOINT_DOMAIN = b"telegram-mcp-checkpoint-v1"
 
 EVENT_COLUMNS = (
     "event_id",
@@ -67,7 +75,7 @@ def _validate(event: Mapping[str, Any]) -> None:
 
 LEGACY_TELEGRAM = ChainProfile(
     name="legacy_telegram",
-    event_domain=EVENT_DOMAIN,  # the frozen literals live once, in the legacy chain module (A5 moves them here)
+    event_domain=EVENT_DOMAIN,
     genesis_domain=GENESIS_DOMAIN,
     checkpoint_domain=CHECKPOINT_DOMAIN,
     event_columns=EVENT_COLUMNS,

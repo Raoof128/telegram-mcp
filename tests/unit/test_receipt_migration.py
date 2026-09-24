@@ -8,11 +8,11 @@ import sqlite3
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from comms.core.storage.db import write_tx
 from comms.transports.telegram.disclosure import receipts
 from comms.transports.telegram.disclosure.audit.chain import (
     EVENT_COLUMNS,
     append_event,
-    immediate_transaction,
     mint_event_id,
     verify_chain,
 )
@@ -92,7 +92,7 @@ def v1_world(tmp_path):
         signed = receipts.sign_payload(
             receipts.build_proof_payload(**fields), private_seed=seed, proof_key_id=kid
         )
-        with immediate_transaction(conn):
+        with write_tx(conn):
             conn.execute(
                 f"INSERT INTO disclosure_receipts ({V1_COLUMNS}) VALUES"
                 " (?, ?, 1, 1, 1, ?, 1, 1, ?, 1, 'full_text', ?, ?, 0, 'committed', ?, ?, ?, ?, ?, ?, ?)",

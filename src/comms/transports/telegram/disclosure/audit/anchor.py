@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from comms.core.canonical import jcs_dumps
+from comms.core.storage.db import write_tx
 from comms.transports.telegram.disclosure.audit.chain import ChainError, head, verify_chain
 
 __all__ = [
@@ -199,7 +200,6 @@ def repair_anchor(
     from comms.transports.telegram.disclosure.audit.chain import (
         append_event,
         head,
-        immediate_transaction,
         mint_event_id,
     )
     from comms.transports.telegram.storage.settings import get_setting, set_setting
@@ -221,7 +221,7 @@ def repair_anchor(
         raise AnchorError("cannot repair an empty chain")
     write_anchor(path, chain_key, now=now, **current)  # 3 anchor to the verified head
 
-    with immediate_transaction(conn):  # 4 appends are legal again
+    with write_tx(conn):  # 4 appends are legal again
         appended = append_event(
             conn,
             chain_key,

@@ -8,7 +8,7 @@ import sqlite3
 from datetime import UTC, datetime
 
 from comms.core.opaque import mint_opaque_ref
-from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
+from comms.core.storage.db import write_tx
 
 __all__ = ["OWNER_PRINCIPAL", "ensure_account", "ensure_owner_principal"]
 
@@ -24,7 +24,7 @@ def ensure_owner_principal(conn: sqlite3.Connection, *, privacy_key: bytes) -> i
     row = conn.execute("SELECT id FROM principals WHERE principal_key = ?", (key,)).fetchone()
     if row is not None:
         return int(row[0])
-    with immediate_transaction(conn):
+    with write_tx(conn):
         cursor = conn.execute(
             "INSERT INTO principals (principal_ref, principal_key, auth_mode, label, created_at)"
             " VALUES (?, ?, 'local', 'owner', ?)",
@@ -44,7 +44,7 @@ def ensure_account(conn: sqlite3.Connection, *, telegram_user_id: int, label: st
     if principal is None:
         raise ValueError("the owner principal does not exist")
     now = _now()
-    with immediate_transaction(conn):
+    with write_tx(conn):
         cursor = conn.execute(
             "INSERT INTO accounts (account_ref, telegram_user_id, label, created_at, updated_at)"
             " VALUES (?, ?, ?, ?, ?)",

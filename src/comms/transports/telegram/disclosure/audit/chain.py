@@ -1,25 +1,35 @@
-"""MAC-linked audit chain (frozen spec §26.5; design §6.1, §6.2).
+"""The legacy Telegram audit chain: a thin binding of the core engine (comms v0.3 Task A5).
 
-Strictly linear, one event per sequence number, appended under
-``BEGIN IMMEDIATE`` so concurrent completions cannot fork the chain.
-
-``event_id`` is inside the MAC input, so its format is part of the chain
-and is frozen here rather than left to the caller.
+Every MAC, genesis value and checkpoint signature is computed by ``comms.core.audit.chain``
+under the ``LEGACY_TELEGRAM`` profile, byte-identical to the pre-v0.3 chain
+(tests/fixtures/audit/legacy_chain_vectors.json). This module keeps the legacy call
+signatures, the Crockford ``evt_`` minter and the §26.5 checkpoint cadence. The caller
+owns every transaction; ``comms.core.storage.db.write_tx`` is the one transaction helper.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
+import base64
 import secrets
-import sqlite3
-import threading
 import time
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Mapping
 from typing import Any
 
-from comms.core.canonical import jcs_dumps
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+from comms.core.audit import chain as _core
+from comms.core.audit.chain import ChainError
+from comms.core.keys import ids
+from comms.core.storage.db import write_tx
+from comms.transports.telegram.disclosure.audit.profile import (
+    ADMIN_EVENTS,
+    CHECKPOINT_DOMAIN,
+    EVENT_COLUMNS,
+    EVENT_DOMAIN,
+    GENESIS_DOMAIN,
+    LEGACY_TELEGRAM,
+)
 
 __all__ = [
     "ADMIN_EVENTS",
@@ -28,13 +38,13 @@ __all__ = [
     "EVENT_COLUMNS",
     "EVENT_DOMAIN",
     "GENESIS_DOMAIN",
+    "LEGACY_TELEGRAM",
     "ChainError",
     "append_event",
     "checkpoint_due",
     "event_mac",
     "genesis_mac",
     "head",
-    "immediate_transaction",
     "insert_checkpoint",
     "mint_event_id",
     "require_immediate_transaction",
@@ -44,82 +54,17 @@ __all__ = [
     "write_checkpoint",
 ]
 
-EVENT_DOMAIN = b"telegram-mcp-audit-v1"
-GENESIS_DOMAIN = b"telegram-mcp-audit-genesis-v1"
-
-# Non-tool chain events. audit_events.tool_name is NOT NULL and §6.5 sends
-# administrative and security events through the same barrier, so they need
-# values. The dotted prefix cannot collide with the ten tool names.
-# One process-wide guard for every audit append (Phase-5 design §2.1, 0B G5):
-# the coordinator's disclosure barrier and every audited admin command take
-# this same lock, so the chain cannot fork between them.
-APPEND_GUARD = threading.Lock()
-
-ADMIN_EVENTS: tuple[str, ...] = (
-    "admin.lock",
-    "admin.unlock",
-    "admin.key_rotation",
-    "admin.repair_anchor",
-    "admin.policy_import",
-)
-
-_TOOLS = (
-    "telegram_status",
-    "telegram_list_projects",
-    "telegram_resolve_project",
-    "telegram_list_chats",
-    "telegram_resolve_peer",
-    "telegram_get_unread",
-    "telegram_get_messages",
-    "telegram_get_context",
-    "telegram_search_messages",
-    "telegram_cross_project_search",
-)
-_ALLOWED_TOOL_NAMES = frozenset(_TOOLS) | frozenset(ADMIN_EVENTS)
+# One process-wide guard for every legacy audit append (Phase-5 design §2.1, 0B G5).
+APPEND_GUARD = _core.append_guard(LEGACY_TELEGRAM)
 
 # Appendix C illustrates evt_01J...: Crockford base32, uppercase, 26 chars.
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-EVENT_COLUMNS = (
-    "event_id",
-    "ts",
-    "tool_name",
-    "principal_ref",
-    "client_ref",
-    "account_ref",
-    "peer_ref",
-    "project_ref",
-    "project_count",
-    "policy_epoch",
-    "result_count",
-    "duration_ms",
-    "telegram_rpc_count",
-    "status",
-    "error_code",
-    "disclosure_ref",
-)
 
-
-class ChainError(Exception):
-    """The chain is inconsistent, or an event is out of contract."""
-
-
-def require_immediate_transaction(conn: sqlite3.Connection) -> None:
+def require_immediate_transaction(conn: Any) -> None:
     """Refuse to append outside a caller-owned write transaction."""
     if not conn.in_transaction:
         raise ChainError("an open BEGIN IMMEDIATE transaction is required")
-
-
-@contextmanager
-def immediate_transaction(conn: sqlite3.Connection) -> Iterator[None]:
-    """The transaction the coordinator's step 11 runs inside."""
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        yield
-    except BaseException:
-        conn.rollback()
-        raise
-    conn.commit()
 
 
 def _base32_crockford(value: int, length: int) -> str:
@@ -138,9 +83,7 @@ def mint_event_id() -> str:
 
 
 def genesis_mac(chain_epoch: int) -> str:
-    """The explicit genesis value for ``chain_seq = 1``, bound to the epoch."""
-    payload = GENESIS_DOMAIN + chain_epoch.to_bytes(8, "big")
-    return hashlib.sha256(payload).hexdigest()
+    return _core.genesis_mac(LEGACY_TELEGRAM, chain_epoch)
 
 
 def event_mac(
@@ -151,249 +94,62 @@ def event_mac(
     prev_event_mac: str,
     event: Mapping[str, Any],
 ) -> str:
-    """HMAC over the domain, coordinates, previous link and canonical event."""
-    message = (
-        EVENT_DOMAIN
-        + chain_epoch.to_bytes(8, "big")
-        + chain_seq.to_bytes(8, "big")
-        + bytes.fromhex(prev_event_mac)
-        + jcs_dumps({k: event[k] for k in EVENT_COLUMNS})
-    )
-    return hmac.new(chain_key, message, hashlib.sha256).hexdigest()
-
-
-def head(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    """The last appended event, or ``None`` for an empty chain."""
-    row = conn.execute(
-        "SELECT chain_epoch, chain_seq, event_id, event_mac FROM audit_events"
-        " ORDER BY chain_epoch DESC, chain_seq DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
-        return None
-    return dict(zip(("chain_epoch", "chain_seq", "event_id", "event_mac"), row, strict=True))
-
-
-def append_event(
-    conn: sqlite3.Connection, chain_key: bytes, event: Mapping[str, Any]
-) -> dict[str, Any]:
-    """Append one event. **The caller owns the transaction.**
-
-    This function does NOT open or commit a transaction, and that is
-    load-bearing rather than a style choice. §23A.3 requires the disclosure
-    commit to be **one** transaction containing the exposure-ledger rows,
-    the receipt row and exactly one audit append. If this function opened its
-    own ``BEGIN IMMEDIATE`` the coordinator could not wrap it — SQLite raises
-    ``cannot start a transaction within a transaction`` — and the only way
-    past that error would be to drop the coordinator's transaction, silently
-    turning one atomic commit into three and destroying the crash model the
-    whole design rests on.
-
-    Callers must already hold an ``BEGIN IMMEDIATE`` transaction, so the head
-    read and the insert are serialised against other writers and the chain
-    cannot fork. ``require_immediate_transaction`` enforces that rather than
-    trusting it.
-    """
-    require_immediate_transaction(conn)
-    if event.get("tool_name") not in _ALLOWED_TOOL_NAMES:
-        raise ChainError("event tool_name is not in the closed vocabulary")
-    missing = [c for c in EVENT_COLUMNS if c not in event]
-    if missing:
-        raise ChainError("event is missing required columns")
-
-    current = head(conn)
-    if current is None:
-        chain_epoch, chain_seq = 1, 1
-        prev = genesis_mac(chain_epoch)
-    else:
-        chain_epoch = current["chain_epoch"]
-        chain_seq = current["chain_seq"] + 1
-        prev = current["event_mac"]
-
-    mac = event_mac(
+    return _core.event_mac(
+        LEGACY_TELEGRAM,
         chain_key,
         chain_epoch=chain_epoch,
         chain_seq=chain_seq,
-        prev_event_mac=prev,
+        prev_event_mac=prev_event_mac,
         event=event,
     )
-    columns = ", ".join((*EVENT_COLUMNS, "chain_epoch", "chain_seq", "prev_event_mac", "event_mac"))
-    marks = ", ".join("?" * (len(EVENT_COLUMNS) + 4))
-    conn.execute(
-        f"INSERT INTO audit_events ({columns}) VALUES ({marks})",
-        (*(event[c] for c in EVENT_COLUMNS), chain_epoch, chain_seq, prev, mac),
-    )
-
-    return {
-        "chain_epoch": chain_epoch,
-        "chain_seq": chain_seq,
-        "event_id": event["event_id"],
-        "prev_event_mac": prev,
-        "event_mac": mac,
-    }
 
 
-def verify_chain(conn: sqlite3.Connection, chain_key: bytes) -> None:
+def head(conn: Any) -> dict[str, Any] | None:
+    return _core.head(conn, LEGACY_TELEGRAM)
+
+
+def append_event(conn: Any, chain_key: bytes, event: Mapping[str, Any]) -> dict[str, Any]:
+    """Append one event. **The caller owns the transaction** (§23A.3: one atomic commit)."""
+    require_immediate_transaction(conn)
+    return _core.append_event(conn, LEGACY_TELEGRAM, chain_key, event)
+
+
+def verify_chain(conn: Any, chain_key: bytes) -> None:
     """Recompute every retained link. Raises ``ChainError`` on any mismatch."""
-    columns = ", ".join((*EVENT_COLUMNS, "chain_epoch", "chain_seq", "prev_event_mac", "event_mac"))
-    rows = conn.execute(
-        f"SELECT {columns} FROM audit_events ORDER BY chain_epoch, chain_seq"
-    ).fetchall()
-
-    expected_prev: str | None = None
-    expected_seq: int | None = None
-    for row in rows:
-        record = dict(
-            zip(
-                (*EVENT_COLUMNS, "chain_epoch", "chain_seq", "prev_event_mac", "event_mac"),
-                row,
-                strict=True,
-            )
-        )
-        if expected_seq is None:
-            expected_prev = genesis_mac(record["chain_epoch"])
-            expected_seq = 1
-        if record["chain_seq"] != expected_seq:
-            raise ChainError("chain sequence is not continuous")
-        if record["prev_event_mac"] != expected_prev:
-            raise ChainError("chain link does not match the previous event")
-        recomputed = event_mac(
-            chain_key,
-            chain_epoch=record["chain_epoch"],
-            chain_seq=record["chain_seq"],
-            prev_event_mac=record["prev_event_mac"],
-            event=record,
-        )
-        if not hmac.compare_digest(recomputed, record["event_mac"]):
-            raise ChainError("event MAC does not verify")
-        expected_prev = record["event_mac"]
-        expected_seq = record["chain_seq"] + 1
-
-
-CHECKPOINT_DOMAIN = b"telegram-mcp-checkpoint-v1"
+    _core.verify_chain(conn, LEGACY_TELEGRAM, lambda _epoch: chain_key)
 
 
 def _checkpoint_message(row: Mapping[str, Any]) -> bytes:
-    return CHECKPOINT_DOMAIN + jcs_dumps(
-        {
-            "chain_epoch": row["chain_epoch"],
-            "chain_seq": row["chain_seq"],
-            "last_event_id": row["last_event_id"],
-            "last_event_mac": row["last_event_mac"],
-            "created_at": row["created_at"],
-        }
-    )
+    return _core.checkpoint_message(LEGACY_TELEGRAM, row)
 
 
-def insert_checkpoint(
-    conn: sqlite3.Connection, checkpoint_key: bytes, *, now: str
-) -> dict[str, Any]:
+def insert_checkpoint(conn: Any, checkpoint_key: bytes, *, now: str) -> dict[str, Any]:
     """Sign the current head inside the caller's transaction. Never commits."""
     require_immediate_transaction(conn)
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    from comms.core.opaque import mint_opaque_ref
-
-    current = head(conn)
-    if current is None:
-        raise ChainError("cannot checkpoint an empty chain")
-
-    row = {
-        "checkpoint_ref": mint_opaque_ref("tgl_"),
-        "chain_epoch": current["chain_epoch"],
-        "chain_seq": current["chain_seq"],
-        "last_event_id": current["event_id"],
-        "last_event_mac": current["event_mac"],
-        "created_at": now,
-    }
-    signature = Ed25519PrivateKey.from_private_bytes(checkpoint_key).sign(_checkpoint_message(row))
-    signing_key_id = (
-        "ed25519:sha256:"
-        + hashlib.sha256(
-            Ed25519PrivateKey.from_private_bytes(checkpoint_key).public_key().public_bytes_raw()
-        ).hexdigest()
-    )
-
-    conn.execute(
-        "INSERT INTO audit_checkpoints (checkpoint_ref, chain_epoch, chain_seq, last_event_id,"
-        " last_event_mac, created_at, signing_key_id, signature)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            row["checkpoint_ref"],
-            row["chain_epoch"],
-            row["chain_seq"],
-            row["last_event_id"],
-            row["last_event_mac"],
-            row["created_at"],
-            signing_key_id,
-            signature.hex(),
-        ),
-    )
-    return row
+    return _core.insert_checkpoint(conn, LEGACY_TELEGRAM, checkpoint_key, now=now)
 
 
-def write_checkpoint(
-    conn: sqlite3.Connection, checkpoint_key: bytes, *, now: str
-) -> dict[str, Any]:
+def write_checkpoint(conn: Any, checkpoint_key: bytes, *, now: str) -> dict[str, Any]:
     """Compatibility wrapper: one checkpoint in its own transaction."""
-    with immediate_transaction(conn):
+    with write_tx(conn):
         return insert_checkpoint(conn, checkpoint_key, now=now)
 
 
-def verify_checkpoints(conn: sqlite3.Connection, checkpoint_public: bytes) -> None:
-    """Verify every retained checkpoint signature."""
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
-    public = Ed25519PublicKey.from_public_bytes(checkpoint_public)
-    rows = conn.execute(
-        "SELECT chain_epoch, chain_seq, last_event_id, last_event_mac, created_at, signature"
-        " FROM audit_checkpoints ORDER BY chain_epoch, chain_seq"
-    ).fetchall()
-    for row in rows:
-        record = dict(
-            zip(
-                (
-                    "chain_epoch",
-                    "chain_seq",
-                    "last_event_id",
-                    "last_event_mac",
-                    "created_at",
-                    "signature",
-                ),
-                row,
-                strict=True,
-            )
-        )
-        try:
-            public.verify(bytes.fromhex(record["signature"]), _checkpoint_message(record))
-        except (InvalidSignature, ValueError) as exc:
-            raise ChainError("checkpoint signature does not verify") from exc
+def verify_checkpoints(conn: Any, checkpoint_public: bytes) -> None:
+    """Verify every retained checkpoint signature against one public key."""
+    _core.verify_checkpoints(conn, LEGACY_TELEGRAM, lambda _key_id: checkpoint_public)
 
 
-def verify_checkpoints_registry(conn: sqlite3.Connection) -> str:
+def verify_checkpoints_registry(conn: Any) -> str:
     """``"none"`` | ``"verified"`` | ``"failed"``: each checkpoint by its own recorded key."""
-    import base64
-
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
     from comms.transports.telegram.disclosure.keys import lookup_verification_key
 
+    names = (*LEGACY_TELEGRAM.signed_checkpoint_fields, "signature", "signing_key_id")
     rows = conn.execute(
-        "SELECT chain_epoch, chain_seq, last_event_id, last_event_mac, created_at, signature,"
-        " signing_key_id FROM audit_checkpoints ORDER BY chain_epoch, chain_seq"
+        f"SELECT {', '.join(names)} FROM audit_checkpoints ORDER BY chain_epoch, chain_seq"
     ).fetchall()
     if not rows:
         return "none"
-    names = (
-        "chain_epoch",
-        "chain_seq",
-        "last_event_id",
-        "last_event_mac",
-        "created_at",
-        "signature",
-        "signing_key_id",
-    )
     for row in rows:
         record = dict(zip(names, row, strict=True))
         key = lookup_verification_key(conn, record["signing_key_id"])
@@ -402,7 +158,7 @@ def verify_checkpoints_registry(conn: sqlite3.Connection) -> str:
         raw = base64.urlsafe_b64decode(
             key["public_key_b64url"] + "=" * (-len(key["public_key_b64url"]) % 4)
         )
-        if "ed25519:sha256:" + hashlib.sha256(raw).hexdigest() != record["signing_key_id"]:
+        if ids.ed25519_key_id(raw) != record["signing_key_id"]:
             return "failed"  # a stored label is never trusted by itself (spec §9.6.1)
         try:
             Ed25519PublicKey.from_public_bytes(raw).verify(
@@ -413,12 +169,8 @@ def verify_checkpoints_registry(conn: sqlite3.Connection) -> str:
     return "verified"
 
 
-def checkpoint_due(conn: sqlite3.Connection, *, events_since: int, seconds_since: int) -> bool:
-    """§26.5 cadence: at least every 500 events or 60 minutes, whichever first.
-
-    The settings maxima are pinned to that bound, so a configured cadence can
-    only be tighter than the MUST, never looser.
-    """
+def checkpoint_due(conn: Any, *, events_since: int, seconds_since: int) -> bool:
+    """§26.5 cadence: at least every 500 events or 60 minutes, whichever first."""
     from comms.transports.telegram.storage.settings import get_setting
 
     return events_since >= get_setting(conn, "audit.checkpoint_cadence_events") or (

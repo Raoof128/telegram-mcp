@@ -24,9 +24,9 @@ _KEY = bytes(range(32))
 
 def _append(conn, event):
     """Every append runs inside a caller-owned transaction (design §6.5)."""
-    from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
+    from comms.core.storage.db import write_tx
 
-    with immediate_transaction(conn):
+    with write_tx(conn):
         return append_event(conn, _KEY, event)
 
 
