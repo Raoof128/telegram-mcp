@@ -28,7 +28,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from telegram_mcp.disclosure.audit.anchor import AnchorError, latch_degraded, write_anchor
 from telegram_mcp.disclosure.audit.chain import (
@@ -56,15 +56,11 @@ __all__ = [
 
 _logger = logging.getLogger("telegram_mcp.admin")
 
-P = TypeVar("P")
-Q = TypeVar("Q")
-T = TypeVar("T")
-
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
 
 
 @dataclass(frozen=True)
-class TxCommand(Generic[P, Q]):
+class TxCommand[P, Q]:
     parse: Callable[[dict[str, Any]], P]
     plan: Callable[[sqlite3.Connection, P], Q]
     apply: Callable[[sqlite3.Connection, Q], dict[str, Any]]
@@ -127,7 +123,7 @@ def tx_handler(conn: sqlite3.Connection, command: TxCommand[Any, Any]) -> Handle
     return lambda args: run_tx(conn, command, args)
 
 
-def simulate_tx(
+def simulate_tx[T](
     conn: sqlite3.Connection,
     command: TxCommand[Any, Any],
     args: Mapping[str, Any],
