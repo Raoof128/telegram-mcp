@@ -61,7 +61,13 @@ def test_it_is_a_delivery_transport_named_telegram():
 
 @pytest.mark.parametrize(
     "raw,marked",
-    [("user:42", "42"), ("private:42", "42"), ("group:42", "-42"), ("channel:42", "-10042")],
+    [
+        ("user:42", "42"),
+        ("private:42", "42"),
+        ("group:42", "-42"),
+        ("channel:42", "-1000000000042"),  # -(10**12 + id), Telethon's get_peer_id and the Bot API
+        ("channel:1234567890", "-1001234567890"),
+    ],
 )
 def test_normalize_is_the_marked_chat_id(raw, marked):
     assert _transport(fixture_transport("sendMessage_ok")).normalize(raw) == marked
