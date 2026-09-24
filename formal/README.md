@@ -103,3 +103,14 @@ chain that start at the genesis or a signed checkpoint and end at the anchored h
 lost the event its seal signs: the model checked only that the epoch was sealed. The real
 `verify_chain` already requires every epoch to end exactly at its seal (Task B2); the model
 now does too, and the differential walk holds them to the same verdict.
+
+
+## The key and credential model (comms v0.3, Task B32)
+
+`formal/keys_model.py` explores the comms.db rekey (stage → rekey → verified reopen →
+pointer → destroy, with a crash and trial-open recovery possible at every boundary) together
+with a provider credential rotation (prove → activate → re-check, rolling back on a failed
+re-check). 512 reachable states; three properties — exactly one stored key opens the
+database and recovery finds it; a candidate that failed its proof or its re-check never
+stays active; the old database key is destroyed only after the new one reopened the file —
+each broken by a named mutation (`tests/formal/test_keys_model_mutations.py`).
