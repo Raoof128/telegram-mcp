@@ -137,6 +137,13 @@ class AuditWriter:
         """The ID of the chain key new events are MACed under."""
         return self._keys.current_id()
 
+    @property
+    def keys(self) -> SlotChainKeys:
+        return self._keys
+
+    def now(self) -> datetime:
+        return timeutil.utc(self._clock())
+
     @contextmanager
     def transaction(self) -> Iterator[AuditTx]:
         with append_guard(COMMS):

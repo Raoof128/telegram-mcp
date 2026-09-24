@@ -84,6 +84,12 @@ AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
         "comms_root": nullable(ref("audit_checkpoint")),
         "legacy_root": nullable(opaque_ref),
     },
+    "admin.audit_repair": {
+        "anchor_epoch": count(1),
+        "anchor_seq": count(1),
+        "head_epoch": count(1),
+        "head_seq": count(1),
+    },
     "admin.key_rotation": {
         "purpose": one_of(set(PURPOSES)),
         "old_version": count(0),
@@ -104,6 +110,7 @@ SUBJECT_KINDS: dict[str, str | None] = {
     "admin.credential_revoked": None,
     "admin.session_revoke": None,
     "maintenance.retention_purge": None,
+    "admin.audit_repair": None,
     "admin.key_rotation": None,
 }
 

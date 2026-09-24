@@ -20,14 +20,15 @@ Retention refuses while the audit integrity latch is set.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import hmac
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from comms.core import timeutil
-from comms.core.audit.chain import COMMS, append_guard
-from comms.core.audit.integrity import require_not_degraded
+from comms.core.audit.chain import CHAIN_COLUMNS, COMMS, ChainProfile, append_guard, event_mac
+from comms.core.audit.integrity import latch_degraded, require_not_degraded
 from comms.core.audit.retention_root import choose_root
 from comms.core.audit.verify_all import LegacyVerify
 from comms.core.audit.writer import AuditWriter
@@ -37,12 +38,20 @@ from comms.core.storage.db import write_tx
 
 __all__ = [
     "LegacyRetention",
+    "RetentionFailed",
     "RetentionPolicy",
     "RetentionReport",
     "purge_retired_keys",
     "redact_identities",
     "run_retention",
 ]
+
+
+class RetentionFailed(Exception):
+    """A root's row does not recompute to its signed MAC: the latch is set, nothing deleted."""
+
+    def __init__(self) -> None:
+        super().__init__("AUDIT_INTEGRITY_DEGRADED")
 
 
 @dataclass(frozen=True)
@@ -98,14 +107,19 @@ def run_retention(
         cutoff=timeutil.iso(before(policy.audit_events_days)),
         public_keys=legacy.verify.public_for,
     )
+    if root is not None:
+        _require_root_row(
+            comms_conn, legacy.conn, legacy.verify.profile, root, legacy.verify.key_for_epoch, now
+        )
     phases["legacy_chain"] = legacy.truncate_chain_before(root) if root is not None else 0
     phases["legacy_receipts"] = legacy.purge_receipts(before(policy.receipt_days))
     phases["legacy_message_refs"] = legacy.purge_message_refs(
         before(policy.message_ref_days), now=now
     )
     comms_root, phases["comms_chain"] = _truncate_comms(
-        comms_conn, before(policy.audit_events_days)
+        comms_conn, before(policy.audit_events_days), writer.keys.for_epoch, now
     )
+    blocked = comms_root is None and _due(comms_conn, COMMS, before(policy.audit_events_days))
     with write_tx(comms_conn):
         phases["campaign_bodies"] = redact_campaign_bodies(
             comms_conn, cutoff=before(policy.campaign_body_days), now=now
@@ -121,7 +135,7 @@ def run_retention(
             "maintenance.retention_purge",
             payload={**phases, "comms_root": roots["comms"], "legacy_root": roots["legacy"]},
         )
-    return RetentionReport(phases=phases, roots=roots, outcome="ok")
+    return RetentionReport(phases=phases, roots=roots, outcome="blocked" if blocked else "ok")
 
 
 # A job in one of these states may still be delivered, retried or resolved.
@@ -205,7 +219,45 @@ def purge_retired_keys(conn: Any, store: KeySlotStore) -> dict[str, int]:
     return {"public_keys": int(public), "secrets": len(doomed)}
 
 
-def _truncate_comms(conn: Any, cutoff: datetime) -> tuple[str | None, int]:
+def _due(conn: Any, profile: ChainProfile, cutoff: datetime) -> bool:
+    """Whether any retained event is older than the cutoff (so truncation was wanted)."""
+    stamps = conn.execute(f"SELECT ts FROM {profile.events_table}").fetchall()
+    return any(timeutil.instant(row[0]) < cutoff for row in stamps)
+
+
+def _require_root_row(
+    comms_conn: Any,
+    conn: Any,
+    profile: ChainProfile,
+    root: Mapping[str, Any],
+    key_for_epoch: Callable[[int], bytes],
+    now: datetime,
+) -> None:
+    """The root's row must recompute to the signed MAC; otherwise latch and delete nothing."""
+    names = (*profile.event_columns, *CHAIN_COLUMNS)
+    row = conn.execute(
+        f"SELECT {', '.join(names)} FROM {profile.events_table} WHERE chain_epoch = ? AND chain_seq = ?",
+        (root["chain_epoch"], root["chain_seq"]),
+    ).fetchone()
+    record = dict(zip(names, row, strict=True)) if row is not None else None
+    if record is None or not hmac.compare_digest(
+        event_mac(
+            profile,
+            key_for_epoch(record["chain_epoch"]),
+            chain_epoch=record["chain_epoch"],
+            chain_seq=record["chain_seq"],
+            prev_event_mac=record["prev_event_mac"],
+            event=record,
+        ),
+        root["last_event_mac"],
+    ):
+        latch_degraded(comms_conn, reason="RETENTION_ROOT_MISMATCH", now=now)
+        raise RetentionFailed
+
+
+def _truncate_comms(
+    conn: Any, cutoff: datetime, key_for_epoch: Callable[[int], bytes], now: datetime
+) -> tuple[str | None, int]:
     """Phase 4 (B18): delete comms events strictly before the latest verified root.
 
     Under the COMMS append guard, so no append interleaves; the ``truncating`` flag is set
@@ -218,6 +270,7 @@ def _truncate_comms(conn: Any, cutoff: datetime) -> tuple[str | None, int]:
         )
         if root is None:
             return None, 0
+        _require_root_row(conn, conn, COMMS, root, key_for_epoch, now)
         with write_tx(conn):
             conn.execute("UPDATE maintenance_flags SET value = 1 WHERE name = 'truncating'")
             deleted = conn.execute(
