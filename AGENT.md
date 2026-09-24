@@ -527,3 +527,11 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
   - Then the 5b-2 plan (the WhatsVault subtree import at `b6fd51a`).
   - The out-of-repo steps (GitHub rename, folder and memory move) remain separately approved.
   - No production claim.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms 5b-2 — WhatsVault imported intact (branch `comms-5b2`).
+- **Summary:** WhatsVault `b6fd51a` imported with full history under `transports/whatsapp/` via the subtree merge (`git subtree` not installed); prefix tree proven equal to the source tree and pinned by tests; importable as `whatsvault`; four runtime deps pinned to WhatsVault's measured versions — lock additions only (12 packages, 0 changes), `pip-audit` clean; SQLCipher arrives as a hash-pinned cp312 arm64 wheel bundling 4.12.0 (design's Homebrew assumption superseded, recorded). Spike-first again: the plan was written from a throwaway-worktree run.
+- **Files changed:** `transports/whatsapp/**` (imported, unedited), `tests/integration/test_whatsvault_provenance.py`, `pyproject.toml`, `uv.lock`, `docs/provenance/whatsvault.md`, `docs/verification/{dependencies,comms-5b2}.md`, `docs/superpowers/plans/2026-09-24-comms-5b2-whatsvault-import.md`, `CLAUDE.md`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:** Telegram 1519 passed/10 skipped, smoke 60/60, formal 624/18, ruff/format/mypy clean, build OK (wheel includes whatsvault); WhatsVault 539 passed under its own strict config in the shared Python 3.12 venv.
+- **Follow-ups:** merge decision; next is design §3.4 seams or 5b-3 (spec v0.2); out-of-repo steps (GitHub rename, whatsvault archive, folder/memory move) remain separately approved. No production claim.

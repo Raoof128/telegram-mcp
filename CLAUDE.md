@@ -39,6 +39,10 @@ mechanically to `comms.transports.telegram` (AST-equivalent to its pre-move tree
 design `docs/superpowers/specs/2026-09-24-comms-consolidation-design.md`). The
 `telegram-mcp` and `comms` CLIs both work, and every frozen wire, logger name and
 on-host identifier is unchanged. Evidence: `docs/verification/comms-5b1.md`.
+**Comms 5b-2** (branch `comms-5b2`): WhatsVault is imported intact at `b6fd51a` under
+`transports/whatsapp/` with full history (tree-hash proven; `docs/provenance/whatsvault.md`),
+importable as `whatsvault` in the one Python 3.12 environment. Its suite runs under its own
+pytest config (command above). Nothing in the subtree is edited until design §3.4 seams begin.
 Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 
 ## Non-negotiables
@@ -66,13 +70,14 @@ Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 1514 passed, 11 skipped
+uv run pytest -q                                  # 1519 passed, 10 skipped
 uv run python scripts/e2e_smoke.py                # 60 checks, end to end
 uv run pytest tests/formal -q -s                  # 624 states, 18 assertions
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
 uv run mypy src/comms src/telegram_mcp
 uv build
+(cd transports/whatsapp && ../../.venv/bin/python -m pytest -p no:randomly -p no:cacheprovider)  # WhatsVault: 539 passed
 ```
 
 Host-touching tests are opt-in and never run by default:
