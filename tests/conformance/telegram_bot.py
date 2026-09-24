@@ -44,7 +44,7 @@ def _bot(mode: Mode, inner: httpx.BaseTransport, seen: list) -> BotDelivery:
 
 
 def _send(transport: BotDelivery):
-    payload = transport.prepare(DeliveryIntent("telegram", "-1001", {"text": "hi"}), NOW)
+    payload = transport.prepare(DeliveryIntent("telegram", "-1001", {"canonical": "hi"}), NOW)
     return transport.deliver(
         FrozenDelivery("djb_x", "gen_x", "telegram", "-1001", payload, "k" * 64)
     )
@@ -77,7 +77,7 @@ def delivery_prepare_and_still_valid_touch_nothing(mode: Mode) -> None:
     socket.socket.connect = refuse  # type: ignore[method-assign]
     try:
         transport.normalize("channel:1")
-        payload = transport.prepare(DeliveryIntent("telegram", "-1001", {"text": "hi"}), NOW)
+        payload = transport.prepare(DeliveryIntent("telegram", "-1001", {"canonical": "hi"}), NOW)
         transport.still_valid(payload, NOW)  # type: ignore[arg-type]
     finally:
         socket.socket.connect = real_connect  # type: ignore[method-assign]

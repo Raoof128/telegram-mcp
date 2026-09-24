@@ -1,7 +1,7 @@
 """Telegram message text, shared by the bot and user transports (comms v0.3 C7, C16).
 
-Delivery content is exactly ``{"text": str}`` of 1..4096 UTF-16 code units (Telegram counts
-code units); anything else is not carried.
+The message is the campaign's rendered text (``core.campaigns.render``), carried when it is
+1..4096 UTF-16 code units (Telegram counts code units); anything else is not carried.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
+from comms.core.campaigns.render import rendered_text
 from comms.core.canonical import jcs_dumps
 from comms.core.delivery.transport import DeliveryIntent, PreparedPayload, Skip, SkipReason
 
@@ -20,8 +21,8 @@ MAX_TEXT = 4096
 
 
 def message_text(content: Mapping[str, Any]) -> str | None:
-    text = content.get("text") if set(content) == {"text"} else None
-    if not isinstance(text, str) or not text or len(text.encode("utf-16-le")) // 2 > MAX_TEXT:
+    text = rendered_text(content)
+    if text is None or len(text.encode("utf-16-le")) // 2 > MAX_TEXT:
         return None
     return text
 

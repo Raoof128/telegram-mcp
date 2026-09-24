@@ -32,7 +32,7 @@ def _transport(session):
 
 
 def _frozen(transport, attempt_no=1, identity=CHAT, key=KEY):
-    payload = transport.prepare(DeliveryIntent("telegram", identity, {"text": "hello"}), NOW)
+    payload = transport.prepare(DeliveryIntent("telegram", identity, {"canonical": "hello"}), NOW)
     assert isinstance(payload, PreparedPayload)
     return FrozenDelivery("djb_x", "gen_x", "telegram", identity, payload, key, attempt_no)
 
@@ -105,10 +105,10 @@ def test_prepare_pure(monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", refuse)
     monkeypatch.setattr("builtins.open", refuse)
     assert transport.normalize("channel:1234567890") == CHAT
-    payload = transport.prepare(DeliveryIntent("telegram", CHAT, {"text": "hi"}), NOW)
+    payload = transport.prepare(DeliveryIntent("telegram", CHAT, {"canonical": "hi"}), NOW)
     assert json.loads(payload.data) == {"chat_id": int(CHAT), "text": "hi"}
     assert transport.still_valid(payload, NOW) is True
-    assert transport.prepare(DeliveryIntent("telegram", CHAT, {"text": ""}), NOW) == Skip(
+    assert transport.prepare(DeliveryIntent("telegram", CHAT, {"canonical": ""}), NOW) == Skip(
         SkipReason.CONTENT_UNSUPPORTED
     )
     assert session.sent == []

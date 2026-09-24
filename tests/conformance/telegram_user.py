@@ -42,7 +42,7 @@ def _user(mode: Mode, session: FakeSession) -> UserDelivery:
 
 
 def _frozen(transport: UserDelivery, attempt_no: int = 1) -> FrozenDelivery:
-    payload = transport.prepare(DeliveryIntent("telegram", CHAT, {"text": "hi"}), NOW)
+    payload = transport.prepare(DeliveryIntent("telegram", CHAT, {"canonical": "hi"}), NOW)
     assert isinstance(payload, PreparedPayload)
     return FrozenDelivery("djb_x", "gen_x", "telegram", CHAT, payload, "ab" * 32, attempt_no)
 

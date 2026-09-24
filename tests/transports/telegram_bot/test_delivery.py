@@ -49,7 +49,7 @@ def _frozen(payload, identity="-1001234567890"):
 
 
 def _prepared(transport, text="hello", identity="-1001234567890"):
-    payload = transport.prepare(DeliveryIntent("telegram", identity, {"text": text}), NOW)
+    payload = transport.prepare(DeliveryIntent("telegram", identity, {"canonical": text}), NOW)
     assert isinstance(payload, PreparedPayload)
     return payload
 
@@ -91,15 +91,18 @@ def test_prepare_skips_oversize_empty_or_unknown_content():
     transport = _transport(fixture_transport("sendMessage_ok"))
     astral = "\U0001f600"  # two UTF-16 code units, as Telegram counts
     assert isinstance(
-        transport.prepare(DeliveryIntent("telegram", "1", {"text": "x" * MAX_TEXT}), NOW),
+        transport.prepare(DeliveryIntent("telegram", "1", {"canonical": "x" * MAX_TEXT}), NOW),
         PreparedPayload,
     )
     for content in (
-        {"text": "x" * (MAX_TEXT + 1)},
-        {"text": astral * (MAX_TEXT // 2 + 1)},
-        {"text": ""},
-        {"text": 5},
-        {"text": "hi", "photo": "x"},
+        {"canonical": "x" * (MAX_TEXT + 1)},
+        {"canonical": astral * (MAX_TEXT // 2 + 1)},
+        {"canonical": ""},
+        {"canonical": 5},
+        {
+            "canonical": "hi",
+            "media": [{"sha256": "a" * 64, "mime": "image/png", "name": "x", "size": 1}],
+        },
         {},
     ):
         result = transport.prepare(DeliveryIntent("telegram", "1", content), NOW)
