@@ -2,7 +2,11 @@
 
 import pytest
 
-from telegram_mcp.authority.cursors import ALLOWED_STATE_KEYS, STATE_VALUE_RULES, _check_state
+from comms.transports.telegram.authority.cursors import (
+    ALLOWED_STATE_KEYS,
+    STATE_VALUE_RULES,
+    _check_state,
+)
 
 REF = "tgp_" + "a" * 26
 DIGEST = "hmac-sha256:" + "0" * 64

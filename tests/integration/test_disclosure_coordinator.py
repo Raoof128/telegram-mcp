@@ -1,6 +1,6 @@
 """The twelve-step disclosure transaction (design §2, §6.5)."""
 
-from telegram_mcp.disclosure.coordinator import DISCLOSURE_STEPS
+from comms.transports.telegram.disclosure.coordinator import DISCLOSURE_STEPS
 
 
 def test_the_twelve_steps_are_frozen_in_order():
@@ -35,7 +35,7 @@ def test_the_anchor_is_the_last_step():
 
 import pytest
 
-from telegram_mcp.storage.settings import get_setting
+from comms.transports.telegram.storage.settings import get_setting
 from tests.coordinator_fixtures import build_coordinator
 
 

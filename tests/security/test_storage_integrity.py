@@ -12,14 +12,14 @@ import stat
 
 import pytest
 
-from telegram_mcp.storage.db import (
+from comms.transports.telegram.storage.db import (
     StorageError,
     open_db,
     purge_expired_cursors,
     require_foreign_keys,
     startup_gc,
 )
-from telegram_mcp.storage.migrations import migrate
+from comms.transports.telegram.storage.migrations import migrate
 
 TS = "2026-09-22T00:00:00Z"
 LATER = "2099-01-01T00:00:00Z"

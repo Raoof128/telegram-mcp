@@ -3,7 +3,7 @@ import copy
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 
-from telegram_mcp.contract import (
+from comms.transports.telegram.contract import (
     EXPECTED_TOOLS,
     assemble_output,
     load_contracts,

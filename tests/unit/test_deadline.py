@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from telegram_mcp.telegram.deadline import (
+from comms.transports.telegram.telegram.deadline import (
     Deadline,
     DeadlineExceeded,
     FairScheduler,

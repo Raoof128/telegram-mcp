@@ -82,8 +82,8 @@ async def test_the_receipt_commits_to_the_body_without_containing_it(tmp_path):
 
 async def test_the_sweep_would_actually_catch_a_leak(tmp_path):
     """A sweep that cannot fail proves nothing. Plant a marker and confirm."""
-    from telegram_mcp.storage.db import open_db
-    from telegram_mcp.storage.migrations import migrate
+    from comms.transports.telegram.storage.db import open_db
+    from comms.transports.telegram.storage.migrations import migrate
 
     conn = open_db(tmp_path / "meta.db")
     migrate(conn)

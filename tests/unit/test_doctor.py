@@ -5,15 +5,15 @@ import stat
 
 import pytest
 
-from telegram_mcp.doctor import (
+from comms.transports.telegram.doctor import (
     CHECKS,
     PRODUCTION_REQUIRED,
     DoctorContext,
     doctor,
 )
-from telegram_mcp.ipc.tunnel import add_pin, spki_digest
-from telegram_mcp.keys.store import provision_missing
-from telegram_mcp.storage.db import open_db
+from comms.transports.telegram.ipc.tunnel import add_pin, spki_digest
+from comms.transports.telegram.keys.store import provision_missing
+from comms.transports.telegram.storage.db import open_db
 
 
 def _status(report, name):
@@ -130,8 +130,8 @@ def test_unknown_check_name_is_refused():
 
 def test_off_probe_ignores_processes_that_merely_mention_the_labels():
     """A probe like `dscl . -read /Users/telegram-mcpd` is not a runtime."""
-    import telegram_mcp.doctor as doctor_module
-    from telegram_mcp.runtime.bootstrap import ProcessEntry
+    import comms.transports.telegram.doctor as doctor_module
+    from comms.transports.telegram.runtime.bootstrap import ProcessEntry
 
     mentions = [
         ProcessEntry(

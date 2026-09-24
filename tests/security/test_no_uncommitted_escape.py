@@ -40,8 +40,8 @@ async def test_a_successful_call_writes_only_after_the_anchor(tmp_path):
     assert len(transport.writes) == 1
     # The anchor exists and names the committed head, so the write happened
     # after it rather than before.
-    from telegram_mcp.disclosure.audit.anchor import read_anchor
-    from telegram_mcp.keys.store import load_key
+    from comms.transports.telegram.disclosure.audit.anchor import read_anchor
+    from comms.transports.telegram.keys.store import load_key
 
     anchor = read_anchor(tmp_path / "anchor" / "anchor.json", load_key("audit-chain-key"))
     head = conn.execute(

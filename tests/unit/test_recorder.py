@@ -1,6 +1,6 @@
 from telethon.tl import functions, types
 
-from telegram_mcp.telegram.telethon_adapter import qualified
+from comms.transports.telegram.telegram.telethon_adapter import qualified
 from tests.telegram.recorder import PHASE, violations
 
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from telegram_mcp.authority.policy import (
+from comms.transports.telegram.authority.policy import (
     AuthorityRequest,
     ClientProjectGrant,
     ClientState,
@@ -53,8 +53,8 @@ def test_unknown_mode_is_refused():
 
 
 def test_the_view_loads_the_mode(tmp_path):
-    from telegram_mcp.storage.authority_view import load_view
-    from telegram_mcp.storage.db import open_db
+    from comms.transports.telegram.storage.authority_view import load_view
+    from comms.transports.telegram.storage.db import open_db
     from tests.authority_fixtures import seed_authority_rows
 
     conn = open_db(tmp_path / "m.db")

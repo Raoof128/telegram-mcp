@@ -112,11 +112,11 @@ def build_coordinator(
     authority_factory: Any = None,
 ):
     """Build a coordinator over a real database, ledger, chain and anchor."""
-    from telegram_mcp.disclosure.budget import BudgetLedger, buckets_for
-    from telegram_mcp.disclosure.coordinator import DisclosureCoordinator
-    from telegram_mcp.keys.store import key_id, load_key, provision_missing
-    from telegram_mcp.storage.db import open_db
-    from telegram_mcp.storage.migrations import migrate
+    from comms.transports.telegram.disclosure.budget import BudgetLedger, buckets_for
+    from comms.transports.telegram.disclosure.coordinator import DisclosureCoordinator
+    from comms.transports.telegram.keys.store import key_id, load_key, provision_missing
+    from comms.transports.telegram.storage.db import open_db
+    from comms.transports.telegram.storage.migrations import migrate
 
     provision_missing(tmp_path / "keys", phases=(2, 3))
     conn = open_db(tmp_path / "meta.db")
@@ -151,7 +151,7 @@ def build_coordinator(
         for key, usage in buckets_for("telegram_get_messages", data, client_id=1).items()
     }
     # Reserve generously: the worst case must never be tighter than the actual.
-    from telegram_mcp.disclosure.budget import Usage
+    from comms.transports.telegram.disclosure.budget import Usage
 
     worst_case = {k: Usage(v.records + 5, v.bytes + 500) for k, v in worst_case.items()}
 

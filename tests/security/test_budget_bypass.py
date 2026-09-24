@@ -2,7 +2,7 @@
 
 import pytest
 
-from telegram_mcp.disclosure.budget import (
+from comms.transports.telegram.disclosure.budget import (
     GLOBAL,
     PROJECT,
     BucketKey,
@@ -11,9 +11,9 @@ from telegram_mcp.disclosure.budget import (
     Usage,
     subject_digest,
 )
-from telegram_mcp.keys.store import provision_missing
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.storage.migrations import migrate
+from comms.transports.telegram.keys.store import provision_missing
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.storage.migrations import migrate
 
 
 def _ledger(tmp_path):

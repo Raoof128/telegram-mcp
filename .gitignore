@@ -10,7 +10,7 @@
 !.env.example
 secrets/
 
-# Runtime metadata (repo-root state dir only; src/telegram_mcp/runtime/ is source)
+# Runtime metadata (repo-root state dir only; src/comms/transports/telegram/runtime/ is source)
 /runtime/
 *.log
 

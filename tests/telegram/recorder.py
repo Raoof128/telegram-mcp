@@ -14,7 +14,7 @@ from collections.abc import Callable
 from contextvars import ContextVar
 from typing import Any
 
-from telegram_mcp.telegram.telethon_adapter import _GatewayClient, qualified
+from comms.transports.telegram.telegram.telethon_adapter import _GatewayClient, qualified
 
 PHASE: ContextVar[str] = ContextVar("telegram_mcp_rpc_phase", default="unscoped")
 

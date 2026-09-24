@@ -5,9 +5,9 @@ import stat
 
 import pytest
 
-from telegram_mcp.ipc.handlers.clients import client_handlers
-from telegram_mcp.ipc.handlers.projects import PROJECT_COMMANDS, project_handlers
-from telegram_mcp.storage.db import open_db
+from comms.transports.telegram.ipc.handlers.clients import client_handlers
+from comms.transports.telegram.ipc.handlers.projects import PROJECT_COMMANDS, project_handlers
+from comms.transports.telegram.storage.db import open_db
 from tests.authority_fixtures import seed_authority_rows
 
 
@@ -59,7 +59,7 @@ def test_rotate_refuses_a_disabled_client_without_enable(conn, tmp_path):
 
 def test_a_refused_rotation_leaves_the_live_seed_untouched(conn, tmp_path):
     """Review #10: an error must not have a side effect."""
-    from telegram_mcp.ipc.handlers._wrapper import BUSY
+    from comms.transports.telegram.ipc.handlers._wrapper import BUSY
 
     keys = tmp_path / "keys"
     keys.mkdir(mode=0o700)

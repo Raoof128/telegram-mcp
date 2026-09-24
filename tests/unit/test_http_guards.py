@@ -2,7 +2,7 @@
 
 import contextvars
 
-from telegram_mcp.http_guards import (
+from comms.transports.telegram.http_guards import (
     RATE_LIMITED_BODY,
     UNAUTHORIZED_BODY,
     RateLimiter,

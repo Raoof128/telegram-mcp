@@ -1,7 +1,7 @@
 import pytest
 
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.storage.refstore import RefStore
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.storage.refstore import RefStore
 from tests.authority_fixtures import seed_authority_rows
 
 

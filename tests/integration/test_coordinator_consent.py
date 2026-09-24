@@ -7,14 +7,19 @@ import socket
 
 import pytest
 
-from telegram_mcp.consent.broker import ConsentBroker
-from telegram_mcp.consent.challenge import StubSigner
-from telegram_mcp.consent.prompter import Prompter
-from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, Usage
-from telegram_mcp.disclosure.coordinator import ConsentRefusal
-from telegram_mcp.disclosure.exposure import exposure_digest
-from telegram_mcp.disclosure.seams import CoordinatorConsent
-from telegram_mcp.ipc.framing import decode_json_frame, encode_json_frame, read_frame, write_frame
+from comms.transports.telegram.consent.broker import ConsentBroker
+from comms.transports.telegram.consent.challenge import StubSigner
+from comms.transports.telegram.consent.prompter import Prompter
+from comms.transports.telegram.disclosure.budget import GLOBAL, BucketKey, Usage
+from comms.transports.telegram.disclosure.coordinator import ConsentRefusal
+from comms.transports.telegram.disclosure.exposure import exposure_digest
+from comms.transports.telegram.disclosure.seams import CoordinatorConsent
+from comms.transports.telegram.ipc.framing import (
+    decode_json_frame,
+    encode_json_frame,
+    read_frame,
+    write_frame,
+)
 
 G = BucketKey(1, GLOBAL, "a" * 64)
 

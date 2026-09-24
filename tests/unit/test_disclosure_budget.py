@@ -2,7 +2,7 @@
 
 import pytest
 
-from telegram_mcp.disclosure.budget import (
+from comms.transports.telegram.disclosure.budget import (
     GLOBAL,
     PROJECT,
     BucketKey,
@@ -10,7 +10,7 @@ from telegram_mcp.disclosure.budget import (
     subject_digest,
     window_start,
 )
-from telegram_mcp.keys.store import provision_missing
+from comms.transports.telegram.keys.store import provision_missing
 
 _P = "tpr_" + "a" * 26
 
@@ -59,7 +59,7 @@ def test_bucket_key_is_hashable_for_use_as_a_dict_key():
 
 
 def test_catalogue_tools_charge_only_the_global_bucket():
-    from telegram_mcp.disclosure.budget import GLOBAL, buckets_for
+    from comms.transports.telegram.disclosure.budget import GLOBAL, buckets_for
 
     data = {"projects": [{"project_ref": _P, "origin_project_refs": []}]}
     buckets = buckets_for("telegram_list_projects", data, client_id=1)
@@ -69,7 +69,7 @@ def test_catalogue_tools_charge_only_the_global_bucket():
 
 
 def test_three_projects_touch_four_buckets():
-    from telegram_mcp.disclosure.budget import GLOBAL, PROJECT, buckets_for
+    from comms.transports.telegram.disclosure.budget import GLOBAL, PROJECT, buckets_for
 
     refs = ["tpr_" + c * 26 for c in "abc"]
     data = {
@@ -89,7 +89,7 @@ def test_three_projects_touch_four_buckets():
 
 
 def test_a_shared_record_is_charged_once_globally_and_once_per_project():
-    from telegram_mcp.disclosure.budget import GLOBAL, PROJECT, buckets_for
+    from comms.transports.telegram.disclosure.budget import GLOBAL, PROJECT, buckets_for
 
     a, b = "tpr_" + "a" * 26, "tpr_" + "b" * 26
     data = {
@@ -108,7 +108,7 @@ def test_a_shared_record_is_charged_once_globally_and_once_per_project():
 
 
 def test_tiers_follow_the_frozen_baseline():
-    from telegram_mcp.disclosure.budget import Thresholds, Usage, tier
+    from comms.transports.telegram.disclosure.budget import Thresholds, Usage, tier
 
     limits = Thresholds(
         soft_records=100, hard_records=500, soft_bytes=500_000, hard_bytes=5_000_000
@@ -123,7 +123,7 @@ def test_tiers_follow_the_frozen_baseline():
 
 
 def test_either_quantity_alone_can_refuse():
-    from telegram_mcp.disclosure.budget import Thresholds, Usage, tier
+    from comms.transports.telegram.disclosure.budget import Thresholds, Usage, tier
 
     limits = Thresholds(
         soft_records=100, hard_records=500, soft_bytes=500_000, hard_bytes=5_000_000
@@ -133,9 +133,9 @@ def test_either_quantity_alone_can_refuse():
 
 
 def test_thresholds_are_read_from_the_settings_registry(tmp_path):
-    from telegram_mcp.disclosure.budget import GLOBAL, PROJECT, thresholds_for
-    from telegram_mcp.storage.db import open_db
-    from telegram_mcp.storage.migrations import migrate
+    from comms.transports.telegram.disclosure.budget import GLOBAL, PROJECT, thresholds_for
+    from comms.transports.telegram.storage.db import open_db
+    from comms.transports.telegram.storage.migrations import migrate
 
     conn = open_db(tmp_path / "meta.db")
     migrate(conn)
@@ -146,9 +146,9 @@ def test_thresholds_are_read_from_the_settings_registry(tmp_path):
 
 
 def _ledger(tmp_path):
-    from telegram_mcp.disclosure.budget import BudgetLedger
-    from telegram_mcp.storage.db import open_db
-    from telegram_mcp.storage.migrations import migrate
+    from comms.transports.telegram.disclosure.budget import BudgetLedger
+    from comms.transports.telegram.storage.db import open_db
+    from comms.transports.telegram.storage.migrations import migrate
 
     conn = open_db(tmp_path / "meta.db")
     migrate(conn)
@@ -156,7 +156,7 @@ def _ledger(tmp_path):
 
 
 def _worst(client_id=1, records=10, size=1000):
-    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, Usage, subject_digest
+    from comms.transports.telegram.disclosure.budget import GLOBAL, BucketKey, Usage, subject_digest
 
     return {BucketKey(client_id, GLOBAL, subject_digest(GLOBAL)): Usage(records, size)}
 
@@ -184,7 +184,7 @@ def test_reservation_binds_the_six_frozen_components(tmp_path):
 
 
 def test_a_live_reservation_counts_against_the_next_consultation(tmp_path):
-    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, subject_digest
+    from comms.transports.telegram.disclosure.budget import GLOBAL, BucketKey, subject_digest
 
     ledger = _ledger(tmp_path)
     key = BucketKey(1, GLOBAL, subject_digest(GLOBAL))
@@ -203,7 +203,7 @@ def test_a_live_reservation_counts_against_the_next_consultation(tmp_path):
 
 
 def test_release_frees_the_reservation(tmp_path):
-    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, subject_digest
+    from comms.transports.telegram.disclosure.budget import GLOBAL, BucketKey, subject_digest
 
     ledger = _ledger(tmp_path)
     key = BucketKey(1, GLOBAL, subject_digest(GLOBAL))
@@ -221,9 +221,14 @@ def test_release_frees_the_reservation(tmp_path):
 
 
 def test_an_expired_reservation_stops_counting(tmp_path):
-    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, BudgetLedger, subject_digest
-    from telegram_mcp.storage.db import open_db
-    from telegram_mcp.storage.migrations import migrate
+    from comms.transports.telegram.disclosure.budget import (
+        GLOBAL,
+        BucketKey,
+        BudgetLedger,
+        subject_digest,
+    )
+    from comms.transports.telegram.storage.db import open_db
+    from comms.transports.telegram.storage.migrations import migrate
 
     now = [1_800_000_000.0]
     conn = open_db(tmp_path / "meta.db")
@@ -248,7 +253,7 @@ def test_an_expired_reservation_stops_counting(tmp_path):
 def test_reserving_past_a_hard_ceiling_refuses(tmp_path):
     import pytest
 
-    from telegram_mcp.disclosure.budget import BudgetError
+    from comms.transports.telegram.disclosure.budget import BudgetError
 
     ledger = _ledger(tmp_path)
     with pytest.raises(BudgetError):
@@ -267,7 +272,7 @@ from tests.authority_fixtures import insert_committed_receipt, seed_authority_ro
 
 
 def test_commit_writes_one_row_per_bucket_and_releases(tmp_path):
-    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, Usage, subject_digest
+    from comms.transports.telegram.disclosure.budget import GLOBAL, BucketKey, Usage, subject_digest
 
     ledger = _ledger(tmp_path)
     conn = ledger._conn
@@ -306,7 +311,13 @@ def test_commit_writes_one_row_per_bucket_and_releases(tmp_path):
 def test_actual_exceeding_reserved_fails_closed(tmp_path):
     import pytest
 
-    from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, BudgetError, Usage, subject_digest
+    from comms.transports.telegram.disclosure.budget import (
+        GLOBAL,
+        BucketKey,
+        BudgetError,
+        Usage,
+        subject_digest,
+    )
 
     ledger = _ledger(tmp_path)
     key = BucketKey(1, GLOBAL, subject_digest(GLOBAL))

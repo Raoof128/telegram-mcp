@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from telegram_mcp.keys.keychain import KeychainError, read_api_hash
+from comms.transports.telegram.keys.keychain import KeychainError, read_api_hash
 
 GOOD = "0123456789abcdef0123456789abcdef"
 

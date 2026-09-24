@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from telegram_mcp.disclosure.audit.anchor import (
+from comms.transports.telegram.disclosure.audit.anchor import (
     ANCHOR_VERSION,
     CLEAN,
     FAIL_CLOSED,
@@ -15,16 +15,16 @@ from telegram_mcp.disclosure.audit.anchor import (
     read_anchor,
     write_anchor,
 )
-from telegram_mcp.disclosure.audit.chain import append_event, mint_event_id
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.storage.migrations import migrate
+from comms.transports.telegram.disclosure.audit.chain import append_event, mint_event_id
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.storage.migrations import migrate
 
 _KEY = bytes(range(32))
 
 
 def _append(conn, event):
     """Every append runs inside a caller-owned transaction (design §6.5)."""
-    from telegram_mcp.disclosure.audit.chain import immediate_transaction
+    from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
 
     with immediate_transaction(conn):
         return append_event(conn, _KEY, event)

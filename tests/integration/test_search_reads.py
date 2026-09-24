@@ -8,9 +8,9 @@ import pytest
 from telethon import errors
 from telethon.tl import types
 
-from telegram_mcp.disclosure.coordinator import RetrievalRefusal, _split_sidecar
-from telegram_mcp.disclosure.coverage import validate_coverage
-from telegram_mcp.telegram.reads import TelegramReads
+from comms.transports.telegram.disclosure.coordinator import RetrievalRefusal, _split_sidecar
+from comms.transports.telegram.disclosure.coverage import validate_coverage
+from comms.transports.telegram.telegram.reads import TelegramReads
 from tests.authority_fixtures import BETA_REF, PROJECT_REF, seed_second_project
 from tests.integration.test_telegram_reads import make_reads_world
 
@@ -213,7 +213,7 @@ async def test_every_partial_reason_is_reported_honestly(world, reason):
     if reason == "peer_budget":
         s = dataclasses.replace(s, peer_cap=1)
     if reason == "hit_budget":
-        from telegram_mcp.telegram import search as engine
+        from comms.transports.telegram.telegram import search as engine
 
         original = engine.run_page
 
@@ -221,7 +221,7 @@ async def test_every_partial_reason_is_reported_honestly(world, reason):
             return await original(*a, **{**k, "max_hits": 5})
 
         engine_patch = pytest.MonkeyPatch()
-        engine_patch.setattr("telegram_mcp.telegram.reads.run_page", small_budget)
+        engine_patch.setattr("comms.transports.telegram.telegram.reads.run_page", small_budget)
     try:
         _data, side = _check(await reads.search_messages(args, s))
     finally:
@@ -232,7 +232,7 @@ async def test_every_partial_reason_is_reported_honestly(world, reason):
 
 
 async def _awaiting_call(self, request):
-    from telegram_mcp.telegram.telethon_adapter import qualified
+    from comms.transports.telegram.telegram.telethon_adapter import qualified
 
     name = qualified(request)
     self.calls.append(name)
@@ -467,7 +467,7 @@ async def test_a_search_page_holds_combined_text_under_32000_codepoints(world):
 
 async def test_search_skips_a_peer_the_owner_class_excludes(world, monkeypatch):
     """Task 4A: search asks the one evaluator, with live facts, before scanning a peer."""
-    import telegram_mcp.telegram.reads as reads_module
+    import comms.transports.telegram.telegram.reads as reads_module
 
     conn, fake, reads, snap, _refs = world
     conn.execute("UPDATE policy_state SET include_groups = 0, policy_epoch = policy_epoch + 1")

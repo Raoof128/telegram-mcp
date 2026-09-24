@@ -4,22 +4,26 @@ import sqlite3
 
 import pytest
 
-from telegram_mcp.authority.cursors import (
+from comms.transports.telegram.authority.cursors import (
     CursorError,
     CursorPresenter,
     ProjectScopeEntry,
     check_cursor,
     mint_cursor,
 )
-from telegram_mcp.authority.epochs import bump_policy_epoch, bump_project_epoch, set_locked
-from telegram_mcp.storage.db import (
+from comms.transports.telegram.authority.epochs import (
+    bump_policy_epoch,
+    bump_project_epoch,
+    set_locked,
+)
+from comms.transports.telegram.storage.db import (
     StorageError,
     bind_cursor_store,
     bind_epoch_state,
     open_db,
     save_epoch_state,
 )
-from telegram_mcp.storage.settings import (
+from comms.transports.telegram.storage.settings import (
     SETTINGS_REGISTRY,
     all_settings,
     get_setting,
@@ -193,7 +197,7 @@ def test_epoch_state_round_trips_through_sqlite(conn):
 
 def test_bindings_refuse_a_connection_without_foreign_keys(tmp_path):
     raw = sqlite3.connect(tmp_path / "off.db")
-    from telegram_mcp.storage.migrations import migrate
+    from comms.transports.telegram.storage.migrations import migrate
 
     migrate(raw)
     with pytest.raises(StorageError):

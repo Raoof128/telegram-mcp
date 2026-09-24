@@ -5,7 +5,7 @@ import sqlite3
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from telegram_mcp.disclosure.receipts import (
+from comms.transports.telegram.disclosure.receipts import (
     build_proof_payload,
     mint_disclosure_ref,
     sign_payload,

@@ -4,10 +4,10 @@ import dataclasses
 
 import pytest
 
-from telegram_mcp import audit_seam
-from telegram_mcp.audit_seam import AuditEvent, emit_audit, get_audit_sink
-from telegram_mcp.consent.broker import ConsumedChallenge
-from telegram_mcp.consent.gate import (
+from comms.transports.telegram import audit_seam
+from comms.transports.telegram.audit_seam import AuditEvent, emit_audit, get_audit_sink
+from comms.transports.telegram.consent.broker import ConsumedChallenge
+from comms.transports.telegram.consent.gate import (
     DisclosureDecision,
     DisclosureGate,
     SyntheticDisclosureGate,

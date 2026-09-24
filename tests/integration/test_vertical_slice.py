@@ -21,12 +21,12 @@ import hashlib
 
 import pytest
 
-from telegram_mcp.authority.cursors import (
+from comms.transports.telegram.authority.cursors import (
     project_scope_digest,
     query_digest,
     scope_entries_from_view,
 )
-from telegram_mcp.authority.policy import (
+from comms.transports.telegram.authority.policy import (
     AuthorityRequest,
     ClientProjectGrant,
     ClientState,
@@ -35,17 +35,17 @@ from telegram_mcp.authority.policy import (
     evaluate,
     make_view,
 )
-from telegram_mcp.consent.broker import ConsentBroker
-from telegram_mcp.consent.challenge import (
+from comms.transports.telegram.consent.broker import ConsentBroker
+from comms.transports.telegram.consent.challenge import (
     StubSigner,
     display_digest,
     synthetic_exposure_digest,
 )
-from telegram_mcp.consent.gate import SyntheticDisclosureGate
-from telegram_mcp.contract import load_contracts
-from telegram_mcp.results import success_result
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.validation import validate_arguments
+from comms.transports.telegram.consent.gate import SyntheticDisclosureGate
+from comms.transports.telegram.contract import load_contracts
+from comms.transports.telegram.results import success_result
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.validation import validate_arguments
 
 TS = "2026-09-22T00:00:00Z"
 CURSOR_KEY = b"\x11" * 32
@@ -283,7 +283,7 @@ async def test_revoked_grant_fails_closed_before_the_broker(tmp_path):
 
 
 async def test_a_consumed_approval_cannot_be_replayed(tmp_path):
-    from telegram_mcp.consent.broker import ConsentError
+    from comms.transports.telegram.consent.broker import ConsentError
 
     conn = _seed(tmp_path, granted=True)
     view = _view_from(conn)

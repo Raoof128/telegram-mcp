@@ -4,8 +4,8 @@
 import hashlib
 import json
 
-from telegram_mcp.consent.broker import ConsentBroker, ConsentError
-from telegram_mcp.consent.challenge import StubSigner
+from comms.transports.telegram.consent.broker import ConsentBroker, ConsentError
+from comms.transports.telegram.consent.challenge import StubSigner
 
 PRINCIPAL = "prn_" + "a" * 26
 CLIENT = "tcl_" + "b" * 26

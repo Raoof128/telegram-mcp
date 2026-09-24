@@ -4,7 +4,7 @@ import socket as stdlib_socket
 
 import pytest
 
-from telegram_mcp.runtime.lock import RuntimeActive, acquire_lock
+from comms.transports.telegram.runtime.lock import RuntimeActive, acquire_lock
 
 
 def test_double_start_fails_closed(tmp_path):
@@ -59,7 +59,7 @@ def test_lock_diagnostics_never_confer_ownership(tmp_path):
 
 
 async def test_draining_rejects_new_calls():
-    from telegram_mcp.runtime.lifecycle import RuntimeContext, drain
+    from comms.transports.telegram.runtime.lifecycle import RuntimeContext, drain
 
     ctx = RuntimeContext(runtime_id=b"\x00" * 16, started_at=0.0)
     result = await drain(ctx, new_call=lambda: "INTERNAL_ERROR")
@@ -69,7 +69,7 @@ async def test_draining_rejects_new_calls():
 async def test_drain_cancels_inflight_after_grace():
     import asyncio as _asyncio
 
-    from telegram_mcp.runtime.lifecycle import RuntimeContext, drain
+    from comms.transports.telegram.runtime.lifecycle import RuntimeContext, drain
 
     ctx = RuntimeContext(runtime_id=b"\x00" * 16, started_at=0.0)
     started = _asyncio.Event()
@@ -92,7 +92,7 @@ async def test_drain_cancels_inflight_after_grace():
 
 
 def test_startup_runs_seventeen_steps_in_order_with_seams():
-    from telegram_mcp.runtime.lifecycle import STARTUP_STEPS, startup
+    from comms.transports.telegram.runtime.lifecycle import STARTUP_STEPS, startup
 
     assert len(STARTUP_STEPS) == 17
     # The design's two load-bearing orderings (§1): the single-runtime lock
@@ -133,7 +133,7 @@ def test_startup_runs_seventeen_steps_in_order_with_seams():
 
 
 def test_startup_failure_aborts_before_ready_with_fixed_error():
-    from telegram_mcp.runtime.lifecycle import StartupFailed, startup
+    from comms.transports.telegram.runtime.lifecycle import StartupFailed, startup
 
     def boom(ctx):
         raise OSError("disk gone")
@@ -145,8 +145,8 @@ def test_startup_failure_aborts_before_ready_with_fixed_error():
 
 
 async def test_shutdown_disconnects_without_logout_and_releases_lock(tmp_path):
-    from telegram_mcp.runtime.lifecycle import RuntimeContext, shutdown
-    from telegram_mcp.runtime.lock import acquire_lock
+    from comms.transports.telegram.runtime.lifecycle import RuntimeContext, shutdown
+    from comms.transports.telegram.runtime.lock import acquire_lock
 
     class FakeTelegramAdapter:
         def __init__(self):
@@ -172,7 +172,7 @@ async def test_shutdown_disconnects_without_logout_and_releases_lock(tmp_path):
 
 
 def test_ports_for_mode_mapping_is_frozen():
-    from telegram_mcp.runtime.bootstrap import ports_for_mode
+    from comms.transports.telegram.runtime.bootstrap import ports_for_mode
 
     assert ports_for_mode("local") == (8766,)
     assert ports_for_mode("chatgpt") == (8767,)
@@ -182,8 +182,8 @@ def test_ports_for_mode_mapping_is_frozen():
 
 
 def test_launcher_starts_tunnel_only_after_ready_and_stops_in_order(tmp_path, monkeypatch):
-    from telegram_mcp.runtime import bootstrap as bootstrap_mod
-    from telegram_mcp.runtime.bootstrap import (
+    from comms.transports.telegram.runtime import bootstrap as bootstrap_mod
+    from comms.transports.telegram.runtime.bootstrap import (
         AGENT_LABEL,
         RUNTIME_LABEL,
         TUNNEL_LABEL,
@@ -236,7 +236,7 @@ def test_launcher_starts_tunnel_only_after_ready_and_stops_in_order(tmp_path, mo
 
 
 def test_stop_while_off_is_noop_success(tmp_path, monkeypatch):
-    from telegram_mcp.runtime import bootstrap as bootstrap_mod
+    from comms.transports.telegram.runtime import bootstrap as bootstrap_mod
 
     monkeypatch.setenv("TELEGRAM_MCP_RUNTIME_DIR", str(tmp_path))
     assert bootstrap_mod.bootstrap_status()["state"] == "OFF"
@@ -244,7 +244,7 @@ def test_stop_while_off_is_noop_success(tmp_path, monkeypatch):
 
 
 def test_stale_lock_reports_off_and_live_lock_without_socket_reports_stale(tmp_path, monkeypatch):
-    from telegram_mcp.runtime import bootstrap as bootstrap_mod
+    from comms.transports.telegram.runtime import bootstrap as bootstrap_mod
 
     monkeypatch.setenv("TELEGRAM_MCP_RUNTIME_DIR", str(tmp_path))
     assert bootstrap_mod.bootstrap_status()["state"] == "OFF"
@@ -259,7 +259,7 @@ def test_stale_lock_reports_off_and_live_lock_without_socket_reports_stale(tmp_p
 def test_run_lifecycle_starts_up_and_drains_on_stop(tmp_path):
     import threading
 
-    from telegram_mcp.runtime.lifecycle import run_lifecycle
+    from comms.transports.telegram.runtime.lifecycle import run_lifecycle
 
     stopped = threading.Event()
     stopped.set()
@@ -278,7 +278,7 @@ def test_run_lifecycle_starts_up_and_drains_on_stop(tmp_path):
 def test_drain_without_explicit_new_call_returns_fixed_internal_error():
     import asyncio as _asyncio
 
-    from telegram_mcp.runtime.lifecycle import RuntimeContext, drain
+    from comms.transports.telegram.runtime.lifecycle import RuntimeContext, drain
 
     ctx = RuntimeContext(runtime_id=b"\x00" * 16, started_at=0.0)
     assert _asyncio.run(drain(ctx, grace=0.01)) == "INTERNAL_ERROR"
@@ -287,7 +287,7 @@ def test_drain_without_explicit_new_call_returns_fixed_internal_error():
 def test_sweep_strays_kills_only_exact_argv_uid_matches():
     import os as _os
 
-    from telegram_mcp.runtime.bootstrap import (
+    from comms.transports.telegram.runtime.bootstrap import (
         AGENT_LABEL,
         RUNTIME_LABEL,
         FakeJobControl,
@@ -316,7 +316,7 @@ def test_sweep_strays_kills_only_exact_argv_uid_matches():
 
 
 def test_sweep_strays_skips_tunnel_in_local_mode():
-    from telegram_mcp.runtime.bootstrap import (
+    from comms.transports.telegram.runtime.bootstrap import (
         TUNNEL_LABEL,
         FakeJobControl,
         ProcessEntry,
@@ -346,7 +346,7 @@ def test_sweep_strays_skips_tunnel_in_local_mode():
 
 
 def test_start_all_sweeps_strays_before_kickstart(tmp_path):
-    from telegram_mcp.runtime.bootstrap import (
+    from comms.transports.telegram.runtime.bootstrap import (
         RUNTIME_LABEL,
         FakeJobControl,
         ProcessEntry,
@@ -368,7 +368,7 @@ def test_start_all_sweeps_strays_before_kickstart(tmp_path):
 
 
 def test_stop_all_drains_runtime_before_stop(tmp_path, monkeypatch):
-    from telegram_mcp.runtime import bootstrap as bootstrap_mod
+    from comms.transports.telegram.runtime import bootstrap as bootstrap_mod
 
     handle = acquire_lock(tmp_path / "runtime.lock")
     try:
@@ -409,7 +409,7 @@ def test_stop_all_drains_runtime_before_stop(tmp_path, monkeypatch):
 
 
 def test_stop_all_ignores_drain_errors(tmp_path, monkeypatch):
-    from telegram_mcp.runtime import bootstrap as bootstrap_mod
+    from comms.transports.telegram.runtime import bootstrap as bootstrap_mod
 
     handle = acquire_lock(tmp_path / "runtime.lock")
     try:
@@ -437,7 +437,7 @@ def test_stop_all_ignores_drain_errors(tmp_path, monkeypatch):
 
 
 def test_stop_all_noop_gated_on_lock_authority_not_job_states(tmp_path):
-    from telegram_mcp.runtime import bootstrap as bootstrap_mod
+    from comms.transports.telegram.runtime import bootstrap as bootstrap_mod
 
     # Jobs claim running, but no live kernel lock holds the runtime dir:
     # lock-authority says OFF, so stop is a no-op with zero stop calls.

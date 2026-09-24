@@ -7,8 +7,12 @@ import pytest
 from telethon import errors
 from telethon.tl import functions, types
 
-from telegram_mcp.telegram.deadline import WorkBudget, WorkBudgetExceeded
-from telegram_mcp.telegram.telethon_adapter import _default_factory, _operation, qualified
+from comms.transports.telegram.telegram.deadline import WorkBudget, WorkBudgetExceeded
+from comms.transports.telegram.telegram.telethon_adapter import (
+    _default_factory,
+    _operation,
+    qualified,
+)
 
 
 class FakeSender:
@@ -95,14 +99,14 @@ def test_the_real_request_path_has_no_branch_for_test_clients():
     """CLAUDE.md: no test-only flags in production paths. Charging is uniform."""
     import inspect
 
-    from telegram_mcp.telegram.telethon_adapter import TelethonSession
+    from comms.transports.telegram.telegram.telethon_adapter import TelethonSession
 
     assert "isinstance(self._client" not in inspect.getsource(TelethonSession._call_reviewed)
 
 
 async def test_a_reviewed_call_is_charged_exactly_once_on_the_real_client(tmp_path):
-    from telegram_mcp.telegram.deadline import Deadline
-    from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
+    from comms.transports.telegram.telegram.deadline import Deadline
+    from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 
     outcome = types.messages.Messages(messages=[], topics=[], chats=[], users=[])
 

@@ -4,11 +4,15 @@ import secrets
 
 import pytest
 
-from telegram_mcp.disclosure.audit.anchor import CLEAN, derive_integrity, latch_degraded
-from telegram_mcp.disclosure.audit.chain import verify_chain
-from telegram_mcp.ipc.handlers._wrapper import AuditSink
-from telegram_mcp.ipc.handlers.audit import audit_handlers
-from telegram_mcp.storage.db import open_db
+from comms.transports.telegram.disclosure.audit.anchor import (
+    CLEAN,
+    derive_integrity,
+    latch_degraded,
+)
+from comms.transports.telegram.disclosure.audit.chain import verify_chain
+from comms.transports.telegram.ipc.handlers._wrapper import AuditSink
+from comms.transports.telegram.ipc.handlers.audit import audit_handlers
+from comms.transports.telegram.storage.db import open_db
 from tests.authority_fixtures import seed_authority_rows
 
 KEY = secrets.token_bytes(32)
@@ -18,7 +22,7 @@ NOW = "2026-09-24T00:00:00Z"
 
 @pytest.fixture
 def world(tmp_path):
-    from telegram_mcp.disclosure.keys import ensure_current_published
+    from comms.transports.telegram.disclosure.keys import ensure_current_published
 
     conn = open_db(tmp_path / "m.db")
     seed_authority_rows(conn)

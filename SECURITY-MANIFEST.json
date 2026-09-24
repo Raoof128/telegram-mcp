@@ -5,7 +5,7 @@
   "canonicalisation": {
     "scheme": "TG-JCS-v1",
     "basis": "RFC 8785 restricted profile",
-    "implementation": "telegram_mcp.consent.challenge.jcs_dumps",
+    "implementation": "comms.transports.telegram.consent.challenge.jcs_dumps",
     "note": "ASCII keys only; floats, lone surrogates and non-ASCII keys are fatal"
   },
   "formal_model": {

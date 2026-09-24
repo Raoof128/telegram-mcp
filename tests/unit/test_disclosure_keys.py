@@ -2,15 +2,15 @@
 
 import pytest
 
-from telegram_mcp.disclosure.keys import (
+from comms.transports.telegram.disclosure.keys import (
     current_verification_key,
     export_verification_keys,
     lookup_verification_key,
     publish_verification_key,
     retire_verification_key,
 )
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.storage.migrations import migrate
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.storage.migrations import migrate
 
 _OLD = "ed25519:sha256:" + "a" * 64
 _NEW = "ed25519:sha256:" + "b" * 64

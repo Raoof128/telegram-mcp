@@ -129,7 +129,7 @@ def phase1_contracts(ledger: Ledger) -> None:
     area = "Phase 1 — contracts and validation"
 
     def contracts():
-        from telegram_mcp.contract import EXPECTED_TOOLS, load_contracts
+        from comms.transports.telegram.contract import EXPECTED_TOOLS, load_contracts
 
         contracts = load_contracts()
         assert len(contracts) == 10, len(contracts)
@@ -149,7 +149,7 @@ def phase1_contracts(ledger: Ledger) -> None:
         return done.stdout.strip()
 
     def hoisted_defs():
-        from telegram_mcp.contract import load_contracts
+        from comms.transports.telegram.contract import load_contracts
 
         schema = load_contracts()["telegram_get_messages"].output_schema
         text = json.dumps(schema)
@@ -159,8 +159,8 @@ def phase1_contracts(ledger: Ledger) -> None:
         return f"{len(schema['$defs'])} definitions at the root"
 
     def validation_bounds():
-        from telegram_mcp.contract import load_contracts
-        from telegram_mcp.validation import ArgumentError, validate_arguments
+        from comms.transports.telegram.contract import load_contracts
+        from comms.transports.telegram.validation import ArgumentError, validate_arguments
 
         contract = load_contracts()["telegram_list_chats"]
         good = validate_arguments(contract, {"project_ref": "tpr_" + "a" * 26})
@@ -174,7 +174,7 @@ def phase1_contracts(ledger: Ledger) -> None:
         return "defaults applied, three refusals"
 
     def config_refusals():
-        from telegram_mcp.config import DemoConfig, validate_environment
+        from comms.transports.telegram.config import DemoConfig, validate_environment
 
         DemoConfig(host="127.0.0.1", port=8766)
         for env in ({"TELEGRAM_API_HASH": "x"}, {"TELEGRAM_API_ID": "1"}):
@@ -193,7 +193,7 @@ def phase1_contracts(ledger: Ledger) -> None:
         return "credentials and non-loopback binds refused"
 
     def dispatch_closed():
-        from telegram_mcp.dispatch import dispatch
+        from comms.transports.telegram.dispatch import dispatch
 
         assert dispatch("telegram_status", {}).is_error is False
         assert dispatch("telegram_list_chats", {"project_ref": "tpr_" + "a" * 26}).is_error is True
@@ -345,7 +345,7 @@ def phase2a_core(ledger: Ledger, sandbox: Path) -> dict[str, Any]:
     state: dict[str, Any] = {}
 
     def keys():
-        from telegram_mcp.keys.store import FILE_BACKED_KEYS, key_id, provision_missing
+        from comms.transports.telegram.keys.store import FILE_BACKED_KEYS, key_id, provision_missing
 
         # Phases 2 and 3: FILE_BACKED_KEYS now covers the three signing rows,
         # and doctor/CLI both report every row in it.
@@ -359,7 +359,7 @@ def phase2a_core(ledger: Ledger, sandbox: Path) -> dict[str, Any]:
         return f"{len(ids)} keys, distinct ids, 0600"
 
     def database():
-        from telegram_mcp.storage.db import open_db
+        from comms.transports.telegram.storage.db import open_db
 
         conn = open_db(sandbox / "db" / "meta.db")
         tables = {
@@ -407,7 +407,7 @@ def phase2a_core(ledger: Ledger, sandbox: Path) -> dict[str, Any]:
         raise AssertionError("C4: undeclared overlap was accepted")
 
     def authority():
-        from telegram_mcp.authority.policy import (
+        from comms.transports.telegram.authority.policy import (
             AuthorityRequest,
             ClientProjectGrant,
             ClientState,
@@ -451,14 +451,14 @@ def phase2a_core(ledger: Ledger, sandbox: Path) -> dict[str, Any]:
         return "allow with grant, NOT_ACCESSIBLE without"
 
     def cursors():
-        from telegram_mcp.authority.cursors import (
+        from comms.transports.telegram.authority.cursors import (
             CursorError,
             CursorPresenter,
             ProjectScopeEntry,
             check_cursor,
             mint_cursor,
         )
-        from telegram_mcp.storage.db import bind_cursor_store
+        from comms.transports.telegram.storage.db import bind_cursor_store
 
         store = bind_cursor_store(state["conn"])
         entry = ProjectScopeEntry(
@@ -523,8 +523,8 @@ def phase2a_core(ledger: Ledger, sandbox: Path) -> dict[str, Any]:
         return "round trip, restart and policy-change invalidation"
 
     def epochs():
-        from telegram_mcp.authority.epochs import PresenceRequired, set_locked
-        from telegram_mcp.storage.db import bind_epoch_state, save_epoch_state
+        from comms.transports.telegram.authority.epochs import PresenceRequired, set_locked
+        from comms.transports.telegram.storage.db import bind_epoch_state, save_epoch_state
 
         epoch_state = bind_epoch_state(state["conn"])
         assert epoch_state["security_state"]["security_epoch"] == 1
@@ -544,7 +544,11 @@ def phase2a_core(ledger: Ledger, sandbox: Path) -> dict[str, Any]:
         return "lock 1->2, unlock needs presence, 2->3, persisted"
 
     def settings():
-        from telegram_mcp.storage.settings import SETTINGS_REGISTRY, get_setting, set_setting
+        from comms.transports.telegram.storage.settings import (
+            SETTINGS_REGISTRY,
+            get_setting,
+            set_setting,
+        )
 
         assert get_setting(state["conn"], "exposure_budget.rolling_window_minutes") == 30
         set_setting(state["conn"], "audit.checkpoint_cadence_events", 250)
@@ -634,7 +638,7 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
     area = "Phase 2a — IPC, leases, tunnel"
 
     def leases():
-        from telegram_mcp.ipc.leases import LeaseError, mint_lease, verify_lease
+        from comms.transports.telegram.ipc.leases import LeaseError, mint_lease, verify_lease
 
         seed, client = b"\x03" * 32, "tcl_" + "b" * 26
         runtime_a, runtime_b = b"\x0a" * 16, b"\x0b" * 16
@@ -659,8 +663,12 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
     def admin_socket():
         import asyncio
 
-        from telegram_mcp.ipc.admin import AdminRouter, serve_admin
-        from telegram_mcp.ipc.framing import decode_json_frame, encode_json_frame, read_frame
+        from comms.transports.telegram.ipc.admin import AdminRouter, serve_admin
+        from comms.transports.telegram.ipc.framing import (
+            decode_json_frame,
+            encode_json_frame,
+            read_frame,
+        )
 
         async def drive() -> str:
             with tempfile.TemporaryDirectory(dir="/tmp") as short:
@@ -721,13 +729,13 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
 
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-        from telegram_mcp.ipc.framing import (
+        from comms.transports.telegram.ipc.framing import (
             decode_json_frame,
             encode_json_frame,
             read_frame,
             write_frame,
         )
-        from telegram_mcp.ipc.rendezvous import serve_rendezvous, transcript_digest
+        from comms.transports.telegram.ipc.rendezvous import serve_rendezvous, transcript_digest
 
         async def drive() -> str:
             transport = Ed25519PrivateKey.from_private_bytes(b"\x05" * 32)
@@ -790,7 +798,7 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
         return asyncio.run(drive())
 
     def tunnel_pins():
-        from telegram_mcp.ipc.tunnel import (
+        from comms.transports.telegram.ipc.tunnel import (
             TunnelPinError,
             add_pin,
             pin_history,
@@ -834,7 +842,7 @@ def phase2a_runtime(ledger: Ledger, sandbox: Path) -> None:
         import asyncio
         import threading
 
-        from telegram_mcp.runtime.lifecycle import drain, run_lifecycle, startup
+        from comms.transports.telegram.runtime.lifecycle import drain, run_lifecycle, startup
 
         steps: list[str] = []
         ctx = startup(
@@ -859,7 +867,7 @@ def phase2a_runtime(ledger: Ledger, sandbox: Path) -> None:
         return "ordered startup, fresh runtime_id, DRAINING refuses, clean stop"
 
     def single_runtime():
-        from telegram_mcp.runtime.lock import RuntimeActive, acquire_lock
+        from comms.transports.telegram.runtime.lock import RuntimeActive, acquire_lock
 
         handle = acquire_lock(sandbox / "single.lock")
         try:
@@ -871,7 +879,7 @@ def phase2a_runtime(ledger: Ledger, sandbox: Path) -> None:
         raise AssertionError("two runtimes acquired the same lock")
 
     def off_state():
-        from telegram_mcp.runtime.bootstrap import bootstrap_status
+        from comms.transports.telegram.runtime.bootstrap import bootstrap_status
 
         os.environ["TELEGRAM_MCP_RUNTIME_DIR"] = str(sandbox / "absent-run")
         try:
@@ -883,7 +891,7 @@ def phase2a_runtime(ledger: Ledger, sandbox: Path) -> None:
         return "OFF with no ports"
 
     def doctor_headless():
-        from telegram_mcp.doctor import DoctorContext, doctor
+        from comms.transports.telegram.doctor import DoctorContext, doctor
 
         report = doctor(
             context=DoctorContext(store_dir=sandbox / "keys", db_path=sandbox / "db" / "meta.db"),
@@ -898,7 +906,7 @@ def phase2a_runtime(ledger: Ledger, sandbox: Path) -> None:
         return "keys, db, consent self-test and OFF probe all ok"
 
     def doctor_production_fails():
-        from telegram_mcp.doctor import doctor
+        from comms.transports.telegram.doctor import doctor
 
         report = doctor(production=True)
         assert report["status"] == "fail", report
@@ -978,9 +986,12 @@ def phase2_consent(ledger: Ledger) -> None:
     def broker_exact_once():
         import asyncio
 
-        from telegram_mcp.consent.broker import ConsentBroker, ConsentError
-        from telegram_mcp.consent.challenge import StubSigner, synthetic_exposure_digest
-        from telegram_mcp.consent.gate import SyntheticDisclosureGate
+        from comms.transports.telegram.consent.broker import ConsentBroker, ConsentError
+        from comms.transports.telegram.consent.challenge import (
+            StubSigner,
+            synthetic_exposure_digest,
+        )
+        from comms.transports.telegram.consent.gate import SyntheticDisclosureGate
 
         async def drive() -> str:
             stub = StubSigner(seed=0x09)
@@ -1161,12 +1172,16 @@ def phase4a_catalogue(ledger: Ledger) -> None:
         from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
 
         sys.path.insert(0, str(REPO))
-        from telegram_mcp.disclosure.receipts import verify_proof
-        from telegram_mcp.disclosure.verify import verify_persisted_receipt
-        from telegram_mcp.ipc.leases import mint_lease
-        from telegram_mcp.keys.store import load_key, provision_lease_seed, provision_missing
-        from telegram_mcp.runtime.composition import build_runtime, serve_consent
-        from telegram_mcp.storage.db import open_db
+        from comms.transports.telegram.disclosure.receipts import verify_proof
+        from comms.transports.telegram.disclosure.verify import verify_persisted_receipt
+        from comms.transports.telegram.ipc.leases import mint_lease
+        from comms.transports.telegram.keys.store import (
+            load_key,
+            provision_lease_seed,
+            provision_missing,
+        )
+        from comms.transports.telegram.runtime.composition import build_runtime, serve_consent
+        from comms.transports.telegram.storage.db import open_db
         from tests.agent.stub_broker import _approval_public
         from tests.authority_fixtures import seed_authority_rows
 
@@ -1365,8 +1380,8 @@ def phase4a_catalogue(ledger: Ledger) -> None:
         from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
         from starlette.testclient import TestClient
 
-        from telegram_mcp.config import DemoConfig
-        from telegram_mcp.server import create_app
+        from comms.transports.telegram.config import DemoConfig
+        from comms.transports.telegram.server import create_app
 
         params = {
             "name": "telegram_list_projects",
@@ -1486,8 +1501,8 @@ def phase4c_reads(ledger: Ledger) -> None:
         sys.path.insert(0, str(REPO))
         from telethon.tl import types
 
-        from telegram_mcp.consent.challenge import jcs_dumps
-        from telegram_mcp.storage.refstore import RefStore
+        from comms.transports.telegram.consent.challenge import jcs_dumps
+        from comms.transports.telegram.storage.refstore import RefStore
         from tests.authority_fixtures import BETA_REF, PROJECT_REF, seed_second_project
         from tests.integration.test_phase4a_end_to_end import CODEX, call
         from tests.integration.test_phase4b_end_to_end import _close, _world
@@ -1615,11 +1630,11 @@ def phase5a_operator(ledger: Ledger) -> None:
     import secrets as _secrets
 
     sys.path.insert(0, str(REPO))
-    from telegram_mcp.ipc.admin import AdminRouter, serve_admin
-    from telegram_mcp.ipc.framing import decode_json_frame, encode_json_frame
-    from telegram_mcp.keys.store import provision_missing, set_store_dir
-    from telegram_mcp.runtime.composition import admin_handlers
-    from telegram_mcp.storage.db import open_db
+    from comms.transports.telegram.ipc.admin import AdminRouter, serve_admin
+    from comms.transports.telegram.ipc.framing import decode_json_frame, encode_json_frame
+    from comms.transports.telegram.keys.store import provision_missing, set_store_dir
+    from comms.transports.telegram.runtime.composition import admin_handlers
+    from comms.transports.telegram.storage.db import open_db
     from tests.authority_fixtures import (
         BETA_REF,
         seed_authority_rows,

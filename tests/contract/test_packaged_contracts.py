@@ -5,8 +5,15 @@ from pathlib import Path
 
 
 def test_contract_files_are_utf8_strict_json():
-    base = Path(__file__).resolve().parents[2] / "src" / "telegram_mcp" / "contracts"
-    from telegram_mcp.contract import EXPECTED_TOOLS, strict_json_loads
+    base = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "comms"
+        / "transports"
+        / "telegram"
+        / "contracts"
+    )
+    from comms.transports.telegram.contract import EXPECTED_TOOLS, strict_json_loads
 
     manifest = strict_json_loads((base / "manifest.json").read_text(encoding="utf-8"))
     assert sorted(manifest["tools"]) == sorted(EXPECTED_TOOLS)

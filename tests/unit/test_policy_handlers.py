@@ -4,17 +4,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from telegram_mcp.authority.effective import diff_rows, normalize_new_refs
-from telegram_mcp.authority.staging import StagingRegistry
-from telegram_mcp.ipc.admin import ADMIN_PEER, PeerCredentials
-from telegram_mcp.ipc.handlers._wrapper import run_tx
-from telegram_mcp.ipc.handlers.clients import CLIENT_COMMANDS
-from telegram_mcp.ipc.handlers.policy import policy_handlers
-from telegram_mcp.ipc.handlers.projects import PROJECT_COMMANDS, member_commands, project_handlers
-from telegram_mcp.ipc.handlers.scope import scope_commands
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.storage.effective_access import known_refs, snapshot
-from telegram_mcp.telegram.discovery import DiscoveryStore
+from comms.transports.telegram.authority.effective import diff_rows, normalize_new_refs
+from comms.transports.telegram.authority.staging import StagingRegistry
+from comms.transports.telegram.ipc.admin import ADMIN_PEER, PeerCredentials
+from comms.transports.telegram.ipc.handlers._wrapper import run_tx
+from comms.transports.telegram.ipc.handlers.clients import CLIENT_COMMANDS
+from comms.transports.telegram.ipc.handlers.policy import policy_handlers
+from comms.transports.telegram.ipc.handlers.projects import (
+    PROJECT_COMMANDS,
+    member_commands,
+    project_handlers,
+)
+from comms.transports.telegram.ipc.handlers.scope import scope_commands
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.storage.effective_access import known_refs, snapshot
+from comms.transports.telegram.telegram.discovery import DiscoveryStore
 from tests.authority_fixtures import (
     BETA_REF,
     PROJECT_REF,

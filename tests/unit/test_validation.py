@@ -1,7 +1,7 @@
 import pytest
 
-from telegram_mcp.contract import load_contracts
-from telegram_mcp.validation import ArgumentError, validate_arguments
+from comms.transports.telegram.contract import load_contracts
+from comms.transports.telegram.validation import ArgumentError, validate_arguments
 
 
 def test_messages_default_is_thirty_without_mutating_caller():
@@ -170,7 +170,7 @@ def test_public_error_carries_code_only():
 
 
 def test_non_datetime_format_failure_is_invalid_argument():
-    from telegram_mcp.contract import ToolContract
+    from comms.transports.telegram.contract import ToolContract
 
     contract = ToolContract(
         name="synthetic",

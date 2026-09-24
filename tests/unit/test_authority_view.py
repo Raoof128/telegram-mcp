@@ -3,15 +3,15 @@
 
 import pytest
 
-from telegram_mcp.authority.policy import AuthorityRequest, Denial, evaluate
-from telegram_mcp.storage.authority_view import (
+from comms.transports.telegram.authority.policy import AuthorityRequest, Denial, evaluate
+from comms.transports.telegram.storage.authority_view import (
     grant_digest,
     load_security,
     load_view,
     owner_account,
     project_labels,
 )
-from telegram_mcp.storage.db import open_db
+from comms.transports.telegram.storage.db import open_db
 from tests.authority_fixtures import PROJECT_REF, seed_authority_rows
 
 CLIENT = "tcl_" + "a" * 26

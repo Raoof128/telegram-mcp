@@ -30,10 +30,10 @@ def _run(binary, *args, check=True):
 async def test_touch_id_approves_a_real_list_projects(paired_agent_binary, tmp_path, monkeypatch):
     from cryptography.hazmat.primitives.asymmetric import ed25519
 
-    from telegram_mcp.consent.challenge import verify_agent_signature
-    from telegram_mcp.keys.store import provision_lease_seed, provision_missing
-    from telegram_mcp.runtime.composition import build_runtime, serve_consent
-    from telegram_mcp.storage.db import open_db
+    from comms.transports.telegram.consent.challenge import verify_agent_signature
+    from comms.transports.telegram.keys.store import provision_lease_seed, provision_missing
+    from comms.transports.telegram.runtime.composition import build_runtime, serve_consent
+    from comms.transports.telegram.storage.db import open_db
     from tests.agent.stub_broker import CHALLENGE_KEY
     from tests.authority_fixtures import seed_authority_rows
 

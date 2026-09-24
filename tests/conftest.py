@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from telegram_mcp.keys import store as key_store
+from comms.transports.telegram.keys import store as key_store
 
 
 @pytest.fixture(autouse=True)

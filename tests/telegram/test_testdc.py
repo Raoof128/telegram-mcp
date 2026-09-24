@@ -7,18 +7,18 @@ import sys
 
 import pytest
 
-from telegram_mcp.disclosure.seams import CoordinatorAuthority
-from telegram_mcp.ipc.handlers.auth import auth_handlers
-from telegram_mcp.ipc.handlers.projects import project_handlers
-from telegram_mcp.ipc.handlers.scope import scope_handlers
-from telegram_mcp.keys.store import load_key, provision_missing
-from telegram_mcp.runtime.identity import resolve_principal
-from telegram_mcp.storage.db import bind_cursor_store, open_db
-from telegram_mcp.storage.identity import ensure_owner_principal
-from telegram_mcp.telegram.deadline import Deadline, WorkBudget
-from telegram_mcp.telegram.discovery import DiscoveryStore
-from telegram_mcp.telegram.reads import TelegramReads
-from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
+from comms.transports.telegram.disclosure.seams import CoordinatorAuthority
+from comms.transports.telegram.ipc.handlers.auth import auth_handlers
+from comms.transports.telegram.ipc.handlers.projects import project_handlers
+from comms.transports.telegram.ipc.handlers.scope import scope_handlers
+from comms.transports.telegram.keys.store import load_key, provision_missing
+from comms.transports.telegram.runtime.identity import resolve_principal
+from comms.transports.telegram.storage.db import bind_cursor_store, open_db
+from comms.transports.telegram.storage.identity import ensure_owner_principal
+from comms.transports.telegram.telegram.deadline import Deadline, WorkBudget
+from comms.transports.telegram.telegram.discovery import DiscoveryStore
+from comms.transports.telegram.telegram.reads import TelegramReads
+from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 from tests.telegram import fixture_builder, testdc
 from tests.telegram.recorder import PHASE, recording_factory, violations
 

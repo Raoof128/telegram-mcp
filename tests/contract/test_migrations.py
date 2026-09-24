@@ -12,7 +12,7 @@ import sqlite3
 
 import pytest
 
-from telegram_mcp.storage.migrations import (
+from comms.transports.telegram.storage.migrations import (
     MIGRATIONS,
     REQUIRED_INDEXES,
     SCHEMA_TABLES,

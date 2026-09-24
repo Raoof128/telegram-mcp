@@ -4,8 +4,8 @@ import mcp.types as wire_types
 from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
 from starlette.testclient import TestClient
 
-from telegram_mcp.config import DemoConfig
-from telegram_mcp.server import create_app
+from comms.transports.telegram.config import DemoConfig
+from comms.transports.telegram.server import create_app
 
 EXPECTED = [
     "telegram_status",

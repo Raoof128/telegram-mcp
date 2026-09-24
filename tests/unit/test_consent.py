@@ -11,7 +11,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from telegram_mcp.consent.challenge import (
+from comms.transports.telegram.consent.challenge import (
     CHALLENGE_TTL_S,
     FIXTURE_CHALLENGE_KEY,
     SYNTHETIC_EXPOSURE_SNAPSHOT,
@@ -160,8 +160,8 @@ def test_stub_signer_shape():
 
 
 def test_opaque_minter_single_copy():
-    import telegram_mcp.consent.challenge as challenge_mod
-    import telegram_mcp.opaque as opaque_mod
+    import comms.transports.telegram.consent.challenge as challenge_mod
+    import comms.transports.telegram.opaque as opaque_mod
 
     # No second copy: challenge.py imports the minter/validator objects.
     assert challenge_mod.mint_opaque_ref is opaque_mod.mint_opaque_ref
@@ -200,8 +200,8 @@ async def _issued(stub, broker):
 
 
 async def test_replay_fails():
-    from telegram_mcp.consent.broker import ConsentBroker, ConsentError
-    from telegram_mcp.consent.challenge import StubSigner
+    from comms.transports.telegram.consent.broker import ConsentBroker, ConsentError
+    from comms.transports.telegram.consent.challenge import StubSigner
 
     stub = StubSigner(seed=0x07)
     broker = ConsentBroker(
@@ -214,8 +214,8 @@ async def test_replay_fails():
 
 
 async def test_envelope_fields_all_verified():
-    from telegram_mcp.consent.broker import ConsentBroker, ConsentError
-    from telegram_mcp.consent.challenge import StubSigner
+    from comms.transports.telegram.consent.broker import ConsentBroker, ConsentError
+    from comms.transports.telegram.consent.challenge import StubSigner
 
     stub = StubSigner(seed=0x07)
     broker = ConsentBroker(
@@ -235,7 +235,7 @@ async def test_envelope_fields_all_verified():
 
 
 def _broker(stub, now_fn=None):
-    from telegram_mcp.consent.broker import ConsentBroker
+    from comms.transports.telegram.consent.broker import ConsentBroker
 
     return ConsentBroker(
         challenge_key=b"\x01" * 32, agent_verify=stub.verify, runtime_id=b"\x00" * 16, now=now_fn
@@ -269,7 +269,7 @@ async def _envelope_for(stub, broker, handle):
 
 
 async def test_expiry_45s_frozen_clock():
-    from telegram_mcp.consent.broker import ConsentError
+    from comms.transports.telegram.consent.broker import ConsentError
 
     clock = [1_000_000.0]
     stub = StubSigner(seed=0x07)
@@ -288,7 +288,7 @@ async def test_expiry_45s_frozen_clock():
 
 
 async def test_rate_limits_per_client():
-    from telegram_mcp.consent.broker import ConsentError
+    from comms.transports.telegram.consent.broker import ConsentError
 
     clock = [2_000_000.0]
     stub = StubSigner(seed=0x07)
@@ -315,7 +315,7 @@ async def test_rate_limits_per_client():
 
 
 async def test_invalidation_on_epoch_grant_disconnect():
-    from telegram_mcp.consent.broker import ConsentError
+    from comms.transports.telegram.consent.broker import ConsentError
 
     stub = StubSigner(seed=0x07)
     broker = _broker(stub)
@@ -335,7 +335,7 @@ async def test_invalidation_on_epoch_grant_disconnect():
 
 
 async def test_invalidation_legs_separately():
-    from telegram_mcp.consent.broker import ConsentError
+    from comms.transports.telegram.consent.broker import ConsentError
 
     stub = StubSigner(seed=0x07)
     broker = _broker(stub)
@@ -368,7 +368,7 @@ async def test_invalidation_legs_separately():
 
 
 async def test_no_auto_approve_path():
-    from telegram_mcp.consent.broker import ConsentBroker, ConsentError
+    from comms.transports.telegram.consent.broker import ConsentBroker, ConsentError
 
     stub = StubSigner(seed=0x07)
     broker = _broker(stub)
@@ -393,7 +393,7 @@ async def test_no_auto_approve_path():
 
 
 async def test_tampered_challenge_bytes_fail_agent_sig():
-    from telegram_mcp.consent.broker import ConsentError
+    from comms.transports.telegram.consent.broker import ConsentError
 
     stub = StubSigner(seed=0x07)
     broker = _broker(stub)
@@ -412,7 +412,7 @@ async def test_tampered_challenge_bytes_fail_agent_sig():
 
 
 async def test_error_codes_map_to_dispatch():
-    from telegram_mcp.consent.broker import ConsentError
+    from comms.transports.telegram.consent.broker import ConsentError
 
     assert ConsentError("challenge-mismatch").dispatch_code == "CONSENT_DENIED"
     assert ConsentError("unknown-key").dispatch_code == "CONSENT_DENIED"

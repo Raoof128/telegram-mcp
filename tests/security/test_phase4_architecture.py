@@ -9,10 +9,10 @@ import ast
 import inspect
 from pathlib import Path
 
-from telegram_mcp.telegram.service import TelegramReadService
+from comms.transports.telegram.telegram.service import TelegramReadService
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "telegram_mcp"
-PACKAGE = "telegram_mcp"
+SRC = Path(__file__).resolve().parents[2] / "src" / "comms" / "transports" / "telegram"
+PACKAGE = "comms.transports.telegram"
 ADAPTER = SRC / "telegram" / "telethon_adapter.py"
 COMPOSITION = SRC / "runtime" / "composition.py"
 
@@ -72,9 +72,9 @@ PROHIBITED = {
     "InitTakeoutSessionRequest",
 }
 CONCRETE_BACKENDS = {
-    "telegram_mcp.telegram.metadata",
-    "telegram_mcp.telegram.telethon_adapter",
-    "telegram_mcp.telegram.reads",
+    "comms.transports.telegram.telegram.metadata",
+    "comms.transports.telegram.telegram.telethon_adapter",
+    "comms.transports.telegram.telegram.reads",
 }
 
 
@@ -171,7 +171,7 @@ def test_the_guard_resolves_aliases():
 
 
 def test_the_adapter_declares_the_reviewed_set():
-    from telegram_mcp.telegram.telethon_adapter import REVIEWED_REQUESTS
+    from comms.transports.telegram.telegram.telethon_adapter import REVIEWED_REQUESTS
 
     assert REVIEWED_REQUESTS == REVIEWED_RPCS
 
@@ -219,7 +219,7 @@ def test_the_demo_server_cannot_reach_sensitive_dispatch():
         _module_name(path): {n for n in _imports(tree) if n.startswith(PACKAGE)}
         for path, tree in _modules()
     }
-    reachable, frontier = set(), ["telegram_mcp.server"]
+    reachable, frontier = set(), ["comms.transports.telegram.server"]
     while frontier:
         module = frontier.pop()
         if module in reachable:
@@ -227,10 +227,10 @@ def test_the_demo_server_cannot_reach_sensitive_dispatch():
         reachable.add(module)
         frontier.extend(n for n in graph.get(module, ()) if n in graph)
     forbidden = {
-        "telegram_mcp.sensitive_dispatch",
-        "telegram_mcp.runtime.ingress",
-        "telegram_mcp.runtime.composition",
-        "telegram_mcp.disclosure.seams",
+        "comms.transports.telegram.sensitive_dispatch",
+        "comms.transports.telegram.runtime.ingress",
+        "comms.transports.telegram.runtime.composition",
+        "comms.transports.telegram.disclosure.seams",
         *CONCRETE_BACKENDS,
     }
     assert reachable.isdisjoint(forbidden), reachable & forbidden

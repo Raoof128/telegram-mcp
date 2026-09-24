@@ -1,6 +1,6 @@
 """Provenance vector and digest (design §3.2; frozen spec §23A.2A)."""
 
-from telegram_mcp.disclosure.provenance import provenance_digest, provenance_vector
+from comms.transports.telegram.disclosure.provenance import provenance_digest, provenance_vector
 
 _A, _B = "tpr_" + "a" * 26, "tpr_" + "b" * 26
 

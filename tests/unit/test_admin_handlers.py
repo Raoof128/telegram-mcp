@@ -2,11 +2,11 @@
 
 import pytest
 
-from telegram_mcp.ipc.admin import ADMIN_COMMANDS, PRESENCE_GATED, AdminRouter
-from telegram_mcp.ipc.handlers.leases import auth_headers_handler
-from telegram_mcp.ipc.handlers.projects import project_handlers
-from telegram_mcp.ipc.leases import verify_lease
-from telegram_mcp.storage.db import open_db
+from comms.transports.telegram.ipc.admin import ADMIN_COMMANDS, PRESENCE_GATED, AdminRouter
+from comms.transports.telegram.ipc.handlers.leases import auth_headers_handler
+from comms.transports.telegram.ipc.handlers.projects import project_handlers
+from comms.transports.telegram.ipc.leases import verify_lease
+from comms.transports.telegram.storage.db import open_db
 from tests.authority_fixtures import seed_authority_rows
 
 PROOF = {"method": "stub"}

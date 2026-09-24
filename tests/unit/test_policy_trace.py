@@ -4,7 +4,7 @@ import random
 
 import pytest
 
-from telegram_mcp.authority.policy import (
+from comms.transports.telegram.authority.policy import (
     AuthorityRequest,
     ClientProjectGrant,
     ClientState,
@@ -133,14 +133,14 @@ def test_stored_facts_are_exact_only_where_the_type_maps_exactly():
 
 
 def test_seams_reexports_the_one_owner_scope():
-    from telegram_mcp.authority import policy
-    from telegram_mcp.disclosure import seams
+    from comms.transports.telegram.authority import policy
+    from comms.transports.telegram.disclosure import seams
 
     assert seams.OwnerScope is policy.OwnerScope
 
 
 def test_admit_live_is_the_evaluator_with_live_facts():
-    from telegram_mcp.authority.policy import admit_live
+    from comms.transports.telegram.authority.policy import admit_live
 
     view = make_view(
         clients={"c": ClientState("c", True, "prn")},

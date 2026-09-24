@@ -11,8 +11,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from telegram_mcp.disclosure.coverage import validate_coverage
-from telegram_mcp.telegram.search import (
+from comms.transports.telegram.disclosure.coverage import validate_coverage
+from comms.transports.telegram.telegram.search import (
     WINDOW,
     EngineState,
     SearchStop,
@@ -354,7 +354,7 @@ def test_peers_scanned_counts_only_peers_searched_to_the_end():
 )
 def test_rfc3339_case_variants_parse_the_same(text):
     """RFC 3339 §5.6 allows lowercase t/z; jsonschema's date-time accepts them."""
-    from telegram_mcp.validation import parse_time
+    from comms.transports.telegram.validation import parse_time
 
     assert parse_time(text).isoformat() == "2026-09-23T10:00:00+00:00"
     assert rpc_bounds(text, text)[0].isoformat() == "2026-09-23T09:59:59+00:00"

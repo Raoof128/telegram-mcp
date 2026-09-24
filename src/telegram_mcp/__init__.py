@@ -1,1 +1,1 @@
-__version__ = "0.1.10"
+"""Legacy entry points only; the implementation lives in comms (comms design §2.3)."""

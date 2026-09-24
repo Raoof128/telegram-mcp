@@ -15,7 +15,7 @@ import os
 import secrets
 from dataclasses import dataclass
 
-from telegram_mcp.keys.keychain import read_api_hash
+from comms.transports.telegram.keys.keychain import read_api_hash
 
 
 @dataclass(frozen=True)

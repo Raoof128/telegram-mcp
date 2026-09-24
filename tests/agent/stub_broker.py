@@ -41,17 +41,17 @@ from typing import Any
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
-from telegram_mcp.consent.broker import ConsentBroker, ConsentError
-from telegram_mcp.consent.challenge import display_digest, synthetic_exposure_digest
-from telegram_mcp.consent.prompter import prompt_frame
-from telegram_mcp.ipc.framing import (
+from comms.transports.telegram.consent.broker import ConsentBroker, ConsentError
+from comms.transports.telegram.consent.challenge import display_digest, synthetic_exposure_digest
+from comms.transports.telegram.consent.prompter import prompt_frame
+from comms.transports.telegram.ipc.framing import (
     FrameError,
     decode_json_frame,
     encode_json_frame,
     read_frame,
     write_frame,
 )
-from telegram_mcp.ipc.rendezvous import serve_rendezvous
+from comms.transports.telegram.ipc.rendezvous import serve_rendezvous
 
 AGENT_BIN = "build/consent/TelegramMCPConsent.app/Contents/MacOS/telegram-mcp-consent"
 

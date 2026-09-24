@@ -5,14 +5,19 @@ import socket
 
 import pytest
 
-from telegram_mcp.consent.prompter import (
+from comms.transports.telegram.consent.prompter import (
     PromptDenied,
     Prompter,
     PromptUnavailable,
     parse_answer,
     prompt_frame,
 )
-from telegram_mcp.ipc.framing import decode_json_frame, encode_json_frame, read_frame, write_frame
+from comms.transports.telegram.ipc.framing import (
+    decode_json_frame,
+    encode_json_frame,
+    read_frame,
+    write_frame,
+)
 
 H1 = "tgu_" + "a" * 26
 H2 = "tgu_" + "b" * 26

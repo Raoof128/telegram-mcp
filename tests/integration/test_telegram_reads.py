@@ -6,15 +6,15 @@ import pytest
 from telethon import errors
 from telethon.tl import types
 
-from telegram_mcp.consent.challenge import jcs_dumps
-from telegram_mcp.disclosure.coordinator import RetrievalRefusal
-from telegram_mcp.disclosure.seams import CoordinatorAuthority
-from telegram_mcp.keys.store import load_key, provision_missing
-from telegram_mcp.runtime.identity import resolve_principal
-from telegram_mcp.storage.db import bind_cursor_store, open_db
-from telegram_mcp.storage.refstore import RefStore
-from telegram_mcp.telegram.reads import TelegramReads
-from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
+from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.disclosure.coordinator import RetrievalRefusal
+from comms.transports.telegram.disclosure.seams import CoordinatorAuthority
+from comms.transports.telegram.keys.store import load_key, provision_missing
+from comms.transports.telegram.runtime.identity import resolve_principal
+from comms.transports.telegram.storage.db import bind_cursor_store, open_db
+from comms.transports.telegram.storage.refstore import RefStore
+from comms.transports.telegram.telegram.reads import TelegramReads
+from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 from tests.authority_fixtures import PROJECT_REF, seed_authority_rows, seed_project_world
 from tests.telegram.fake_client import FakeClient
 
@@ -174,7 +174,7 @@ async def test_a_chat_that_moves_mid_walk_is_not_repeated(world):
 
 async def test_a_large_project_pages_to_the_end_with_constant_state(tmp_path):
     """Gauntlet G-4: 1,100 member chats (past the old 1,024 seen_ids cap)."""
-    from telegram_mcp.storage.refstore import RefStore
+    from comms.transports.telegram.storage.refstore import RefStore
     from tests.authority_fixtures import seed_authority_rows
 
     provision_missing(tmp_path / "keys", phases=(2, 3))
@@ -409,7 +409,7 @@ async def test_a_long_page_is_fitted_under_the_cap(world):
 
 def _spy_admit_live(monkeypatch):
     """Record every class decision retrieval asks the one evaluator for (Task 4A)."""
-    import telegram_mcp.telegram.reads as reads_module
+    import comms.transports.telegram.telegram.reads as reads_module
 
     seen: list[tuple[str | None, bool]] = []
     real = reads_module.admit_live

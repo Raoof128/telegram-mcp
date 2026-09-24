@@ -13,8 +13,8 @@ import random
 import pytest
 from telethon.tl import types
 
-from telegram_mcp.disclosure.budget import buckets_for
-from telegram_mcp.disclosure.coordinator import _split_sidecar
+from comms.transports.telegram.disclosure.budget import buckets_for
+from comms.transports.telegram.disclosure.coordinator import _split_sidecar
 from tests.integration.test_telegram_reads import (  # noqa: F401 -- the pytest fixture
     WHEN,
     _dialog,

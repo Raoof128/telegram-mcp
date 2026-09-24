@@ -67,7 +67,7 @@ def insert_committed_receipt(conn, *, disclosure_ref: str, records: int, size: i
 
 def seed_project_world(conn) -> dict[str, str]:
     """A granted project with three member chats and one allowed non-member."""
-    from telegram_mcp.storage.refstore import RefStore
+    from comms.transports.telegram.storage.refstore import RefStore
 
     now = "2026-09-23T00:00:00Z"
     conn.execute(
