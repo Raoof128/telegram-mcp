@@ -23,3 +23,19 @@ Unresolved external gates (roadmap register): macOS native consent signing ident
 - `hatchling==1.32.4` pinned in `[build-system].requires`.
 - `uv.lock` SHA-256: `01a2a106e3ad8e63cf0f9d2cba9feec2da6e4227be958777e151051f5d6204f4`.
 - Audit deltas applied: pydantic floor `>=2.12,<3`, explicit `mcp-types==2.2.0`, `starlette==1.6.0` direct, httpx-vs-httpx2 split documented.
+
+## 2026-09-24 — comms 5b-2: WhatsVault runtime dependencies (spec §7 review)
+
+Added to the root project, pinned to the exact versions WhatsVault's 539-test baseline ran with:
+`apscheduler==3.11.3`, `keyring==25.7.0`, `python-ulid==4.0.1`, `sqlcipher3==0.6.2`.
+Existing pins already satisfy WhatsVault's remaining ranges (`cryptography` 50.0.1 ⊨ `>=43`,
+`mcp` 2.2.0 ⊨ `>=2.1,<3`, `uvicorn` 0.53.0 ⊨ `>=0.30`).
+
+`uv lock` **added** exactly these entries and changed none (`git diff uv.lock` has 0 removed lines):
+apscheduler 3.11.3, jaraco-classes 3.4.0, jaraco-context 6.1.2, jaraco-functools 4.6.0,
+jeepney 0.9.0, keyring 25.7.0, more-itertools 11.1.0, python-ulid 4.0.1, pywin32-ctypes 0.2.3,
+secretstorage 3.5.0, sqlcipher3 0.6.2, tzlocal 5.4.4.
+
+Advisory review: `uvx pip-audit -r <the 12 pins> --no-deps` → **No known vulnerabilities found**
+(2026-09-24). `sqlcipher3` 0.6.2 ships a `cp312` macOS arm64 wheel bundling SQLCipher 4.12.0
+community; see `docs/provenance/whatsvault.md`.
