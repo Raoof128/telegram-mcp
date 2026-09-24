@@ -23,10 +23,20 @@ def load_security(conn: sqlite3.Connection) -> tuple[int, bool]:
 
 
 def owner_account(conn: sqlite3.Connection, *, principal_id: int) -> int | None:
-    """The single account the owner has policy for, or None (unconfigured)."""
-    rows = conn.execute(
-        "SELECT account_id FROM policy_state WHERE principal_id = ?", (principal_id,)
-    ).fetchall()
-    if len(rows) != 1:
-        return None
-    return int(rows[0][0])
+    """The owner's active account, if the owner has policy for it; else None (unconfigured).
+
+    comms v0.3 B16: with several accounts (an explicit --new-account switch), the active
+    pointer decides; with none set, exactly one policy row is required.
+    """
+    from comms.transports.telegram.storage.identity import active_account
+
+    rows = [
+        int(r[0])
+        for r in conn.execute(
+            "SELECT account_id FROM policy_state WHERE principal_id = ?", (principal_id,)
+        ).fetchall()
+    ]
+    active = active_account(conn)
+    if active is not None:
+        return active if active in rows else None
+    return rows[0] if len(rows) == 1 else None

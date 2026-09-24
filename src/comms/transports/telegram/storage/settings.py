@@ -133,6 +133,14 @@ SETTINGS_REGISTRY: dict[str, SettingSpec] = {
     "telegram.session_state": SettingSpec(
         "str", "active", choices=("active", "revoking", "logged_out"), origin="impl", phase=3
     ),
+    # comms v0.3 B16: every successful login is a new session generation; the account the
+    # owner currently uses (an explicit --new-account switch moves it; old rows stay).
+    "telegram.session_generation": SettingSpec(
+        "int", 1, minimum=1, maximum=1_000_000_000, origin="impl", phase=3
+    ),
+    "telegram.active_account": SettingSpec(
+        "str", "", pattern=re.compile(r"(tga_[a-z0-9]{26})?"), origin="impl", phase=3
+    ),
     "telegram.remote_revoke": SettingSpec(
         "str", "none", choices=("none", "confirmed", "failed", "unknown"), origin="impl", phase=3
     ),

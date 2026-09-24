@@ -18,7 +18,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from comms.transports.telegram.storage.identity import ensure_account
+from comms.core import timeutil
+from comms.transports.telegram.storage.identity import bind_login
 from comms.transports.telegram.telegram import admin_rpc
 from comms.transports.telegram.telegram.deadline import Deadline
 from comms.transports.telegram.telegram.errors import GatewayError
@@ -36,6 +37,7 @@ class _Login:
     phone: str
     stage: str  # "code" or "password"
     expires: float
+    new_account: bool = False
 
 
 def auth_handlers(
@@ -56,12 +58,18 @@ def auth_handlers(
         return entry
 
     async def _finish(handle: str) -> dict[str, Any]:
-        logins.pop(handle, None)
+        entry = logins.pop(handle, None)
         user_id = await session.me(Deadline(_STEP_DEADLINE_S))
-        ensure_account(conn, telegram_user_id=user_id, label=None)
-        ref = conn.execute(
-            "SELECT account_ref FROM accounts WHERE telegram_user_id = ?", (user_id,)
-        ).fetchone()[0]
+        try:
+            ref = bind_login(
+                conn,
+                telegram_user_id=user_id,
+                new_account=bool(entry and entry.new_account),
+                now=timeutil.iso(now()),
+            )
+        except ValueError:
+            await session.logout_local()  # never keep another account's session
+            raise
         return {"authorized": True, "account_ref": ref}
 
     async def login(args: dict[str, Any]) -> dict[str, Any]:
@@ -71,9 +79,17 @@ def auth_handlers(
                 phone = args.get("phone")
                 if not isinstance(phone, str) or _PHONE.fullmatch(phone) is None:
                     raise ValueError("phone must be digits, optionally with a leading +")
+                new_account = args.get("new_account", False)
+                if not isinstance(new_account, bool):
+                    raise ValueError("new_account must be a boolean")
                 await session.send_code(phone, Deadline(_STEP_DEADLINE_S))
                 handle = secrets.token_urlsafe(18)
-                logins[handle] = _Login(phone=phone, stage="code", expires=clock() + _LOGIN_TTL_S)
+                logins[handle] = _Login(
+                    phone=phone,
+                    stage="code",
+                    expires=clock() + _LOGIN_TTL_S,
+                    new_account=new_account,
+                )
                 return {"login": handle, "next": "code"}
             if step == "code":
                 entry = _take(args.get("login"), "code")
