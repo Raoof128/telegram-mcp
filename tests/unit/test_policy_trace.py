@@ -137,3 +137,26 @@ def test_seams_reexports_the_one_owner_scope():
     from telegram_mcp.disclosure import seams
 
     assert seams.OwnerScope is policy.OwnerScope
+
+
+def test_admit_live_is_the_evaluator_with_live_facts():
+    from telegram_mcp.authority.policy import admit_live
+
+    view = make_view(
+        clients={"c": ClientState("c", True, "prn")},
+        projects={"p": ProjectState("p", True, 1)},
+        grants={("c", "p"): ClientProjectGrant(True, False, "full_text", None, "g")},
+        memberships={"p": {"user:1", "channel:2"}},
+        owner_allows={"user:1", "channel:2"},
+        owner_scope=OwnerScope(False, True, True, False),  # archived and channels excluded
+    )
+    read = lambda identity: AuthorityRequest("read", "c", ("p",), identity)
+    assert admit_live(view, read("user:1"), chat_type="private", archived=False) is True
+    assert admit_live(view, read("user:1"), chat_type="private", archived=True) is False
+    assert admit_live(view, read("channel:2"), chat_type="channel", archived=False) is False
+    assert admit_live(view, read("channel:2"), chat_type="supergroup", archived=False) is True
+    _verdict, trace = evaluate_with_trace(
+        view,
+        AuthorityRequest("read", "c", ("p",), "user:1", facts=PeerFacts("private", True)),
+    )
+    assert trace[-1] == ("owner_class", "deny:NOT_ACCESSIBLE")

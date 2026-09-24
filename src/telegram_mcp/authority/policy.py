@@ -27,6 +27,7 @@ __all__ = [
     "PeerFacts",
     "ProjectState",
     "TraceStep",
+    "admit_live",
     "check_pre_serialize",
     "evaluate",
     "evaluate_with_trace",
@@ -348,6 +349,24 @@ def evaluate_with_trace(
     trace: list[TraceStep] = []
     verdict = _decide(view, request, trace)
     return verdict, tuple(trace)
+
+
+def admit_live(
+    view: AuthorityView, request: AuthorityRequest, *, chat_type: str, archived: bool
+) -> bool:
+    """Retrieval's class/archive decision, made by the one evaluator (design §2.2).
+
+    The request is re-evaluated in full with the live dialog facts, so the
+    ``owner_class`` step, not the caller, decides.
+    """
+    live = AuthorityRequest(
+        request.operation,
+        request.client_ref,
+        request.project_refs,
+        request.peer_identity,
+        facts=PeerFacts(chat_type, archived),
+    )
+    return not isinstance(evaluate(view, live), Denial)
 
 
 def check_pre_serialize(

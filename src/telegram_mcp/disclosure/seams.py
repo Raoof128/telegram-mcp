@@ -36,6 +36,7 @@ from telegram_mcp.authority.cursors import (
 )
 from telegram_mcp.authority.policy import (
     AuthorityRequest,
+    AuthorityView,
     Denial,
     OwnerScope,
     evaluate,
@@ -53,7 +54,6 @@ from telegram_mcp.disclosure.exposure import exposure_digest
 from telegram_mcp.disclosure.search_authority import SEARCH_TOOLS, SearchAuthority, SearchSnapshot
 from telegram_mcp.runtime.identity import PrincipalContext
 from telegram_mcp.storage.authority_view import (
-    load_owner_scope,
     load_security,
     load_view,
     project_labels,
@@ -171,7 +171,7 @@ class ProjectSnapshot:
     egress_level: str
     excerpt_limit: int | None
     readable: frozenset[str]
-    owner_scope: OwnerScope
+    view: AuthorityView
     limit: int
     tool_name: str
     peer_ref: str | None = None
@@ -185,6 +185,10 @@ class ProjectSnapshot:
     @property
     def project_scope_digest(self) -> str:
         return "hmac-sha256:" + self.scope_hex
+
+    def live_request(self, identity: str) -> AuthorityRequest:
+        """What retrieval asks the one evaluator, with live facts (Phase-5 design §2.2)."""
+        return AuthorityRequest("read", self.client_ref, (self.project_ref,), identity)
 
     @property
     def project_names(self) -> tuple[str, ...]:
@@ -221,9 +225,6 @@ class CoordinatorAuthority:
             clock=clock,
             telegram_gate=lambda: self._telegram_gate(),
             presenter=self._presenter,
-            owner_scope=lambda principal_id, account_id: OwnerScope(
-                *load_owner_scope(conn, principal_id=principal_id, account_id=account_id)
-            ),
         )
 
     # -- step 1 -------------------------------------------------------------
@@ -484,13 +485,7 @@ class CoordinatorAuthority:
             egress_level=grant.egress_level,
             excerpt_limit=grant.excerpt_limit,
             readable=readable,
-            owner_scope=OwnerScope(
-                *load_owner_scope(
-                    self._conn,
-                    principal_id=principal.principal_id,
-                    account_id=principal.account_id,
-                )
-            ),
+            view=view,
             limit=(
                 int(args["before"]) + int(args["after"]) + 1
                 if tool_name == "telegram_get_context"

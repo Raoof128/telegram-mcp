@@ -68,3 +68,30 @@ def test_owner_policy_is_decided_only_in_authority_policy():
             if isinstance(node, ast.Attribute) and node.attr in DECISION_FIELDS:
                 offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
     assert offenders == []
+
+
+def test_only_authority_policy_calls_the_class_rule():
+    """Review #1: no retrieval code decides chat class on its own."""
+    offenders = []
+    for path in sorted(SRC.rglob("*.py")):
+        if path == SRC / "authority" / "policy.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"admits", "decide"}
+            ):
+                offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
+    assert offenders == []
+
+
+def test_snapshots_carry_the_view_not_a_private_owner_scope():
+    from dataclasses import fields
+
+    from telegram_mcp.disclosure.seams import ProjectSnapshot
+    from telegram_mcp.disclosure.search_authority import SearchSnapshot
+
+    for cls in (ProjectSnapshot, SearchSnapshot):
+        names = {f.name for f in fields(cls)}
+        assert "view" in names and "owner_scope" not in names, cls

@@ -27,7 +27,13 @@ from telegram_mcp.authority.cursors import (
     project_scope_digest,
     scope_entries_from_view,
 )
-from telegram_mcp.authority.policy import AuthorityRequest, Denial, evaluate, readable_members
+from telegram_mcp.authority.policy import (
+    AuthorityRequest,
+    AuthorityView,
+    Denial,
+    evaluate,
+    readable_members,
+)
 from telegram_mcp.disclosure.bounds import worst_case
 from telegram_mcp.disclosure.budget import GLOBAL, PROJECT, BucketKey, Usage, subject_digest
 from telegram_mcp.disclosure.coordinator import AuthorityRefusal
@@ -73,7 +79,7 @@ class SearchSnapshot:
     scope_entries: tuple[ProjectScopeEntry, ...]
     tool_name: str
     projects: tuple[SelectedProject, ...]
-    owner_scope: Any  # seams.OwnerScope
+    view: AuthorityView
     universe: tuple[str, ...]
     peer_cap: int | None
     limit: int
@@ -97,6 +103,14 @@ class SearchSnapshot:
     @property
     def project_names(self) -> tuple[str, ...]:
         return tuple(p.display_name for p in self.projects)
+
+    def live_request(self, identity: str) -> AuthorityRequest | None:
+        """The one-evaluator question for a peer, or None if no selected project reads it."""
+        refs = tuple(p.project_ref for p in self.projects if identity in p.readable)
+        if not refs:
+            return None
+        operation = "cross_search" if self.tool_name == "telegram_cross_project_search" else "read"
+        return AuthorityRequest(operation, self.client_ref, refs, identity)
 
     @property
     def project_ref(self) -> str | None:
@@ -138,7 +152,6 @@ class SearchAuthority:
         clock: Callable[[], float] = time.time,
         telegram_gate: Callable[[], str | None] = lambda: None,
         presenter: Callable[..., Any],
-        owner_scope: Callable[[int, int], Any],
     ) -> None:
         self._conn = conn
         self._privacy_key = privacy_key
@@ -148,7 +161,6 @@ class SearchAuthority:
         self._clock = clock
         self._gate = telegram_gate
         self._presenter = presenter
-        self._owner_scope = owner_scope
 
     # -- step 2 -------------------------------------------------------------
 
@@ -261,7 +273,7 @@ class SearchAuthority:
             scope_entries=entries,
             tool_name=tool_name,
             projects=projects,
-            owner_scope=self._owner_scope(principal.principal_id, principal.account_id),
+            view=view,
             universe=universe,
             peer_cap=CROSS_PEER_CAP if cross else None,
             limit=int(args["limit"]),

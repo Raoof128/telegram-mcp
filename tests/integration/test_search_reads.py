@@ -463,3 +463,27 @@ async def test_a_search_page_holds_combined_text_under_32000_codepoints(world):
             break
     assert sum(len(r["text"]) for r in first["results"]) <= 32_000 and len(first["results"]) < 10
     assert len(got) == 10 and len(set(got)) == 10
+
+
+async def test_search_skips_a_peer_the_owner_class_excludes(world, monkeypatch):
+    """Task 4A: search asks the one evaluator, with live facts, before scanning a peer."""
+    import telegram_mcp.telegram.reads as reads_module
+
+    conn, fake, reads, snap, _refs = world
+    conn.execute("UPDATE policy_state SET include_groups = 0, policy_epoch = policy_epoch + 1")
+    conn.commit()
+    decided: list[tuple[str | None, bool]] = []
+    real = reads_module.admit_live
+
+    def spy(view, request, **facts):
+        verdict = real(view, request, **facts)
+        decided.append((request.peer_identity, verdict))
+        return verdict
+
+    monkeypatch.setattr(reads_module, "admit_live", spy)
+    search, seen = _search_server({"user:100": [(1, 1)], "chat:9": [(2, 2)]})
+    fake.script["messages.SearchRequest"] = search
+    a, s = snap("telegram_search_messages", project_ref=PROJECT_REF, query="needle", limit=20)
+    _check(await reads.search_messages(a, s))
+    assert "chat:9" not in {identity for identity, _ in seen}
+    assert ("chat:9", False) in decided and ("user:100", True) in decided

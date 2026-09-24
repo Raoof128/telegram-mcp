@@ -15,6 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from telegram_mcp.authority.policy import admit_live
 from telegram_mcp.disclosure.bounds import (
     MEDIA_KIND_MAX,
     NAME_MAX,
@@ -120,7 +121,12 @@ class TelegramReads:
         out: list[tuple[PeerRow, Any]] = []
         for identity in identities:
             view = views.get(identity)
-            if view is None or not snapshot.owner_scope.admits(view.chat_type, view.is_archived):
+            if view is None or not admit_live(
+                snapshot.view,
+                snapshot.live_request(identity),
+                chat_type=view.chat_type,
+                archived=view.is_archived,
+            ):
                 continue
             name, username = _name(view.display_name), clamp(view.username, USERNAME_MAX)[0]
             row = known.get(identity)
@@ -228,7 +234,12 @@ class TelegramReads:
             budget=budget,
         )
         dialog = dialogs.get(snapshot.peer_identity)
-        if dialog is None or not snapshot.owner_scope.admits(dialog.chat_type, dialog.is_archived):
+        if dialog is None or not admit_live(
+            snapshot.view,
+            snapshot.live_request(snapshot.peer_identity),
+            chat_type=dialog.chat_type,
+            archived=dialog.is_archived,
+        ):
             raise GatewayError("NOT_ACCESSIBLE")
         return dialog
 
@@ -383,8 +394,11 @@ class TelegramReads:
                 budget=budget,
             )
             dialog = dialogs.get(snapshot.peer_identity)
-            if dialog is None or not snapshot.owner_scope.admits(
-                dialog.chat_type, dialog.is_archived
+            if dialog is None or not admit_live(
+                snapshot.view,
+                snapshot.live_request(snapshot.peer_identity),
+                chat_type=dialog.chat_type,
+                archived=dialog.is_archived,
             ):
                 raise GatewayError("NOT_ACCESSIBLE")
             views, below = await self._session.fetch_history(
@@ -673,7 +687,10 @@ class TelegramReads:
                 if view is None:
                     admitted[peer] = None
                     continue
-                admitted[peer] = snapshot.owner_scope.admits(view.chat_type, view.is_archived)
+                request = snapshot.live_request(peer)
+                admitted[peer] = request is not None and admit_live(
+                    snapshot.view, request, chat_type=view.chat_type, archived=view.is_archived
+                )
                 names[peer] = _name(view.display_name)
 
         async def fetch(peer: str, offset_id: int, want: int) -> Any:
