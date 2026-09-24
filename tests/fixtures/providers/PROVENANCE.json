@@ -7,6 +7,13 @@
       "sha256": "8486bd141fe5f19d795befe698b7f40080f2230f4cdd70ad061f7ed0d223136c",
       "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
     },
+    "meta/err_100_template_exists.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "c45ae6911f929cdb2e8f3cc310876ef1ec7a25c7b2c1940bb796ac8324eea06b",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
+    },
     "meta/err_130429_throughput.json": {
       "api_version": "Graph API v21.0",
       "captured": "2026-09-25",
@@ -97,6 +104,41 @@
       "provider": "meta_whatsapp_cloud_api",
       "sha256": "2c81b010c819b53ab586f67af34981845ef4fd308e9929b0efe63d16d3607829",
       "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/template_created.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "76979b5f56de424f96e22daf2b3426e41d1e32303949460f5e8a94b8c718e32c",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
+    },
+    "meta/template_created_without_id.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "5e1c76e2bfc40cdc19e66e138657f8224cb721b1615d92223cd06bb0fe2e0646",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
+    },
+    "meta/template_success.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "de691b9363144b3842941abb73216c4ef96d153d360a735b273adcc3db4f8e5d",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
+    },
+    "meta/templates_page1.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "9c758f4bab266e69f82ae923ba7b7c68572c40bc3d404b584b5d132ec8acfd9e",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
+    },
+    "meta/templates_page2.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "4c082cb2b1d374171cce23c7fd330239f2b4c94933730df348f51b78aa55ae10",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
     },
     "telegram_bot/admin_400_not_enough_rights.json": {
       "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",

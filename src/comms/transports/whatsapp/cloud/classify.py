@@ -15,9 +15,10 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from comms.core.delivery.transport import ResultKind
+from comms.core.providers.protocols import ProviderResult
 from comms.transports.whatsapp.cloud.http import GraphResponse, GraphTransportError
 
-__all__ = ["META_CODES", "MetaOutcome", "classify_send"]
+__all__ = ["META_CODES", "MetaOutcome", "classify_admin", "classify_send"]
 
 _T, _P, _U = ResultKind.FAILED_TRANSIENT, ResultKind.FAILED_PERMANENT, ResultKind.OUTCOME_UNKNOWN
 META_CODES: Mapping[int, tuple[ResultKind, str | None]] = MappingProxyType(
@@ -95,3 +96,24 @@ def classify_send(outcome: GraphResponse | GraphTransportError) -> MetaOutcome:
         return _UNKNOWN
     kind, name = META_CODES[code]
     return MetaOutcome(kind, code=name) if kind is not ResultKind.OUTCOME_UNKNOWN else _UNKNOWN
+
+
+def classify_admin(outcome: GraphResponse | GraphTransportError) -> ProviderResult:
+    """A non-send Graph call: ``SUCCEEDED`` with the body as ``detail``; ``FAILED`` only for a
+    ``META_CODES`` row (its code) or a connection never made (``PROVIDER_UNAVAILABLE``);
+    ``OUTCOME_UNKNOWN`` otherwise."""
+    if isinstance(outcome, GraphTransportError):
+        if outcome.stage == "not_sent":
+            return ProviderResult("FAILED", "PROVIDER_UNAVAILABLE")
+        return ProviderResult("OUTCOME_UNKNOWN", None)
+    envelope = outcome.envelope
+    if outcome.http_status >= 500 or envelope is None:
+        return ProviderResult("OUTCOME_UNKNOWN", None)
+    if outcome.http_status == 200 and "error" not in envelope:
+        return ProviderResult("SUCCEEDED", None, detail=dict(envelope))
+    error = envelope.get("error")
+    code = error.get("code") if isinstance(error, dict) else None
+    kind, name = META_CODES.get(code, (_U, None)) if type(code) is int else (_U, None)
+    if kind is _U:
+        return ProviderResult("OUTCOME_UNKNOWN", None)
+    return ProviderResult("FAILED", name)
