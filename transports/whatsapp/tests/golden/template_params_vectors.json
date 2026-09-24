@@ -1,0 +1,20 @@
+{
+  "input": {
+    "template_name": "order_update",
+    "language": "en",
+    "definition_version": 3,
+    "params": [
+      {
+        "component_type": "body",
+        "param_type": "text",
+        "value": "Mona"
+      },
+      {
+        "component_type": "body",
+        "param_type": "text",
+        "value": "shipped"
+      }
+    ]
+  },
+  "digest_hex": "ea41d99d68c7adfcd1a9b4eab45152e0406e5600f91f29fba010563afc3cf6c1"
+}

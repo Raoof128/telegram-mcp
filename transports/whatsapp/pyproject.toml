@@ -1,0 +1,201 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whatsvault"
+version = "0.1.0"
+description = "Local-first encrypted WhatsApp vault with a read-only MCP surface and hardware-backed, out-of-band send approval."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Raouf" }]
+keywords = ["whatsapp", "mcp", "sqlcipher", "privacy", "local-first", "secure-enclave"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: MacOS X",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Natural Language :: Persian",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat",
+    "Topic :: Security :: Cryptography",
+    "Typing :: Typed",
+]
+dependencies = [
+    "sqlcipher3",
+    "cryptography>=43",
+    "keyring>=25",
+    "python-ulid>=2.7",
+    "mcp>=2.1,<3",
+    "apscheduler>=3.10,<4",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5",
+    "ruff>=0.16",
+    "pre-commit>=3.7",
+    "build>=1.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/Raoof128/whatsvault"
+Documentation = "https://github.com/Raoof128/whatsvault/blob/main/docs/ARCHITECTURE.md"
+Changelog = "https://github.com/Raoof128/whatsvault/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Raoof128/whatsvault/issues"
+
+[project.scripts]
+whatsvault = "whatsvault.cli.main:main"
+whatsvault-mcp = "apps.mcp.server:main"
+
+# ---------------------------------------------------------------------------
+# Packaging
+# ---------------------------------------------------------------------------
+[tool.setuptools.packages.find]
+# apps/ must be packaged too: the launchd units run `-m apps.mcp.server`, and the
+# console scripts resolve into it. With where=["src"] only, an installed wheel
+# contained no `apps` at all and both entry points failed.
+where = ["src", "."]
+include = ["whatsvault*", "apps*"]
+
+[tool.setuptools.package-data]
+"whatsvault.db" = ["migrations/vault/*.sql", "migrations/control/*.sql"]
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+# -q keeps output readable; strict flags turn silent mistakes into failures.
+addopts = [
+    "-q",
+    "--strict-markers",
+    "--strict-config",
+]
+xfail_strict = true          # an xfail that starts passing is a signal, not a pass
+filterwarnings = ["error"]   # a new DeprecationWarning fails CI rather than scrolling past
+markers = [
+    "adversarial: red-team and abuse-case tests asserting a security boundary holds",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/whatsvault", "apps"]
+omit = ["*/__pycache__/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# Entry points that exec a real process are excluded by pragma, never by silence.
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+
+# ---------------------------------------------------------------------------
+# Lint / format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+# p99 of the existing sources is 107 chars; 110 fits the codebase without
+# forcing a rewrite of its deliberately dense, table-like SQL and test setup.
+line-length = 110
+target-version = "py311"
+extend-exclude = [".venv", "build", "dist", "docs"]
+
+[tool.ruff.lint]
+select = [
+    "F",    # pyflakes
+    "E", "W",   # pycodestyle
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "RET",  # return consistency
+    "PIE",  # misc lints
+    "PERF", # performance
+    "DTZ",  # naive datetimes
+    "S",    # bandit (security)
+    "BLE",  # blind except
+    "PL",   # pylint subset
+    "RUF",  # ruff-specific
+]
+# Every entry below is a deliberate, reviewed exemption — not noise suppression.
+ignore = [
+    "S101",    # assert: the test suite is assertion-driven by design
+    "PLR0913", # many arguments: the crypto/ingest seams genuinely take many
+    "PLR0917", # ditto, positional form
+    "PLR2004", # magic values in comparisons are clearer inline for protocol constants
+    "RET504",  # a named result before return often documents the value
+    "S603",    # subprocess without shell: call sites are literal, not user input
+    "SIM108",  # a ternary is not always clearer than if/else here
+    # Daemon entry points import uvicorn/keyring/apscheduler lazily so that merely
+    # importing a module never pulls in a heavy or platform-bound dependency. This
+    # is load-bearing: the negative-surface tests import apps.mcp.server directly.
+    "PLC0415",
+    # `(value,) = cursor.fetchone()` is the idiom used to assert single-row shape.
+    "RUF059",
+    # Masking glyphs ("••••") and Persian search fixtures are intentional.
+    "RUF001", "RUF002", "RUF003",
+    # These names end in _KEY_NAME/_KEY and hold Keychain *identifiers*, never key
+    # material. The real guarantee is tests/test_no_secrets.py, which fails CI if a
+    # key literal is ever committed.
+    "S105",
+    # Complexity thresholds: the send state machine and the importer are genuinely
+    # branchy, and splitting them for a metric would obscure the flow they encode.
+    "PLR0911", "PLR0915",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Naive datetimes are the domain model here: a WhatsApp export carries wall-clock
+# local time, and classify_local() interprets it against a zone precisely to detect
+# DST-ambiguous and skipped times. Attaching tzinfo would defeat the mechanism.
+"src/whatsvault/importers/parse.py" = ["DTZ001"]
+"tests/test_timemodel.py" = ["DTZ001"]
+# Predicate fragments are module literals and every caller value is a bound
+# parameter; interpolated identifiers are allowlisted at runtime in the module.
+"src/whatsvault/mcp/reads.py" = ["S608"]
+"src/whatsvault/search/query.py" = ["S608"]
+"src/whatsvault/approval/devices.py" = ["S608"]
+"src/whatsvault/approval/sender.py" = ["S608"]
+# INV-ACK: a failed search-index write must never block an ACK, so the exception is
+# swallowed deliberately. contextlib.suppress would read as incidental; it is not.
+"apps/ingest/consumer.py" = ["S110", "SIM105"]
+# A doctor check reports a fault as a finding; it must never raise.
+"src/whatsvault/doctor.py" = ["BLE001"]
+"tests/*" = [
+    "S310",  # urllib against a loopback test server
+    "S607",  # `git` resolved from PATH inside the secret-tracking gate
+    "S103",  # a fixture deliberately loosens permissions to prove the check fires
+    "S104",  # asserting "0.0.0.0" is ABSENT, not binding to it
+    "S112",  # a decode probe that skips non-base64 tokens by design
+    "B017",  # a couple of suites assert only that *some* failure occurs
+    "E501",          # long inline SQL and schema literals read better unwrapped
+    "S608",          # schema-probing SQL built from table names the test itself defines
+    "E402",          # a few suites configure sys.path before importing
+    "S105", "S106",  # hard-coded test tokens are fixtures, never real credentials
+    "S311",          # non-crypto RNG is fine for generating test data
+    "BLE001",        # tests deliberately catch broadly when asserting failure modes
+    "PLR0915",       # long, linear arrange/act/assert bodies read better unsplit
+]
+# Deliberate bidi/zero-width vectors: this suite exists to prove the display guard
+# detects them, so the file must be allowed to contain them.
+"tests/test_display_guard.py" = ["PLE2502", "RUF001", "RUF003"]
+"tests/adversarial/*" = ["PLE2502", "RUF001", "RUF003", "S105", "S106", "BLE001"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["whatsvault", "apps"]
+
+[tool.ruff.format]
+docstring-code-format = true

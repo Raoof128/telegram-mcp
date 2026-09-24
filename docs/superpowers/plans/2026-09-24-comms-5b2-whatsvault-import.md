@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Bring WhatsVault into this repository at exactly `b6fd51ac83d91018cb2d7fe37f0bce669c7317aa` with its full history, untouched under `transports/whatsapp/`. Make it importable as `whatsvault` in the one Python 3.12 environment, and prove both suites are green: Telegram 1515 passed / 10 skipped, and WhatsVault 539 passed.
+**Goal:** Bring WhatsVault into this repository at exactly `b6fd51ac83d91018cb2d7fe37f0bce669c7317aa` with its full history, untouched under `transports/whatsapp/`. Make it importable as `whatsvault` in the one Python 3.12 environment, and prove both suites are green: Telegram 1519 passed / 10 skipped, and WhatsVault 539 passed.
 
 **Architecture:** `git subtree` is not installed here (Homebrew git lacks the contrib script), so the import uses the classic subtree merge it wraps:
 
@@ -193,7 +193,7 @@ The `dependencies.md` append lists every package the lock added (from `git diff 
 Fail-fast, one command at a time: the Telegram gate, then the WhatsVault gate.
 
 Expected:
-- Telegram `1515 passed, 10 skipped`: the WhatsApp→Telegram isolation guard goes from skip to pass, and the 4 provenance tests pass;
+- Telegram `1519 passed, 10 skipped`: 1515 as measured in the spike (the isolation guard now runs), plus the 4 provenance tests the spike did not have;
 - smoke 60/60; formal 624/18; ruff, format and mypy clean; the build wheel contains `whatsvault/`;
 - WhatsVault `539 passed`.
 

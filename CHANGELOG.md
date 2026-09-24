@@ -422,3 +422,11 @@
 - **Follow-ups:**
   - The merge decision.
   - The 5b-2 plan.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms 5b-2 — WhatsVault import.
+- **Summary:** WhatsVault imported intact with full history under `transports/whatsapp/`; one Python 3.12 environment; both suites green.
+- **Files changed:** see AGENT.md entry of the same date.
+- **Verification:** Telegram 1519/10 skipped + smoke 60 + formal 624/18; WhatsVault 539 passed.
+- **Follow-ups:** merge decision; §3.4 seams or 5b-3.
