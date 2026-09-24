@@ -16,9 +16,17 @@ from typing import Any
 
 import sqlcipher3
 
-__all__ = ["CommsDbKeyError", "TransactionIOError", "io_guard", "open_comms_db", "write_tx"]
+__all__ = [
+    "KEY_ERROR",
+    "CommsDbKeyError",
+    "TransactionIOError",
+    "io_guard",
+    "open_comms_db",
+    "write_tx",
+]
 
-_KEY_ERROR = "comms database key is invalid"
+KEY_ERROR = "comms database key is invalid"
+_KEY_ERROR = KEY_ERROR
 _PLAINTEXT_HEADER = b"SQLite format 3\x00"
 
 

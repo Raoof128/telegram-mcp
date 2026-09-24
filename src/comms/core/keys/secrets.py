@@ -1,7 +1,8 @@
 """The secret store: provider credentials in daemon-owned 0600 versioned files (A13 rev 2, N7).
 
-``<runtime-dir>/secrets/<item>/<version>``. Items are exactly the opaque purposes of the key
-inventory (provider credentials and TLS keys); signing and MAC keys live in key slots.
+``<runtime-dir>/secrets/<item>/<version>``. Items are exactly the opaque and raw purposes of
+the key inventory (provider credentials, TLS keys, the comms.db key); signing and MAC keys
+live in key slots.
 There is no Keychain backend in v0.3: the ``security`` CLI cannot take a secret on stdin
 (``-w -`` stores a literal ``-``; measured, N7, R-B11) and the System Keychain needs root.
 """
@@ -16,7 +17,8 @@ from comms.core.keys.purposes import PURPOSES
 
 __all__ = ["SECRET_ITEMS", "FileSecretStore", "SecretStore", "SecretStoreError"]
 
-SECRET_ITEMS = frozenset(name for name, p in PURPOSES.items() if p.kind == "opaque")
+# Provider credentials and TLS keys (opaque), and the comms.db key (raw 256-bit, A14).
+SECRET_ITEMS = frozenset(name for name, p in PURPOSES.items() if p.kind in {"opaque", "raw256"})
 
 
 class SecretStoreError(Exception):
