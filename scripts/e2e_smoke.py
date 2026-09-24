@@ -37,6 +37,15 @@ CLI = Path(sys.executable).parent / "telegram-mcp"  # the installed console scri
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
+# The retired Phase-1 demo server (comms v0.3 A3), run for its historical checks only.
+LEGACY_DEMO = """
+import sys, uvicorn
+from comms.transports.telegram.config import DemoConfig
+from comms.transports.telegram.server import create_app
+config = DemoConfig(host="127.0.0.1", port=int(sys.argv[1]))
+uvicorn.run(create_app(config), host=config.host, port=config.port, access_log=False)
+"""
+
 
 @dataclass
 class Ledger:
@@ -209,13 +218,14 @@ def phase1_contracts(ledger: Ledger) -> None:
 
 
 def phase1_live_server(ledger: Ledger) -> None:
-    area = "Phase 1 — live MCP server (real TCP)"
+    area = "Phase 1 — retired demo MCP server, historical (real TCP)"
     import httpx
     from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
 
     port = free_port()
+    # comms v0.3 retired the `demo` verb (A3); the historical server is launched directly.
     server = subprocess.Popen(
-        [str(CLI), "demo", "--host", "127.0.0.1", "--port", str(port)],
+        [sys.executable, "-c", LEGACY_DEMO, str(port)],
         cwd=REPO,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -857,7 +867,15 @@ def phase2a_runtime(ledger: Ledger, sandbox: Path) -> None:
             timeout=120,
         )
         assert admin.returncode == 3, (admin.returncode, admin.stderr)
-        return "status/doctor/keys emit JSON; admin reports a stopped runtime"
+        for verb in ("demo", "serve"):
+            retired = subprocess.run(
+                [str(CLI), verb], capture_output=True, text=True, cwd=REPO, check=False, timeout=60
+            )
+            assert retired.returncode == 8, (verb, retired.returncode)
+            assert retired.stderr.strip() == (
+                f"telegram-mcp {verb} is retired in comms v0.3; use comms mcp"
+            ), retired.stderr
+        return "status/doctor/keys emit JSON; admin reports a stopped runtime; demo/serve retired"
 
     def install_plans():
         outputs = {}
@@ -921,7 +939,7 @@ def phase4a_catalogue(ledger: Ledger) -> None:
         from comms.transports.telegram.disclosure.verify import verify_persisted_receipt
         from comms.transports.telegram.ipc.leases import mint_lease
         from comms.transports.telegram.keys.store import provision_lease_seed, provision_missing
-        from comms.transports.telegram.runtime.composition import build_runtime
+        from comms.transports.telegram.runtime.legacy_composition import build_runtime
         from comms.transports.telegram.storage.db import open_db
         from tests.authority_fixtures import seed_authority_rows
 

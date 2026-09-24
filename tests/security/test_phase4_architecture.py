@@ -15,6 +15,8 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "comms" / "transports" / "te
 PACKAGE = "comms.transports.telegram"
 ADAPTER = SRC / "telegram" / "telethon_adapter.py"
 COMPOSITION = SRC / "runtime" / "composition.py"
+# comms v0.3 A3: the retired MCP runtime, kept for retained tests; no production entry reaches it.
+LEGACY_COMPOSITION = SRC / "runtime" / "legacy_composition.py"
 
 # Design §3.3, as <module>.<Request>: the reviewer's copy, deliberately not
 # imported from the adapter, so a change to one without the other fails here.
@@ -211,7 +213,7 @@ def test_only_composition_wires_a_backend():
         for path, tree in _modules()
         if _imports(tree) & CONCRETE_BACKENDS and path.parent != SRC / "telegram"
     }
-    assert importers <= {str(COMPOSITION)}
+    assert importers <= {str(COMPOSITION), str(LEGACY_COMPOSITION)}
 
 
 def test_the_demo_server_cannot_reach_sensitive_dispatch():
@@ -230,6 +232,7 @@ def test_the_demo_server_cannot_reach_sensitive_dispatch():
         "comms.transports.telegram.sensitive_dispatch",
         "comms.transports.telegram.runtime.ingress",
         "comms.transports.telegram.runtime.composition",
+        "comms.transports.telegram.runtime.legacy_composition",
         "comms.transports.telegram.disclosure.seams",
         *CONCRETE_BACKENDS,
     }

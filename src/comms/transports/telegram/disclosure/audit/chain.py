@@ -9,18 +9,13 @@ owns every transaction; ``comms.core.storage.db.write_tx`` is the one transactio
 
 from __future__ import annotations
 
-import base64
 import secrets
 import time
 from collections.abc import Mapping
 from typing import Any
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
 from comms.core.audit import chain as _core
 from comms.core.audit.chain import ChainError
-from comms.core.keys import ids
 from comms.core.storage.db import write_tx
 from comms.transports.telegram.disclosure.audit.profile import (
     ADMIN_EVENTS,
@@ -142,30 +137,14 @@ def verify_checkpoints(conn: Any, checkpoint_public: bytes) -> None:
 
 def verify_checkpoints_registry(conn: Any) -> str:
     """``"none"`` | ``"verified"`` | ``"failed"``: each checkpoint by its own recorded key."""
-    from comms.transports.telegram.disclosure.keys import lookup_verification_key
+    from comms.transports.telegram.disclosure.keys import checkpoint_public_for
 
-    names = (*LEGACY_TELEGRAM.signed_checkpoint_fields, "signature", "signing_key_id")
-    rows = conn.execute(
-        f"SELECT {', '.join(names)} FROM audit_checkpoints ORDER BY chain_epoch, chain_seq"
-    ).fetchall()
-    if not rows:
+    if conn.execute("SELECT count(*) FROM audit_checkpoints").fetchone()[0] == 0:
         return "none"
-    for row in rows:
-        record = dict(zip(names, row, strict=True))
-        key = lookup_verification_key(conn, record["signing_key_id"])
-        if key is None or key["purpose"] != "audit_checkpoint":
-            return "failed"
-        raw = base64.urlsafe_b64decode(
-            key["public_key_b64url"] + "=" * (-len(key["public_key_b64url"]) % 4)
-        )
-        if ids.ed25519_key_id(raw) != record["signing_key_id"]:
-            return "failed"  # a stored label is never trusted by itself (spec §9.6.1)
-        try:
-            Ed25519PublicKey.from_public_bytes(raw).verify(
-                bytes.fromhex(record["signature"]), _checkpoint_message(record)
-            )
-        except (InvalidSignature, ValueError):
-            return "failed"
+    try:
+        _core.verify_checkpoints(conn, LEGACY_TELEGRAM, checkpoint_public_for(conn))
+    except ChainError:
+        return "failed"
     return "verified"
 
 

@@ -12,7 +12,7 @@ from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
 from comms.transports.telegram.http_guards import UNAUTHORIZED_BODY
 from comms.transports.telegram.ipc.leases import mint_lease
 from comms.transports.telegram.keys.store import provision_lease_seed, provision_missing
-from comms.transports.telegram.runtime.composition import build_runtime
+from comms.transports.telegram.runtime.legacy_composition import build_runtime
 from comms.transports.telegram.storage.db import open_db
 from tests.authority_fixtures import seed_authority_rows
 

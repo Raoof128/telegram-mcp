@@ -8,11 +8,14 @@ exportable.
 
 from __future__ import annotations
 
+import base64
 import sqlite3
+from collections.abc import Callable
 from typing import Any
 
 __all__ = [
     "PURPOSES",
+    "checkpoint_public_for",
     "current_verification_key",
     "ensure_current_published",
     "export_verification_keys",
@@ -83,6 +86,26 @@ def lookup_verification_key(conn: sqlite3.Connection, key_id: str) -> dict[str, 
             f"SELECT {_COLUMNS} FROM verification_keys WHERE key_id = ?", (key_id,)
         ).fetchone()
     )
+
+
+def checkpoint_public_for(conn: sqlite3.Connection) -> Callable[[str], bytes | None]:
+    """A registry-backed ``public_for``: an ``audit_checkpoint`` key's raw public bytes.
+
+    The caller recomputes the key id from the bytes; a stored label is never trusted
+    by itself (spec §9.6.1).
+    """
+
+    def public_for(key_id: str) -> bytes | None:
+        key = lookup_verification_key(conn, key_id)
+        if key is None or key["purpose"] != "audit_checkpoint":
+            return None
+        encoded = key["public_key_b64url"]
+        try:
+            return base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        except ValueError:
+            return None
+
+    return public_for
 
 
 def export_verification_keys(

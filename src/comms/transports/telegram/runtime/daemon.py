@@ -9,7 +9,8 @@ Order matters and is fail-closed:
    stays ``AUTH_REQUIRED`` and everything else still runs. An unreachable
    Telegram is a state (``TELEGRAM_UNAVAILABLE``), retried every 30 seconds,
    never a failed start: the operator keeps the admin socket.
-4. Serve admin and ingress, then wait. There is no consent socket (comms spec v0.2).
+4. Serve the admin socket, then wait. There is no consent socket (comms spec v0.2), and
+   since comms v0.3 no MCP ingress: the Telegram MCP surface is retired (A3).
 
 Shutdown disconnects Telegram (never ``log_out``) and unlinks the sockets.
 """
@@ -27,12 +28,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import uvicorn
-
 from comms.transports.telegram.ipc.admin import serve_admin
 from comms.transports.telegram.keys.keychain import KeychainError, read_api_hash
 from comms.transports.telegram.keys.store import load_key, set_store_dir
-from comms.transports.telegram.runtime.composition import build_runtime, build_telegram
+from comms.transports.telegram.runtime.composition import build_admin, build_telegram
 from comms.transports.telegram.runtime.lock import RuntimeActive, acquire_lock
 from comms.transports.telegram.storage.db import open_db
 from comms.transports.telegram.storage.identity import ensure_owner_principal
@@ -55,7 +54,6 @@ class DaemonConfig:
     key_dir: Path
     api_id: int | None
     test_dc: tuple[int, str, int] | None = None
-    port: int = 8766
     admin_group: str | None = None
 
 
@@ -92,7 +90,6 @@ async def run_daemon(
     session: Any = None
     keeper: asyncio.Task[None] | None = None
     closers: list[Any] = []
-    server: uvicorn.Server | None = None
     conn = None
     try:
         set_store_dir(config.key_dir)
@@ -126,36 +123,24 @@ async def run_daemon(
                             await link.reconnect()
 
                 keeper = asyncio.create_task(keep_connected())
-        services = build_runtime(
+        router = build_admin(
             conn,
             key_dir=Path(config.key_dir),
             anchor_path=state / "anchor" / "anchor.json",
             runtime_id=runtime_id,
-            port=config.port,
             telegram=session,
         )
         closers.append(
             await serve_admin(
                 admin_path,
-                services.admin_router,
+                router,
                 allow_uid=os.getuid() if admin_gid is None else None,
                 allow_gids=() if admin_gid is None else (admin_gid,),
             )
         )
         if admin_gid is not None:
             os.chown(admin_path, -1, admin_gid)  # serve_admin already made it 0660
-        server = uvicorn.Server(
-            uvicorn.Config(
-                services.ingress_app, host="127.0.0.1", port=config.port, log_level="warning"
-            )
-        )
-        serving = asyncio.create_task(server.serve())
-        if stop is None:
-            await serving
-        else:
-            await stop.wait()
-            server.should_exit = True
-            await serving
+        await (stop or asyncio.Event()).wait()  # production runs until cancelled
     finally:
         if keeper is not None:
             keeper.cancel()
