@@ -138,10 +138,10 @@ _REVOKED = (
     errors.AuthKeyUnregisteredError,
     errors.SessionRevokedError,
     errors.SessionExpiredError,
-    errors.UserDeactivatedError,
-    errors.UserDeactivatedBanError,
     errors.AuthKeyDuplicatedError,
 )
+# comms v0.3 B15 (design §B.6): a deactivated or banned account is not a revoked session.
+_DEACTIVATED = (errors.UserDeactivatedError, errors.UserDeactivatedBanError)
 _NOT_ACCESSIBLE = (
     errors.ChannelPrivateError,
     errors.ChatAdminRequiredError,
@@ -154,6 +154,7 @@ _UNAVAILABLE = (
     errors.InterdcCallErrorError,
     errors.RpcCallFailError,
     errors.InvalidDCError,  # a migrate we did not handle explicitly
+    errors.AuthKeyNotFound,  # the server's -404: transient, never a durable state (B15)
     ConnectionError,
     OSError,
 )
@@ -174,6 +175,8 @@ def translate(exc: BaseException) -> GatewayError:
         return GatewayError("FLOOD_WAIT", retry_after=int(getattr(exc, "seconds", 0)) or None)
     if isinstance(exc, _REVOKED):
         return GatewayError("SESSION_REVOKED")
+    if isinstance(exc, _DEACTIVATED):
+        return GatewayError("ACCOUNT_UNAVAILABLE")
     if isinstance(exc, errors.UnauthorizedError):
         return GatewayError("AUTH_REQUIRED")
     if isinstance(exc, _NOT_ACCESSIBLE):
@@ -213,6 +216,7 @@ class TelethonSession:
         self._lock_fd: int | None = None
         self._code_hash: tuple[str, str] | None = None  # (phone, phone_code_hash), memory only
         self.revoked = False  # Telegram said the authorisation is gone
+        self.account_unavailable = False  # Telegram said the account is deactivated or banned
         self.connected = False
         self.authorized = False
         self.logged_out = False  # the operator ran auth logout-local
@@ -288,8 +292,11 @@ class TelethonSession:
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
         except BaseException as exc:  # noqa: BLE001 -- mapped to a frozen code
-            if translate(exc).code == "SESSION_REVOKED":
+            code = translate(exc).code
+            if code == "SESSION_REVOKED":
                 self.revoked, self.connected = True, True
+            elif code == "ACCOUNT_UNAVAILABLE":
+                self.account_unavailable, self.connected = True, True
             else:
                 self.connected = False
             return False
@@ -297,6 +304,8 @@ class TelethonSession:
 
     def readiness(self) -> str | None:
         """None when MCP reads may run; otherwise the §27.1 code to refuse with."""
+        if self.account_unavailable:
+            return "ACCOUNT_UNAVAILABLE"
         if self.revoked:
             return "SESSION_REVOKED"
         if self.logged_out:
@@ -357,8 +366,11 @@ class TelethonSession:
             raise
         except BaseException as exc:  # noqa: BLE001 -- mapped to a frozen code
             gateway = translate(exc)
-            if gateway.code == "SESSION_REVOKED" and operation != "admin.status":
-                self.revoked = True
+            if operation != "admin.status":
+                if gateway.code == "SESSION_REVOKED":
+                    self.revoked = True
+                elif gateway.code == "ACCOUNT_UNAVAILABLE":
+                    self.account_unavailable = True
             raise gateway from None
 
     # -- login and status (admin plane): raw reviewed requests only -----------
@@ -381,6 +393,7 @@ class TelethonSession:
 
     def _signed_in(self) -> None:
         self.revoked, self.logged_out, self.authorized = False, False, True
+        self.account_unavailable = False
         self._code_hash = None
         self._pin_file_modes()
 
