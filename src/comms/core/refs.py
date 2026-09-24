@@ -37,6 +37,7 @@ CORE_PREFIXES: dict[str, str] = {
     "audit_event": "aev_",
     "audit_checkpoint": "ack_",
     "installation": "cin_",  # comms v0.3 B25: the backup binding's installation
+    "staged_import": "cbi_",  # comms v0.3 B27: a memory-only staged backup import
 }
 _KIND_BY_PREFIX = {prefix: kind for kind, prefix in CORE_PREFIXES.items()}
 

@@ -90,6 +90,11 @@ AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
         "head_epoch": count(1),
         "head_seq": count(1),
     },
+    "admin.backup_export": {
+        "binding": digest,
+        "ciphertext_sha256": digest,
+        "signer_key_id": key_id,
+    },
     "admin.key_rotation": {
         "purpose": one_of(set(PURPOSES)),
         "old_version": count(0),
@@ -111,6 +116,7 @@ SUBJECT_KINDS: dict[str, str | None] = {
     "admin.session_revoke": None,
     "maintenance.retention_purge": None,
     "admin.audit_repair": None,
+    "admin.backup_export": None,
     "admin.key_rotation": None,
 }
 
