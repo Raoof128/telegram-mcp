@@ -40,6 +40,7 @@ __all__ = [
     "require_immediate_transaction",
     "verify_chain",
     "verify_checkpoints",
+    "verify_checkpoints_registry",
     "write_checkpoint",
 ]
 
@@ -367,6 +368,49 @@ def verify_checkpoints(conn: sqlite3.Connection, checkpoint_public: bytes) -> No
             public.verify(bytes.fromhex(record["signature"]), _checkpoint_message(record))
         except (InvalidSignature, ValueError) as exc:
             raise ChainError("checkpoint signature does not verify") from exc
+
+
+def verify_checkpoints_registry(conn: sqlite3.Connection) -> str:
+    """``"none"`` | ``"verified"`` | ``"failed"``: each checkpoint by its own recorded key."""
+    import base64
+
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    from telegram_mcp.disclosure.keys import lookup_verification_key
+
+    rows = conn.execute(
+        "SELECT chain_epoch, chain_seq, last_event_id, last_event_mac, created_at, signature,"
+        " signing_key_id FROM audit_checkpoints ORDER BY chain_epoch, chain_seq"
+    ).fetchall()
+    if not rows:
+        return "none"
+    names = (
+        "chain_epoch",
+        "chain_seq",
+        "last_event_id",
+        "last_event_mac",
+        "created_at",
+        "signature",
+        "signing_key_id",
+    )
+    for row in rows:
+        record = dict(zip(names, row, strict=True))
+        key = lookup_verification_key(conn, record["signing_key_id"])
+        if key is None or key["purpose"] != "audit_checkpoint":
+            return "failed"
+        raw = base64.urlsafe_b64decode(
+            key["public_key_b64url"] + "=" * (-len(key["public_key_b64url"]) % 4)
+        )
+        if "ed25519:sha256:" + hashlib.sha256(raw).hexdigest() != record["signing_key_id"]:
+            return "failed"  # a stored label is never trusted by itself (spec §9.6.1)
+        try:
+            Ed25519PublicKey.from_public_bytes(raw).verify(
+                bytes.fromhex(record["signature"]), _checkpoint_message(record)
+            )
+        except (InvalidSignature, ValueError):
+            return "failed"
+    return "verified"
 
 
 def checkpoint_due(conn: sqlite3.Connection, *, events_since: int, seconds_since: int) -> bool:

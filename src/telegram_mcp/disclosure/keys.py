@@ -14,6 +14,7 @@ from typing import Any
 __all__ = [
     "PURPOSES",
     "current_verification_key",
+    "ensure_current_published",
     "export_verification_keys",
     "lookup_verification_key",
     "publish_verification_key",
@@ -97,3 +98,27 @@ def export_verification_keys(
             f"SELECT {_COLUMNS} FROM verification_keys WHERE key_id = ?", (key_id,)
         ).fetchall()
     return [row for row in (_row(r) for r in rows) if row is not None]
+
+
+def ensure_current_published(
+    conn: sqlite3.Connection, *, purpose: str, private_seed: bytes, now: str
+) -> str:
+    """Publish an Ed25519 key's public half unless it is already current. Returns the key_id."""
+    import base64
+    import hashlib
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    raw = Ed25519PrivateKey.from_private_bytes(private_seed).public_key().public_bytes_raw()
+    key_id = "ed25519:sha256:" + hashlib.sha256(raw).hexdigest()
+    current = current_verification_key(conn, purpose)
+    if current is None or current["key_id"] != key_id:
+        publish_verification_key(
+            conn,
+            key_id=key_id,
+            purpose=purpose,
+            algorithm="Ed25519",
+            public_key_b64url=base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii"),
+            activated_at=now,
+        )
+    return key_id
