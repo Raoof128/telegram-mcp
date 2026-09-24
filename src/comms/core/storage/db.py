@@ -22,6 +22,7 @@ __all__ = [
     "TransactionIOError",
     "io_guard",
     "open_comms_db",
+    "require_tx",
     "write_tx",
 ]
 
@@ -87,6 +88,12 @@ def write_tx(conn: Any) -> Iterator[Any]:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
+
+
+def require_tx(conn: Any) -> None:
+    """A ``*_in_tx`` write runs inside its caller's transaction, never on its own."""
+    if not conn.in_transaction:
+        raise RuntimeError("this write runs inside a comms.db transaction")
 
 
 def io_guard(conn: Any) -> None:

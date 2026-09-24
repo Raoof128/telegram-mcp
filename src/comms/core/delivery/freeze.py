@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from comms.core import domains, refs, timeutil
+from comms.core.audit.writer import AuditTx
 from comms.core.campaigns.drafts import LifecycleError, load, targets_of
 from comms.core.campaigns.events import append_event
 from comms.core.campaigns.resolve import Candidate, Targets, resolve_targets
@@ -31,19 +32,23 @@ from comms.core.delivery.transport import (
     SkipReason,
 )
 from comms.core.delivery.window import window_fact
-from comms.core.storage.db import write_tx
+from comms.core.storage.db import require_tx, write_tx
 
 __all__ = [
     "CancelReport",
     "NoEligibleEndpoints",
     "cancel",
+    "cancel_in_tx",
     "idempotency_key",
     "recipient_digest",
     "schedule",
+    "schedule_in_tx",
     "send",
+    "send_in_tx",
     "snapshot_digest",
     "target_digest",
     "unschedule",
+    "unschedule_in_tx",
 ]
 
 _TARGET_KEYS = ("audiences", "destinations", "locations", "recipients")
@@ -160,6 +165,159 @@ class _Planned:
         return "PENDING" if self.payload is not None else "SKIPPED_PLATFORM_POLICY"
 
 
+def _freeze_in_tx(
+    conn: Any,
+    cmp: str,
+    transports: Mapping[str, DeliveryTransport],
+    *,
+    now: datetime,
+    send_at: datetime,
+    lifecycle: str,
+    audited: CommitContext | None = None,
+    audit: AuditTx | None = None,
+) -> str:
+    require_tx(conn)
+    stamp, at = timeutil.iso(now), timeutil.iso(send_at)
+    campaign = load(conn, cmp)
+    if campaign["lifecycle"] != "READY":
+        raise LifecycleError("campaign is not ready")
+    targets, wanted = targets_of(campaign)
+    if not wanted <= set(transports):
+        raise LifecycleError("transport unavailable")
+    content = json.loads(campaign["content"])
+    template = template_binding(conn, campaign["id"])
+    gen = refs.mint("generation")
+    planned: list[_Planned] = []
+    for candidate in resolve_targets(conn, targets, wanted):
+        identity = conn.execute(
+            "SELECT identity FROM delivery_identities WHERE id = ?", (candidate.identity_id,)
+        ).fetchone()[0]
+        facts: dict[str, Any] = {}
+        window = window_fact(conn, candidate.identity_id)
+        if window is not None:
+            facts["window"] = window
+        if template is not None:
+            facts["template"] = template
+        prepared = transports[candidate.transport].prepare(
+            DeliveryIntent(candidate.transport, identity, content, facts),
+            timeutil.utc(send_at),
+        )
+        if isinstance(prepared, Skip):
+            payload, skip = None, SkipReason(prepared.reason)
+        elif isinstance(prepared, PreparedPayload):
+            if hashlib.sha256(prepared.data).hexdigest() != prepared.digest:
+                raise ValueError("payload digest does not match its data")
+            payload, skip = prepared, None
+        else:
+            raise TypeError("prepare returned an unknown type")
+        planned.append(
+            _Planned(
+                candidate,
+                identity,
+                refs.mint("job"),
+                idempotency_key(cmp, gen, candidate.transport, identity),
+                payload,
+                skip,
+            )
+        )
+    if not any(p.payload is not None for p in planned):
+        raise NoEligibleEndpoints("NO_ELIGIBLE_ENDPOINTS")
+    digest = snapshot_digest(
+        cmp=cmp,
+        gen=gen,
+        send_at=at,
+        content=content,
+        transports=sorted(wanted),
+        jobs=[
+            {
+                "transport": p.candidate.transport,
+                "delivery_identity": p.identity,
+                "payload_digest": p.payload.digest if p.payload else None,
+                "initial_state": p.state,
+                "skip_reason": p.skip.value if p.skip else None,
+            }
+            for p in planned
+        ],
+    )
+    commitment = campaign_commitment(audited.key, gen, digest) if audited is not None else None
+    gen_id = conn.execute(
+        "INSERT INTO generations (ref, campaign_id, created_at, send_at, content,"
+        " snapshot_digest, status, campaign_commitment, campaign_commit_key_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)",
+        (
+            gen,
+            campaign["id"],
+            stamp,
+            at,
+            jcs_dumps(content).decode(),
+            digest,
+            commitment,
+            audited.key_id if audited is not None else None,
+        ),
+    ).lastrowid
+    for p in planned:
+        job_id = conn.execute(
+            "INSERT INTO delivery_jobs (ref, generation_id, transport, identity_id,"
+            " idempotency_key, payload, payload_digest, skip_reason, state)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                p.job_ref,
+                gen_id,
+                p.candidate.transport,
+                p.candidate.identity_id,
+                p.key,
+                p.payload.data if p.payload else None,
+                p.payload.digest if p.payload else None,
+                p.skip.value if p.skip else None,
+                p.state,
+            ),
+        ).lastrowid
+        for origin in p.candidate.origins:
+            conn.execute(
+                "INSERT INTO job_origins (job_id, endpoint_ref, path) VALUES (?, ?, ?)",
+                (job_id, origin.endpoint_ref, jcs_dumps(list(origin.path)).decode()),
+            )
+    conn.execute(
+        "UPDATE campaigns SET current_generation_id = ?, summary = 'IN_PROGRESS',"
+        " lifecycle = ?, updated_at = ? WHERE id = ?",
+        (gen_id, lifecycle, stamp, campaign["id"]),
+    )
+    event_payload: dict[str, Any] = {
+        "generation": gen,
+        "lifecycle": lifecycle,
+        "job_count": len(planned),
+        "pending_count": sum(p.payload is not None for p in planned),
+        "skipped_count": sum(p.payload is None for p in planned),
+        "target_digest": target_digest(targets, wanted),
+        "recipient_digest": recipient_digest(
+            [
+                (p.job_ref, p.candidate.transport, p.candidate.endpoint_refs, p.state)
+                for p in planned
+            ]
+        ),
+    }
+    if lifecycle == "SCHEDULED":
+        event_payload["send_at"] = at
+    event = "campaign.send_started" if lifecycle == "SENDING" else "campaign.scheduled"
+    if audited is None:
+        append_event(conn, event, cmp, event_payload, now=now)
+    else:
+        append_event(
+            conn,
+            event,
+            cmp,
+            event_payload,
+            now=now,
+            audit=audit,
+            commitment={
+                "commitment": commitment or "",
+                "commit_key_id": audited.key_id,
+                "generation": gen,
+            },
+        )
+    return gen
+
+
 def _freeze(
     conn: Any,
     cmp: str,
@@ -170,149 +328,20 @@ def _freeze(
     lifecycle: str,
     audited: CommitContext | None = None,
 ) -> str:
-    stamp, at = timeutil.iso(now), timeutil.iso(send_at)
     if audited is not None and audited.writer.conn is not conn:
         raise ValueError("the audit writer must own this connection")
     transaction = audited.writer.transaction() if audited is not None else write_tx(conn)
     with transaction as audit:
-        campaign = load(conn, cmp)
-        if campaign["lifecycle"] != "READY":
-            raise LifecycleError("campaign is not ready")
-        targets, wanted = targets_of(campaign)
-        if not wanted <= set(transports):
-            raise LifecycleError("transport unavailable")
-        content = json.loads(campaign["content"])
-        template = template_binding(conn, campaign["id"])
-        gen = refs.mint("generation")
-        planned: list[_Planned] = []
-        for candidate in resolve_targets(conn, targets, wanted):
-            identity = conn.execute(
-                "SELECT identity FROM delivery_identities WHERE id = ?", (candidate.identity_id,)
-            ).fetchone()[0]
-            facts: dict[str, Any] = {}
-            window = window_fact(conn, candidate.identity_id)
-            if window is not None:
-                facts["window"] = window
-            if template is not None:
-                facts["template"] = template
-            prepared = transports[candidate.transport].prepare(
-                DeliveryIntent(candidate.transport, identity, content, facts),
-                timeutil.utc(send_at),
-            )
-            if isinstance(prepared, Skip):
-                payload, skip = None, SkipReason(prepared.reason)
-            elif isinstance(prepared, PreparedPayload):
-                if hashlib.sha256(prepared.data).hexdigest() != prepared.digest:
-                    raise ValueError("payload digest does not match its data")
-                payload, skip = prepared, None
-            else:
-                raise TypeError("prepare returned an unknown type")
-            planned.append(
-                _Planned(
-                    candidate,
-                    identity,
-                    refs.mint("job"),
-                    idempotency_key(cmp, gen, candidate.transport, identity),
-                    payload,
-                    skip,
-                )
-            )
-        if not any(p.payload is not None for p in planned):
-            raise NoEligibleEndpoints("NO_ELIGIBLE_ENDPOINTS")
-        digest = snapshot_digest(
-            cmp=cmp,
-            gen=gen,
-            send_at=at,
-            content=content,
-            transports=sorted(wanted),
-            jobs=[
-                {
-                    "transport": p.candidate.transport,
-                    "delivery_identity": p.identity,
-                    "payload_digest": p.payload.digest if p.payload else None,
-                    "initial_state": p.state,
-                    "skip_reason": p.skip.value if p.skip else None,
-                }
-                for p in planned
-            ],
+        return _freeze_in_tx(
+            conn,
+            cmp,
+            transports,
+            now=now,
+            send_at=send_at,
+            lifecycle=lifecycle,
+            audited=audited,
+            audit=audit if audited is not None else None,
         )
-        commitment = campaign_commitment(audited.key, gen, digest) if audited is not None else None
-        gen_id = conn.execute(
-            "INSERT INTO generations (ref, campaign_id, created_at, send_at, content,"
-            " snapshot_digest, status, campaign_commitment, campaign_commit_key_id)"
-            " VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)",
-            (
-                gen,
-                campaign["id"],
-                stamp,
-                at,
-                jcs_dumps(content).decode(),
-                digest,
-                commitment,
-                audited.key_id if audited is not None else None,
-            ),
-        ).lastrowid
-        for p in planned:
-            job_id = conn.execute(
-                "INSERT INTO delivery_jobs (ref, generation_id, transport, identity_id,"
-                " idempotency_key, payload, payload_digest, skip_reason, state)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    p.job_ref,
-                    gen_id,
-                    p.candidate.transport,
-                    p.candidate.identity_id,
-                    p.key,
-                    p.payload.data if p.payload else None,
-                    p.payload.digest if p.payload else None,
-                    p.skip.value if p.skip else None,
-                    p.state,
-                ),
-            ).lastrowid
-            for origin in p.candidate.origins:
-                conn.execute(
-                    "INSERT INTO job_origins (job_id, endpoint_ref, path) VALUES (?, ?, ?)",
-                    (job_id, origin.endpoint_ref, jcs_dumps(list(origin.path)).decode()),
-                )
-        conn.execute(
-            "UPDATE campaigns SET current_generation_id = ?, summary = 'IN_PROGRESS',"
-            " lifecycle = ?, updated_at = ? WHERE id = ?",
-            (gen_id, lifecycle, stamp, campaign["id"]),
-        )
-        event_payload: dict[str, Any] = {
-            "generation": gen,
-            "lifecycle": lifecycle,
-            "job_count": len(planned),
-            "pending_count": sum(p.payload is not None for p in planned),
-            "skipped_count": sum(p.payload is None for p in planned),
-            "target_digest": target_digest(targets, wanted),
-            "recipient_digest": recipient_digest(
-                [
-                    (p.job_ref, p.candidate.transport, p.candidate.endpoint_refs, p.state)
-                    for p in planned
-                ]
-            ),
-        }
-        if lifecycle == "SCHEDULED":
-            event_payload["send_at"] = at
-        event = "campaign.send_started" if lifecycle == "SENDING" else "campaign.scheduled"
-        if audited is None:
-            append_event(conn, event, cmp, event_payload, now=now)
-        else:
-            append_event(
-                conn,
-                event,
-                cmp,
-                event_payload,
-                now=now,
-                audit=audit,
-                commitment={
-                    "commitment": commitment or "",
-                    "commit_key_id": audited.key_id,
-                    "generation": gen,
-                },
-            )
-    return gen
 
 
 def send(
@@ -330,6 +359,50 @@ def send(
     """
     return _freeze(
         conn, cmp, transports, now=now, send_at=now, lifecycle="SENDING", audited=audited
+    )
+
+
+def send_in_tx(
+    tx: AuditTx,
+    cmp: str,
+    transports: Mapping[str, DeliveryTransport],
+    *,
+    now: datetime,
+    audited: CommitContext,
+) -> str:
+    """``send`` inside the caller's audited transaction (the service layer's replay record and
+    the freeze commit together, D15)."""
+    return _freeze_in_tx(
+        tx.conn,
+        cmp,
+        transports,
+        now=now,
+        send_at=now,
+        lifecycle="SENDING",
+        audited=audited,
+        audit=tx,
+    )
+
+
+def schedule_in_tx(
+    tx: AuditTx,
+    cmp: str,
+    send_at: datetime,
+    transports: Mapping[str, DeliveryTransport],
+    *,
+    now: datetime,
+    audited: CommitContext,
+) -> str:
+    """``schedule`` inside the caller's audited transaction (D15)."""
+    return _freeze_in_tx(
+        tx.conn,
+        cmp,
+        transports,
+        now=now,
+        send_at=timeutil.utc(send_at),
+        lifecycle="SCHEDULED",
+        audited=audited,
+        audit=tx,
     )
 
 
@@ -378,44 +451,56 @@ def _retire_scheduled(conn: Any, campaign: Mapping[str, Any], *, now: datetime) 
     return gen, cancelled
 
 
+def unschedule_in_tx(conn: Any, cmp: str, *, now: datetime) -> None:
+    """SCHEDULED → READY: the generation is discarded and never reused (§8, R6)."""
+    require_tx(conn)
+    campaign = load(conn, cmp)
+    if campaign["lifecycle"] != "SCHEDULED":
+        raise LifecycleError("campaign is not scheduled")
+    gen, cancelled = _retire_scheduled(conn, campaign, now=now)
+    conn.execute("UPDATE campaigns SET lifecycle = 'READY' WHERE id = ?", (campaign["id"],))
+    append_event(
+        conn,
+        "campaign.unscheduled",
+        cmp,
+        {"generation": gen, "cancelled_count": cancelled, "lifecycle": "READY"},
+        now=now,
+    )
+
+
 def unschedule(conn: Any, cmp: str, *, now: datetime) -> None:
     """SCHEDULED → READY: the generation is discarded and never reused (§8, R6)."""
     with write_tx(conn):
-        campaign = load(conn, cmp)
-        if campaign["lifecycle"] != "SCHEDULED":
-            raise LifecycleError("campaign is not scheduled")
-        gen, cancelled = _retire_scheduled(conn, campaign, now=now)
-        conn.execute("UPDATE campaigns SET lifecycle = 'READY' WHERE id = ?", (campaign["id"],))
-        append_event(
-            conn,
-            "campaign.unscheduled",
-            cmp,
-            {"generation": gen, "cancelled_count": cancelled, "lifecycle": "READY"},
-            now=now,
+        unschedule_in_tx(conn, cmp, now=now)
+
+
+def cancel_in_tx(conn: Any, cmp: str, *, now: datetime) -> CancelReport:
+    """Cancel (§6.2). A SENDING campaign is cancelled job by job, by ``operations``."""
+    require_tx(conn)
+    campaign = load(conn, cmp)
+    lifecycle = campaign["lifecycle"]
+    if lifecycle == "SENDING":
+        from comms.core.delivery.operations import (
+            cancel_sending_in_tx,
         )
+
+        return cancel_sending_in_tx(conn, cmp, now=now)
+    if lifecycle not in ("DRAFT", "READY", "SCHEDULED"):
+        raise LifecycleError("campaign cannot be cancelled")
+    cancelled = 0
+    payload: dict[str, Any] = {"lifecycle": "CANCELLED"}
+    if lifecycle == "SCHEDULED":
+        gen, cancelled = _retire_scheduled(conn, campaign, now=now)
+        payload.update(generation=gen, cancelled_count=cancelled)
+    conn.execute(
+        "UPDATE campaigns SET lifecycle = 'CANCELLED', updated_at = ? WHERE id = ?",
+        (timeutil.iso(now), campaign["id"]),
+    )
+    append_event(conn, "campaign.cancelled", cmp, payload, now=now)
+    return CancelReport(cancelled_before_send=cancelled, already_sent=0, currently_in_flight=0)
 
 
 def cancel(conn: Any, cmp: str, *, now: datetime) -> CancelReport:
     """Cancel (§6.2). A SENDING campaign is cancelled job by job, by ``operations``."""
-    if load(conn, cmp)["lifecycle"] == "SENDING":
-        from comms.core.delivery.operations import (
-            cancel_sending,
-        )
-
-        return cancel_sending(conn, cmp, now=now)
     with write_tx(conn):
-        campaign = load(conn, cmp)
-        lifecycle = campaign["lifecycle"]
-        if lifecycle not in ("DRAFT", "READY", "SCHEDULED"):
-            raise LifecycleError("campaign cannot be cancelled")
-        cancelled = 0
-        payload: dict[str, Any] = {"lifecycle": "CANCELLED"}
-        if lifecycle == "SCHEDULED":
-            gen, cancelled = _retire_scheduled(conn, campaign, now=now)
-            payload.update(generation=gen, cancelled_count=cancelled)
-        conn.execute(
-            "UPDATE campaigns SET lifecycle = 'CANCELLED', updated_at = ? WHERE id = ?",
-            (timeutil.iso(now), campaign["id"]),
-        )
-        append_event(conn, "campaign.cancelled", cmp, payload, now=now)
-    return CancelReport(cancelled_before_send=cancelled, already_sent=0, currently_in_flight=0)
+        return cancel_in_tx(conn, cmp, now=now)

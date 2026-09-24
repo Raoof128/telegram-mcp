@@ -67,6 +67,11 @@ class AuditTx:
         self.appended = False
 
     @property
+    def now(self) -> datetime:
+        """This transaction's time, the one clock read ``stamp`` renders."""
+        return self._now
+
+    @property
     def stamp(self) -> str:
         """This transaction's canonical time (every event in it shares one clock read)."""
         return timeutil.iso(self._now)
