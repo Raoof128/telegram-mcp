@@ -13,6 +13,7 @@ from typing import Any
 from comms.core.providers.capability import Capability as C
 from comms.transports.telegram.args import (
     boolean,
+    lifted,
     non_negative_int,
     permissions,
     positive_int,
@@ -34,7 +35,7 @@ def _unban(chat_id: int, args: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
 
 def _restrict(chat_id: int, args: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
     required = {"user_id": positive_int, "permissions": permissions}
-    fields = take(args, required, {"until_date": non_negative_int})
+    fields = take(lifted(args), required, {"until_date": non_negative_int})
     return "restrictChatMember", {"chat_id": chat_id, **fields}
 
 

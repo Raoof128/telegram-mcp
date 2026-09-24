@@ -16,6 +16,7 @@ from comms.core.providers.capability import Capability as C
 from comms.transports.telegram.admin_profiles import ADMIN_RIGHTS, promotion
 from comms.transports.telegram.args import (
     boolean,
+    lifted,
     non_negative_int,
     permissions,
     positive_int,
@@ -39,7 +40,7 @@ def _unban(args: Mapping[str, Any]) -> dict[str, Any]:
 
 def _restrict(args: Mapping[str, Any]) -> dict[str, Any]:
     required = {"user_id": positive_int, "permissions": permissions}
-    return take(args, required, {"until_date": non_negative_int})
+    return take(lifted(args), required, {"until_date": non_negative_int})
 
 
 def _promote(args: Mapping[str, Any]) -> dict[str, Any]:

@@ -8,6 +8,7 @@ from typing import Any
 __all__ = [
     "CHAT_PERMISSIONS",
     "boolean",
+    "lifted",
     "non_negative_int",
     "permissions",
     "positive_int",
@@ -46,6 +47,13 @@ def non_negative_int(value: object) -> bool:
 
 def boolean(value: object) -> bool:
     return type(value) is bool
+
+
+def lifted(args: Mapping[str, Any]) -> Mapping[str, Any]:
+    """``permissions: "all"`` (a lifted restriction, D12) as every permission granted again."""
+    if args.get("permissions") == "all":
+        return {**args, "permissions": dict.fromkeys(sorted(CHAT_PERMISSIONS), True)}
+    return args
 
 
 def permissions(value: object) -> bool:

@@ -343,3 +343,14 @@ def destination_id(conn: Any, destination_ref: str) -> int | None:
     """The row id of a destination ref (read-only; for provider-object refs, D8)."""
     row = conn.execute("SELECT id FROM destinations WHERE ref = ?", (destination_ref,)).fetchone()
     return int(row[0]) if row else None
+
+
+def member_identity(conn: Any, recipient_ref: str, transport: str) -> str | None:
+    """The recipient's enabled identity on ``transport`` (read-only; group admin, D12)."""
+    row = conn.execute(
+        "SELECT i.identity FROM contact_points c JOIN recipients r ON r.id = c.recipient_id"
+        " JOIN delivery_identities i ON i.id = c.identity_id"
+        " WHERE r.ref = ? AND c.transport = ? AND c.enabled = 1",
+        (recipient_ref, transport),
+    ).fetchone()
+    return None if row is None else str(row[0])

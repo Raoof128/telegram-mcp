@@ -78,3 +78,22 @@ def test_another_actors_destination_is_refused(actor):
     other = BOT if actor != "telegram_bot" else USER
     with pytest.raises(ValueError):
         adapter.validate(GOOD[actor], other)
+
+
+def test_a_lifted_restriction_grants_every_permission_again():
+    from comms.transports.telegram.args import CHAT_PERMISSIONS
+    from comms.transports.telegram.bot.admin_members import MEMBER_REQUESTS
+    from comms.transports.telegram.user.admin_members import MEMBER_SPECS
+
+    args = {"user_id": 42, "permissions": "all"}
+    _method, params = MEMBER_REQUESTS[C.MEMBER_RESTRICT](-100, args)
+    spec = MEMBER_SPECS[C.MEMBER_RESTRICT](args)
+    for built in (params["permissions"], spec["permissions"]):
+        assert built == dict.fromkeys(sorted(CHAT_PERMISSIONS), True)
+    for adapter, target in (ADAPTERS["telegram_bot"], ADAPTERS["telegram_user"]):
+        adapter.validate(SemanticOperation(C.MEMBER_RESTRICT, args), target)
+        with pytest.raises(ValueError):
+            adapter.validate(
+                SemanticOperation(C.MEMBER_RESTRICT, {"user_id": 42, "permissions": "some"}),
+                target,
+            )
