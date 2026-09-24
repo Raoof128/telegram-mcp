@@ -80,3 +80,26 @@ in the model source and requires the search to report that invariant.
   contention.
 - The model checks the *design*'s state machine. It does not verify the
   Python implementation line by line; the crash-injection suite does that.
+
+
+## The audit-chain model (comms v0.3, Task B31)
+
+`formal/audit_model.py`, same checker style: exhaustive BFS over a finite state machine.
+
+| Parameter | Value |
+|---|---|
+| Bounds | 3 epochs, 2 events per epoch, times 0–1 for checkpoints and cutoffs |
+| State | retained positions, the legitimate chain, the anchor, seals, checkpoints, time, the legacy seal, the cutover lineage |
+| Properties | 6 — contiguity; every non-final epoch sealed; truncation only at a root at or before the cutoff; no legacy append after the seal; lineage equal or fail-closed; verify accepts exactly the acceptable chains |
+| Reachable states | 215,040 |
+| Mutations | one per property, each caught (`tests/formal/test_audit_model_mutations.py`) |
+| Differential walk | 200 seeded sequences against the real engine (`tests/core/audit/test_audit_differential_walk.py`) |
+
+"Acceptable" is precise: a chain whose prefix was cut at a signed checkpoint cannot be told
+from retention, by design, so verify must accept exactly the suffixes of the legitimate
+chain that start at the genesis or a signed checkpoint and end at the anchored head.
+
+**What it found.** Its first run caught the abstraction accepting a chain whose epoch had
+lost the event its seal signs: the model checked only that the epoch was sealed. The real
+`verify_chain` already requires every epoch to end exactly at its seal (Task B2); the model
+now does too, and the differential walk holds them to the same verdict.
