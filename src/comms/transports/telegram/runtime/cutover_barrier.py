@@ -136,6 +136,10 @@ class TelegramLegacyPort:
 
     chain_domain = LEGACY_TELEGRAM.event_domain.decode()
 
+    @property
+    def key_dir(self) -> Path:
+        return self._key_dir
+
     def close_ingress(self) -> None:
         self.gate.close()
 

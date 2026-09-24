@@ -1,7 +1,6 @@
 """comms v0.3 Task A11: the cutover's comms side — lineage, genesis event, anchor, tgml1 retirement."""
 
 import json
-import os
 import sqlite3
 
 import pytest
@@ -10,52 +9,17 @@ import sqlcipher3
 from comms.core.audit import cutover as co
 from comms.core.audit.anchor import COMMS_ANCHOR, read_anchor
 from comms.core.audit.chain import COMMS, genesis_mac, head, verify_chain
-from comms.core.audit.writer import AuditWriter, SlotChainKeys
-from comms.core.keys.slots import KeySlotStore, bootstrap_comms_audit_keys, load_active
+from comms.core.keys.slots import load_active
 from comms.transports.telegram.ipc.leases import LeaseError, mint_lease, verify_lease
 from comms.transports.telegram.keys.store import read_lease_seed
 from comms.transports.telegram.storage.authority_view import load_security
-from tests.core import schema_fixtures as fx
-from tests.core.audit.legacy_fixtures import legacy_port
+from tests.core.audit.legacy_fixtures import CLIENT, comms_world, legacy_port
 from tests.core.campaign_helpers import NOW
-
-CLIENT = "tcl_" + "a" * 26
 
 
 @pytest.fixture
 def env(tmp_path):
-    conn = fx.migrated(tmp_path)
-    store = KeySlotStore(tmp_path / "slots")
-    bootstrap_comms_audit_keys(conn, store, now=NOW)
-    adir = tmp_path / "comms-anchor"
-    adir.mkdir(mode=0o700)
-    os.chmod(adir, 0o700)
-    keys = SlotChainKeys(conn, store)
-    writer = AuditWriter(conn, keys, adir / "head.anchor", clock=lambda: NOW)
-    port = legacy_port(tmp_path)
-    port.conn.execute(
-        "INSERT INTO principals (principal_ref, principal_key, auth_mode, created_at)"
-        " VALUES (?, 'key', 'bearer', '2026-09-24T00:00:00Z')",
-        ("prn_" + "a" * 26,),
-    )
-    port.conn.execute(
-        "INSERT INTO mcp_clients (principal_id, client_ref, auth_kind, auth_binding,"
-        " client_kind, created_at) VALUES (1, ?, 'bearer', ?, 'codex_local', '2026-09-24T00:00:00Z')",
-        (CLIENT, f"lease-seed:{CLIENT}"),
-    )
-    port.conn.commit()
-    seed = port._key_dir / f"lease-seed.{CLIENT}"
-    seed.write_bytes(bytes(32))
-    os.chmod(seed, 0o600)
-    return {
-        "conn": conn,
-        "store": store,
-        "keys": keys,
-        "writer": writer,
-        "anchor": adir / "head.anchor",
-        "port": port,
-        "tmp": tmp_path,
-    }
+    return comms_world(tmp_path, bearer=True)
 
 
 def _events(conn, kind=None):
@@ -166,10 +130,10 @@ def test_complete_is_reached_only_after_every_tgml1_seed_is_revoked_and_epoch_bu
     port = env["port"]
     with pytest.raises(co.CutoverCrash):
         co.run_cutover(env["conn"], port, env["writer"], now=NOW, crash_at="after_COMMS_ANCHORED")
-    assert read_lease_seed(port._key_dir, CLIENT) is not None
+    assert read_lease_seed(port.key_dir, CLIENT) is not None
     assert load_security(port.conn)[0] == 1
     assert co.run_cutover(env["conn"], port, env["writer"], now=NOW) == "COMPLETE"
-    assert list(port._key_dir.glob("lease-seed.*")) == []
+    assert list(port.key_dir.glob("lease-seed.*")) == []
     assert load_security(port.conn)[0] == 2
     assert port.conn.execute("SELECT enabled FROM mcp_clients").fetchone()[0] == 0
     (revoked,) = _events(env["conn"], "system.legacy_client_auth_revoked")
@@ -180,7 +144,7 @@ def test_complete_is_reached_only_after_every_tgml1_seed_is_revoked_and_epoch_bu
 def test_a_tgml1_bearer_is_refused_after_complete(env):
     port = env["port"]
     token = mint_lease(
-        seed=read_lease_seed(port._key_dir, CLIENT), client=CLIENT, epoch=1, now=1_000
+        seed=read_lease_seed(port.key_dir, CLIENT), client=CLIENT, epoch=1, now=1_000
     )
     co.run_cutover(env["conn"], port, env["writer"], now=NOW)
     seeds = {CLIENT: bytes(32)}  # even a verifier still holding the old seed refuses it

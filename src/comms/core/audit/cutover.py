@@ -342,6 +342,7 @@ def advance_comms(
         phase = "LEGACY_CLIENT_AUTH_REVOKED"
     if phase == "LEGACY_CLIENT_AUTH_REVOKED":
         _set_phase(conn, "COMPLETE", now=now)
+        crash("after_COMPLETE")
         phase = "COMPLETE"
     return phase
 

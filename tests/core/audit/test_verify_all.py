@@ -1,60 +1,25 @@
 """comms v0.3 Task A12: `audit verify --all` walks legacy → lineage → comms and fails closed (A6, G6)."""
 
 import json
-import os
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from comms.core.audit import cutover as co
-from comms.core.audit.verify_all import VerifyKeys, verify_all
-from comms.core.audit.writer import AuditWriter, SlotChainKeys
-from comms.core.keys import ids
-from comms.core.keys.slots import KeySlotStore, bootstrap_comms_audit_keys
+from comms.core.audit.verify_all import verify_all
 from comms.core.storage.db import write_tx
 from comms.transports.telegram.disclosure.audit import chain as legacy_chain
-from comms.transports.telegram.runtime.cutover_barrier import legacy_verifier
 from comms.transports.telegram.storage.settings import set_setting
-from tests.core import schema_fixtures as fx
-from tests.core.audit.legacy_fixtures import CHAIN_KEY, CHECKPOINT_SEED, legacy_port
+from tests.core.audit.legacy_fixtures import CHECKPOINT_SEED, comms_world, legacy_port, verify_keys
 from tests.core.campaign_helpers import NOW
-
-_PUBLIC = Ed25519PrivateKey.from_private_bytes(CHECKPOINT_SEED).public_key().public_bytes_raw()
-
-
-def _public_for(key_id):
-    return _PUBLIC if key_id == ids.ed25519_key_id(_PUBLIC) else None
 
 
 @pytest.fixture
 def world(tmp_path):
-    conn = fx.migrated(tmp_path)
-    store = KeySlotStore(tmp_path / "slots")
-    bootstrap_comms_audit_keys(conn, store, now=NOW)
-    adir = tmp_path / "comms-anchor"
-    adir.mkdir(mode=0o700)
-    os.chmod(adir, 0o700)
-    keys = SlotChainKeys(conn, store)
-    writer = AuditWriter(conn, keys, adir / "head.anchor", clock=lambda: NOW)
-    return {
-        "conn": conn,
-        "keys": keys,
-        "writer": writer,
-        "port": legacy_port(tmp_path),
-        "tmp": tmp_path,
-    }
-
-
-def _keys(world):
-    return VerifyKeys(
-        legacy=legacy_verifier(CHAIN_KEY, _public_for),
-        comms_key_for_epoch=world["keys"].for_epoch,
-        comms_anchor_path=world["writer"]._anchor,
-    )
+    return comms_world(tmp_path)
 
 
 def _verify(world, legacy_conn=None):
-    return verify_all(world["conn"], legacy_conn or world["port"].conn, _keys(world))
+    return verify_all(world["conn"], legacy_conn or world["port"].conn, verify_keys(world))
 
 
 def test_all_green_after_run_cutover(world):
@@ -125,7 +90,7 @@ def test_a_tampered_genesis_payload_fails(world):
 
 def test_a_stale_comms_anchor_fails(world):
     co.run_cutover(world["conn"], world["port"], world["writer"], now=NOW)
-    anchor = world["writer"]._anchor
+    anchor = world["anchor"]
     before = anchor.read_bytes()
     with world["writer"].transaction() as tx:
         tx.append("system.test_marker", payload={"count": 1})
