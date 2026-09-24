@@ -40,7 +40,7 @@ from comms.core.keys.slots import (
 )
 from comms.core.storage.db import write_tx
 
-__all__ = ["RotationCrash", "clean_orphans", "find_orphans", "rotate"]
+__all__ = ["RotationCrash", "activate_in_tx", "clean_orphans", "find_orphans", "rotate"]
 
 _GENERIC_ROTATIONS = frozenset({"new_id", "invalidate", "seal_epoch"})
 _GENERIC_KINDS = frozenset({"hmac", "ed25519"})
@@ -119,6 +119,24 @@ def _open_epoch(
     return consequence
 
 
+def activate_in_tx(
+    conn: Any, purpose: str, old: tuple[int, str] | None, version: int, material: bytes, stamp: str
+) -> str:
+    """Retire ``old`` and make ``version`` ACTIVE, in the caller's transaction (one copy)."""
+    if old is not None:
+        conn.execute(
+            "UPDATE key_slots SET state = 'RETIRED', retired_at = ? WHERE purpose = ? AND version = ?",
+            (stamp, purpose, old[0]),
+        )
+        if PURPOSES[purpose].public_registry:
+            conn.execute(
+                "UPDATE verification_keys SET trust_state = 'TRUSTED_RETIRED', retired_at = ?"
+                " WHERE key_id = ? AND trust_state = 'ACTIVE'",  # a compromise mark stays
+                (stamp, old[1]),
+            )
+    return register_version(conn, purpose, version, material, stamp)
+
+
 def rotate(
     writer: AuditWriter,
     store: KeySlotStore,
@@ -152,18 +170,7 @@ def rotate(
     if spec.rotation == "seal_epoch":
         consequence = _open_epoch(conn, store, purpose, material)
     with writer.transaction() as tx:
-        if old is not None:
-            conn.execute(
-                "UPDATE key_slots SET state = 'RETIRED', retired_at = ? WHERE purpose = ? AND version = ?",
-                (stamp, purpose, old_version),
-            )
-            if spec.public_registry:
-                conn.execute(
-                    "UPDATE verification_keys SET trust_state = 'TRUSTED_RETIRED', retired_at = ?"
-                    " WHERE key_id = ? AND trust_state = 'ACTIVE'",  # a compromise mark stays
-                    (stamp, old[1]),
-                )
-        key_id = register_version(conn, purpose, version, material, stamp)
+        key_id = activate_in_tx(conn, purpose, old, version, material, stamp)
         if spec.rotation == "invalidate":
             _invalidate_context(conn)  # every cursor and ctx_ handle dies with the old key
         if consequence is None or not consequence(tx, old_version, version):

@@ -90,6 +90,8 @@ AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
         "head_epoch": count(1),
         "head_seq": count(1),
     },
+    "admin.backup_import": {"binding": digest, "chain_key_id": key_id},
+    "admin.backup_adopt": {"old_binding": digest, "new_binding": digest},
     "admin.backup_export": {
         "binding": digest,
         "ciphertext_sha256": digest,
@@ -116,6 +118,8 @@ SUBJECT_KINDS: dict[str, str | None] = {
     "admin.session_revoke": None,
     "maintenance.retention_purge": None,
     "admin.audit_repair": None,
+    "admin.backup_import": None,
+    "admin.backup_adopt": None,
     "admin.backup_export": None,
     "admin.key_rotation": None,
 }

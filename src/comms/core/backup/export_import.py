@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
 import stat
 import time
 from collections.abc import Callable, Hashable, Mapping
@@ -33,14 +34,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from comms.core import refs
+from comms.core import refs, timeutil
+from comms.core.audit.integrity import require_not_degraded
 from comms.core.audit.writer import AuditWriter
 from comms.core.backup import age
 from comms.core.backup.payload import SCHEMA, _campaigns, _directory, account_binding, build_payload
 from comms.core.backup.signature import SignatureError, sign, verify
 from comms.core.canonical import jcs_dumps
+from comms.core.keys.rotate import activate_in_tx, clean_orphans
 from comms.core.keys.signers import require_import_trust
-from comms.core.keys.slots import KeySlotError, KeySlotStore, load_active
+from comms.core.keys.slots import KeySlotError, KeySlotStore, active_version, load_active
 from comms.core.strict_json import strict_json_loads
 
 __all__ = [
@@ -237,3 +240,187 @@ def stage_import(
     )
     staged.put(result)
     return result
+
+
+def commit_import(
+    writer: AuditWriter,
+    store: KeySlotStore,
+    staged: StagedImports,
+    handle: str,
+    peer: Hashable,
+    *,
+    now: datetime,
+) -> Mapping[str, Mapping[str, int]]:
+    """Commit a staged import (Task B28): recheck, replace, open a new chain epoch.
+
+    One audited transaction: the live directory must still match the staged base digest;
+    the directory is replaced (refs reused, anything the backup lacks disabled, never
+    deleted); the chain key rotates and ``admin.backup_import`` becomes the new epoch's
+    first event; an explicit adoption records ``admin.backup_adopt`` with both bindings.
+    """
+    conn = writer.conn
+    require_not_degraded(conn)
+    old = active_version(conn, "audit-chain-key")
+    if old is None:
+        raise ImportRefused("the comms chain has no key")
+    clean_orphans(conn, store, "audit-chain-key")
+    material = secrets.token_bytes(32)
+    version = store.write_version("audit-chain-key", material)
+    checkpoint_key = load_active(conn, store, "audit-checkpoint-key")[0]
+    stamp = timeutil.iso(now)
+    with writer.transaction() as tx:
+        stage = staged.take(handle, peer, _base_digest(conn))
+        if stage.incompatibilities:
+            raise ImportRefused("the staged import has unresolved incompatibilities")
+        _apply_directory(conn, stage.payload["directory"], stamp)
+        key_id = activate_in_tx(conn, "audit-chain-key", old, version, material, stamp)
+        tx.open_epoch(
+            "admin.backup_import",
+            new_key=material,
+            checkpoint_key=checkpoint_key,
+            payload={"binding": str(stage.payload["binding"]), "chain_key_id": key_id},
+        )
+        if stage.adopt is not None:
+            tx.append(
+                "admin.backup_adopt",
+                payload={"old_binding": stage.adopt[0], "new_binding": stage.adopt[1]},
+            )
+    return stage.diff
+
+
+def _identity_id(conn: Any, transport: str, identity: str) -> int:
+    row = conn.execute(
+        "SELECT id FROM delivery_identities WHERE transport = ? AND identity = ?",
+        (transport, identity),
+    ).fetchone()
+    if row is not None:
+        return int(row[0])
+    return int(
+        conn.execute(
+            "INSERT INTO delivery_identities (transport, identity) VALUES (?, ?)",
+            (transport, identity),
+        ).lastrowid
+    )
+
+
+def _ids(conn: Any, table: str) -> dict[str, int]:
+    return {str(r[0]): int(r[1]) for r in conn.execute(f"SELECT ref, id FROM {table}")}
+
+
+def _apply_directory(conn: Any, directory: Mapping[str, Any], stamp: str) -> None:
+    """Replace the live directory with the backup's, in the caller's transaction."""
+    # Everything the backup lacks, or holds disabled, is disabled first, so enabling the
+    # backup's rows never meets a uniqueness clash with a row that is going away.
+    for table, section in (
+        ("locations", "locations"),
+        ("recipients", "recipients"),
+        ("destinations", "destinations"),
+        ("contact_points", "contact_points"),
+    ):
+        keep = {row["ref"] for row in directory[section] if row["enabled"]}
+        for ref in _ids(conn, table).keys() - keep:
+            conn.execute(f"UPDATE {table} SET enabled = 0 WHERE ref = ?", (ref,))
+    locations = _ids(conn, "locations")
+    for row in directory["locations"]:
+        if row["ref"] in locations:
+            conn.execute(
+                "UPDATE locations SET name = ?, enabled = ? WHERE ref = ?",
+                (row["name"], row["enabled"], row["ref"]),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO locations (ref, name, enabled, created_at) VALUES (?, ?, ?, ?)",
+                (row["ref"], row["name"], row["enabled"], row["created_at"]),
+            )
+    recipients = _ids(conn, "recipients")
+    for row in directory["recipients"]:
+        if row["ref"] in recipients:
+            conn.execute(
+                "UPDATE recipients SET enabled = ? WHERE ref = ?", (row["enabled"], row["ref"])
+            )
+        else:
+            conn.execute(
+                "INSERT INTO recipients (ref, enabled, created_at) VALUES (?, ?, ?)",
+                (row["ref"], row["enabled"], row["created_at"]),
+            )
+    locations, recipients = _ids(conn, "locations"), _ids(conn, "recipients")
+    destinations = _ids(conn, "destinations")
+    for row in directory["destinations"]:
+        if row["ref"] in destinations:
+            conn.execute(
+                "UPDATE destinations SET display_name = ?, capabilities = ?, enabled = ?, disabled_at = ? WHERE ref = ?",
+                (
+                    row["display_name"],
+                    row["capabilities"],
+                    row["enabled"],
+                    row["disabled_at"],
+                    row["ref"],
+                ),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO destinations (ref, location_id, transport, platform_identity, identity_id,"
+                " display_name, capabilities, enabled, disabled_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["ref"],
+                    locations[row["location_ref"]],
+                    row["transport"],
+                    row["platform_identity"],
+                    _identity_id(conn, row["transport"], row["identity"]),
+                    row["display_name"],
+                    row["capabilities"],
+                    row["enabled"],
+                    row["disabled_at"],
+                    row["created_at"],
+                ),
+            )
+    contact_points = _ids(conn, "contact_points")
+    for row in directory["contact_points"]:
+        if row["ref"] in contact_points:
+            conn.execute(
+                "UPDATE contact_points SET enabled = ?, opted_out_at = ?, disabled_at = ? WHERE ref = ?",
+                (row["enabled"], row["opted_out_at"], row["disabled_at"], row["ref"]),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO contact_points (ref, recipient_id, transport, platform_identity, identity_id,"
+                " enabled, opted_out_at, disabled_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row["ref"],
+                    recipients[row["recipient_ref"]],
+                    row["transport"],
+                    row["platform_identity"],
+                    _identity_id(conn, row["transport"], row["identity"]),
+                    row["enabled"],
+                    row["opted_out_at"],
+                    row["disabled_at"],
+                    row["created_at"],
+                ),
+            )
+    for row in directory["location_members"]:
+        conn.execute(
+            "INSERT OR IGNORE INTO location_members (location_id, recipient_id) VALUES (?, ?)",
+            (locations[row["location_ref"]], recipients[row["recipient_ref"]]),
+        )
+    audiences = _ids(conn, "audiences")
+    for row in directory["audiences"]:
+        if row["ref"] in audiences:
+            conn.execute("UPDATE audiences SET name = ? WHERE ref = ?", (row["name"], row["ref"]))
+        else:
+            conn.execute(
+                "INSERT INTO audiences (ref, name, created_at) VALUES (?, ?, ?)",
+                (row["ref"], row["name"], row["created_at"]),
+            )
+    audiences, destinations = _ids(conn, "audiences"), _ids(conn, "destinations")
+    for row in directory["audience_members"]:
+        conn.execute(
+            "INSERT OR IGNORE INTO audience_members (audience_id, member_location_id, member_audience_id,"
+            " member_destination_id, member_recipient_id) VALUES (?, ?, ?, ?, ?)",
+            (
+                audiences[row["audience_ref"]],
+                locations.get(row["location_ref"]) if row["location_ref"] else None,
+                audiences.get(row["member_audience_ref"]) if row["member_audience_ref"] else None,
+                destinations.get(row["destination_ref"]) if row["destination_ref"] else None,
+                recipients.get(row["recipient_ref"]) if row["recipient_ref"] else None,
+            ),
+        )
