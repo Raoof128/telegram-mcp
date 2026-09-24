@@ -8,7 +8,7 @@ Committed usage is recomputed from ``exposure_ledger`` on every consultation.
 Nothing is cached: a cached ceiling is a bypassable ceiling.
 
 All record and byte quantities come from ``telegram_mcp.disclosure.measure``.
-Computing one here would give the prompt and the ledger two different truths,
+Computing one here would give the receipt and the ledger two different truths,
 which is exactly what Gate P forbids.
 """
 
@@ -269,10 +269,10 @@ class BudgetLedger:
         return committed + live + increment
 
     def consult(self, worst_case: Mapping[BucketKey, Usage]) -> tuple[str, dict[BucketKey, Usage]]:
-        """Pre-consent evaluation: the strictest tier across every bucket.
+        """Pre-reservation evaluation: the strictest tier across every bucket.
 
-        Returns the tier and the projected figure per bucket, which is what
-        the trusted prompt displays as "current/projected".
+        Returns the tier and the projected figure per bucket. The tier is the
+        soft-threshold flag's decision point (comms spec v0.2 §23C.3).
         """
         with self._lock:
             self._prune()

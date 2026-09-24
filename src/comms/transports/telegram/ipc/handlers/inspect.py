@@ -1,4 +1,4 @@
-"""Operator inspection: receipts, keys, exposure, consent (spec §23A.3, §23C, §33)."""
+"""Operator inspection: receipts, keys, exposure (spec §23A.3, §23C, §33)."""
 
 from __future__ import annotations
 

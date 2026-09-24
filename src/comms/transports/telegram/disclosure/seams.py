@@ -403,7 +403,9 @@ class CoordinatorAuthority:
             raise AuthorityRefusal("POLICY_UNCONFIGURED")
         gated = self._telegram_gate()
         if gated is not None:
-            raise AuthorityRefusal(gated)  # before consent: never prompt for a read that cannot run
+            raise AuthorityRefusal(
+                gated
+            )  # before any reservation: a read that cannot run costs nothing
         security_epoch, locked = load_security(self._conn)
         if locked:
             raise AuthorityRefusal("SECURITY_LOCKED")

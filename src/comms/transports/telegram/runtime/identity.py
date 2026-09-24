@@ -3,8 +3,8 @@
 ``PrincipalContext`` says *who* is calling and nothing else. Grants,
 memberships, epochs and egress are authority state: they are read at
 ``snapshot_authority`` and again at ``revalidate_authority``, never frozen
-here, because a grant frozen at ingress survives a revoke issued while the
-consent prompt is open.
+here, because a grant frozen at ingress would survive a revoke issued while
+the call is in flight.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 Step 11 refuses when the actual charge exceeds the reservation, so an
 estimate that is too small is a disclosure that never happens, and an
-estimate that is merely large is an honest, conservative prompt. Every
+estimate that is merely large is an honest, conservative reservation. Every
 string the Telegram reads emit has a ceiling here; the reads clamp to it
 (``clamp``), so the bound holds by construction, not by hope. The bound is
 measured, not hand-counted: a record built from the ceilings, filled with

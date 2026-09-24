@@ -17,8 +17,8 @@ binding:
   vector instead, under a distinct payload schema so the two can never
   collide.
 
-Both are bare lowercase 64-hex here, which is what the frozen consent-wire
-challenge carries. The Phase-3 disclosure receipt prints the same value
+Both are bare lowercase 64-hex here (the retired v0.1.10 consent challenge
+carried the same form). The Phase-3 disclosure receipt prints the same value
 with its ``hmac-sha256:`` label (spec Appendix K); the label belongs to that
 serializer, not to this value.
 

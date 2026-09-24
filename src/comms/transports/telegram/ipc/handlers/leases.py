@@ -1,7 +1,7 @@
 """``auth headers``: the credential helper (spec §8.2.1, §9.7.1).
 
-A lease authenticates a client for at most 60 seconds. It is not consent:
-every sensitive call still meets the consent gate. The seed is read, never
+A lease authenticates a client for at most 60 seconds. It is not authority:
+every sensitive call still meets the project grants and the budget. The seed is read, never
 minted, so an unknown client gets nothing.
 """
 

@@ -124,7 +124,7 @@ class SearchSnapshot:
 
     @property
     def egress_level(self) -> str:
-        """The widest selected grant: what the prompt must warn about."""
+        """The widest selected grant: the egress the receipt must record."""
         return max((p.egress_level for p in self.projects), key=lambda level: _RANK[level])
 
     @property
@@ -198,7 +198,7 @@ class SearchAuthority:
             raise AuthorityRefusal("POLICY_UNCONFIGURED")
         gated = self._gate()
         if gated is not None:
-            raise AuthorityRefusal(gated)  # before consent
+            raise AuthorityRefusal(gated)  # before any reservation or retrieval
         security_epoch, locked = load_security(self._conn)
         if locked:
             raise AuthorityRefusal("SECURITY_LOCKED")
