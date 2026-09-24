@@ -1,0 +1,76 @@
+# ---------------------------------------------------------------------------
+# Secrets and user data — nothing here may EVER be committed.
+# The vault holds private message content; the keys live in the macOS Keychain.
+# tests/test_no_secrets.py enforces this in CI as well.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.key
+*.pem
+*.p12
+*.pfx
+*.keychain
+*.mobileprovision
+secrets/
+imports/            # raw WhatsApp exports: plaintext personal messages
+blobs/              # attachment blob store
+logs/
+.whatsvault/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.venv-*/
+venv/
+env/
+*.egg-info/
+.eggs/
+
+# ---------------------------------------------------------------------------
+# Build artefacts
+# ---------------------------------------------------------------------------
+build/
+dist/
+wheels/
+*.whl
+*.tar.gz
+
+# ---------------------------------------------------------------------------
+# Test and tooling caches
+# ---------------------------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# ---------------------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# ---------------------------------------------------------------------------
+# Local agent/session scratch (not part of the project)
+# ---------------------------------------------------------------------------
+.remember/
+
+# Local agent working notes (not part of the project)
+CLAUDE.md

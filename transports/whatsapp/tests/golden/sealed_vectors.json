@@ -1,0 +1,7 @@
+{
+  "note": "open-direction cross-impl vector: recipient_priv + envelope -> plaintext",
+  "recipient_key_id": 42,
+  "recipient_priv": "f8141e8bc6ea4f9fa36fe4daa9de230a0a1b0aa0c0b555e868ded893b055f05c",
+  "envelope": "575645310101010000002ab4946806fd6370f5212faa41e8f46193b9e1aa0bdc0625f5ad148607490476e2405c4e3c71d5c4723307a5ea7dae644a8262d47171f97e8ccbc1c145f56d2f4b7928023e325041cd6d6d99250000004355d2b67e7529c0ec9c256eb1c8432dba9a849f0efaf72a360eed99050e9e4adba29bb8224748ed7424be8f152c5a575c075f11b1b8156ce9b9b072317132fddd8e6707",
+  "plaintext": "{\"entry\":[{\"changes\":[{\"value\":{\"messages\":[]}}]}]}"
+}

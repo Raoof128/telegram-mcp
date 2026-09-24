@@ -1,0 +1,11 @@
+# Default owner for everything.
+*                           @Raoof128
+
+# Security-sensitive surfaces: changes here always need an explicit review.
+/src/whatsvault/crypto/     @Raoof128
+/src/whatsvault/approval/   @Raoof128
+/src/whatsvault/mcp/        @Raoof128
+/apps/mcp/                  @Raoof128
+/tests/adversarial/         @Raoof128
+/SECURITY.md                @Raoof128
+/.github/workflows/         @Raoof128

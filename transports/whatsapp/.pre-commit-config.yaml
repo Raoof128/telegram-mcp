@@ -1,0 +1,44 @@
+# Install once with:  .venv/bin/pre-commit install
+# These hooks mirror the CI gates, so a green commit is a green pipeline.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: detect-private-key      # never commit key material
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: no-commit-to-branch
+        args: ["--branch", "main"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.5
+    hooks:
+      - id: ruff-check
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks           # secret scanning on every commit
+
+  - repo: local
+    hooks:
+      - id: whatsvault-secrets
+        name: whatsvault secret-tracking gate
+        entry: .venv/bin/pytest tests/test_no_secrets.py -q
+        language: system
+        pass_filenames: false
+      - id: whatsvault-boundaries
+        name: whatsvault security-boundary suite
+        entry: .venv/bin/pytest tests/adversarial -q
+        language: system
+        pass_filenames: false

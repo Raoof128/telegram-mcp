@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pipx install ruff
+      - name: Lint
+        run: ruff check src apps tests --output-format=github
+      - name: Format check
+        run: ruff format --check src apps tests
+
+  test:
+    name: Tests (macOS, Python ${{ matrix.python-version }})
+    # macOS is not incidental: sqlcipher3 builds against Homebrew's SQLCipher and
+    # the Keychain-backed keystore refuses any non-macOS backend by design.
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SQLCipher
+        run: brew install sqlcipher
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install project
+        env:
+          # sqlcipher3 has no macOS arm64 wheel; it compiles against Homebrew.
+          LDFLAGS: -L/opt/homebrew/opt/sqlcipher/lib
+          CPPFLAGS: -I/opt/homebrew/opt/sqlcipher/include
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest --cov --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: warn
+
+  security:
+    name: Security gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # gitleaks scans full history, not just the tip
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fail if a secret-bearing file is tracked
+        run: |
+          # Independent of gitleaks: catches file *types* that must never be
+          # tracked at all, even if their contents look innocuous.
+          if git ls-files | grep -Ei '\.(db|db-wal|db-shm|env|pem|key|p12|keychain)$'; then
+            echo "::error::a secret-bearing file type is tracked"
+            exit 1
+          fi
+          echo "no secret-bearing file types tracked"
+
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Verify the wheel ships both packages and both entry points
+        run: |
+          python - <<'PY'
+          import glob, zipfile
+          whl = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(whl).namelist()
+          assert any(n.startswith("apps/") for n in names), "apps/ missing from the wheel"
+          assert any(n.startswith("whatsvault/") for n in names), "whatsvault/ missing"
+          ep = next(n for n in names if n.endswith("entry_points.txt"))
+          text = zipfile.ZipFile(whl).read(ep).decode()
+          assert "whatsvault-mcp" in text, "console script missing"
+          print("wheel verified:", whl)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
