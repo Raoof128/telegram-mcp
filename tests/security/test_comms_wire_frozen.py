@@ -38,6 +38,8 @@ ADDED_IN_V03 = Counter(  # comms/core/domains.py, comms v0.3 Part A
         "b'comms-campaign-event/v1\\x00'": 1,
         "b'comms-campaign-commit/v1\\x00'": 1,
         "b'comms-backup-signature/v1\\x00'": 1,
+        "b'comms-backup-binding/v1\\x00'": 1,
+        "b'comms-backup/v1\\x00'": 1,
     }
 )
 

@@ -273,6 +273,11 @@ DROP TRIGGER audit_events_append_only_d;
 CREATE TRIGGER audit_events_delete_only_behind_root BEFORE DELETE ON audit_events
   WHEN (SELECT value FROM maintenance_flags WHERE name = 'truncating') IS NOT 1
   BEGIN SELECT RAISE(ABORT, 'audit is append-only: deletes only by truncation behind a root'); END;
+-- Task B25: this installation's stable ref, which backups bind to.
+CREATE TABLE installation (id INTEGER PRIMARY KEY CHECK (id = 1), installation_ref TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL);
+CREATE TRIGGER installation_immutable BEFORE UPDATE ON installation
+  BEGIN SELECT RAISE(ABORT, 'the installation ref is immutable'); END;
 -- A15 (Task B20): directory identities of endpoints disabled past the retention window are
 -- replaced by 'redacted:<delivery_identities.id>' (unique per row); nothing else may change.
 ALTER TABLE destinations ADD COLUMN disabled_at TEXT;

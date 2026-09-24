@@ -27,3 +27,5 @@ AUDIT_HEAD_ANCHOR = b"comms/audit-head-anchor/v1\0"  # comms v0.3 A8
 CAMPAIGN_EVENT = b"comms-campaign-event/v1\0"  # comms v0.3 A16/G4
 CAMPAIGN_COMMIT = b"comms-campaign-commit/v1\0"  # comms v0.3 A12, D2
 BACKUP_SIGNATURE = b"comms-backup-signature/v1\0"  # comms v0.3 B24
+BACKUP_BINDING = b"comms-backup-binding/v1\0"  # comms v0.3 B25
+BACKUP_SCHEMA = b"comms-backup/v1\0"  # comms v0.3 B25: the payload's schema name

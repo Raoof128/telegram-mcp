@@ -19,7 +19,7 @@ def test_core_prefixes_are_disjoint_from_telegram_and_whatsvault():
 def test_core_prefixes_are_unique():
     values = list(refs.CORE_PREFIXES.values())
     assert (
-        len(values) == len(set(values)) == 24
+        len(values) == len(set(values)) == 25
     )  # 10 from 5b-4 + 12 (Task A1b) + aev_/ack_ (Task A4, R-002)
 
 
