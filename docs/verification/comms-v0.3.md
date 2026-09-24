@@ -78,3 +78,64 @@ Deferred minor: an intermittent uvicorn `CancelledError` traceback at smoke shut
 `comms-v0.3-part-a` is an annotated local tag on the commit that adds this section. It is **not pushed**, and nothing is ever rebased across it. Tag object `38b28bb43ad702859ac23250f8760acf15412bc0` → commit `fcae4ffd4b66a154c43ee1962d85e380cb7df52a`.
 
 No production claim.
+
+## Part B: durability, audit, keys, retention, recovery, backup
+
+Commits `855c408` … this section, after the `comms-v0.3-part-a` tag (`fcae4ff`).
+
+### What exists now
+
+| Area | Where |
+|---|---|
+| Chain epochs: seal and open in the caller's transaction; verify across contiguous sealed epochs and from a signed root (the five probe attacks are named regressions) | `comms/core/audit/chain.py` |
+| The truncation root: the latest verified checkpoint at or before the cutoff | `comms/core/audit/retention_root.py` |
+| The key inventory (design §B.4): every purpose with its rotation and destruction rule; staged rotation (stage → prove → activate) with orphans; `audit-chain-key` rotation opens an epoch (epoch *n* ↔ key version *n*); checkpoint and cursor consequences; backup-signer trust states; retired HMAC keys kept only while a dependency is proven | `comms/core/keys/{purposes,slots,rotate,signers,retired}.py` |
+| The keyed campaign commitment on the chain (A12) | `comms/core/delivery/commitment.py`, freeze |
+| The daemon-owned 0600 secret store (no Keychain, R-B11); the `comms.db` rekey with recovery at every boundary; staged provider-credential rotation with re-check and rollback | `comms/core/keys/{files,secrets}.py`, `storage/rekey.py`, `credentials.py` |
+| Telegram session revoke (two transactions, one `auth.LogOut`), durable error mapping, recovery by login with `--new-account` | `transports/telegram/telegram/admin_rpc.py`, adapter, identity |
+| Retention in foreign-key order: legacy exposure, legacy chain truncation behind a root, receipts, message refs, the comms chain prefix, campaign bodies, directory identities, retired key material, the maintenance event; fails closed on a bad root | `comms/core/maintenance/{retention,redaction}.py`, `transports/telegram/runtime/legacy_retention.py` |
+| `audit repair` through an ancestor-proving verifier | `comms/core/audit/repair.py` |
+| Backups: age-v1 X25519 (66 vendored C2SP vectors, interop with age 1.3.2), detached `comms-backup-signature/v1`, the `comms-backup/v1` payload and binding, transfer frames, export, staged import, commit (a new epoch) | `comms/core/backup/*` |
+| `comms doctor`; eight runbooks | `comms/core/doctor.py`, `docs/runbooks/` |
+| Two formal models, mutation-tested; a 200-walk differential test against the engine | `formal/{audit_model,keys_model}.py` |
+
+### Gate at the Part B head
+
+| Check | Result |
+|---|---|
+| `uv run pytest -q` | **2980 passed**, 4 skipped |
+| `scripts/e2e_smoke.py` | **57/57** |
+| `pytest tests/formal` | 44 passed: 544 states / 22 assertions; campaign model 96,528 states; audit model 215,040 states; keys model 512 states |
+| ruff, ruff format, mypy, `uv build` | clean |
+| WhatsVault suite | **450 passed** |
+
+### Measured facts carried
+
+- **N1**: SQLCipher accepts `PRAGMA rekey` inside `BEGIN IMMEDIATE`, so `rekey` refuses while a transaction is open (`test_rekey_refuses_inside_a_transaction`).
+- **N2**: `write_anchor` (temp file, fsync, rename, fsync the directory) measured a median of 0.21 ms, p95 0.26 ms and max 0.37 ms over 200 runs, so per-event anchoring is kept and nothing is batched. **Bound:** `os.fsync` on macOS is not `F_FULLFSYNC`, the same as the legacy anchor; a power loss can lose the last anchor write, which the integrity latch and `audit repair` exist to recover.
+- **N7**: the `security` CLI cannot take a secret on stdin, so there is no Keychain backend (R-B11).
+
+### The exit gate
+
+`tests/security/test_v03_part_b_exit.py` pins the plan's list verbatim — epochs; the root rule; anchor per event (N2 recorded); the inventory; the commitment; revoke and recovery; retention; backup; doctor; runbooks; the two models — and re-runs every owning test in a fresh process. None may fail, be skipped or be deselected, so the age interop tests must run: the gate is proven on a host with age(1).
+
+### What the tests found
+
+- **The crash table** (`test_part_b_crash_tables.py`): a re-commit of an import that had already applied staged a new chain key before checking the base digest, leaving an orphan. The commit now refuses before staging anything and destroys a staged key if its transaction refuses.
+- **B9**: rotating away from a revoked backup signer tried to set it back to `TRUSTED_RETIRED`; the one-way trigger refused the rotation. Retirement now applies only to an `ACTIVE` signer.
+- **B27 self-review**: `trust_key` could have overridden a local compromise mark; a signer this installation marked `VERIFICATION_ONLY` or `REVOKED` is now refused even when named.
+- **B31**: the audit model's first run caught its own abstraction accepting an epoch that lost the event its seal signs; the engine already enforced it.
+
+### Rulings made in Part B
+
+Registered: R-B11 (no Keychain). The ledger records the smaller ones task by task (B2 key callable, B3 `skipped=`, B4 literal additions, B5 orphan definition, B6 epoch ↔ key version, B8 unaudited freeze path, B10 transport-supplied window, B12–B13 signatures, B14 sanctioned `LogOutRequest`, B16 bump on every login, B17 `LegacyRetention`, B18 truncated genesis, B19 draft-content redaction, B20 `disabled_at`, B21 `blocked`, B22 vector subset, B24 hex sidecar, B25–B27 new `cin_`/`cbi_` prefixes, B28 epoch-opening import, B29–B30 scope, B31–B32 model definitions).
+
+### Waiting on the owner
+
+Unchanged from Part A: the R-A20 `.claude/settings.json` change, and the out-of-repo runbook steps.
+
+### Tag
+
+`comms-v0.3-part-b` is an annotated local tag on the commit that adds this section. It is **not pushed**; the tag object SHA is recorded in the follow-up commit.
+
+No production claim.

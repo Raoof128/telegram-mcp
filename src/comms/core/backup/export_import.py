@@ -48,6 +48,7 @@ from comms.core.strict_json import strict_json_loads
 
 __all__ = [
     "ExportResult",
+    "ImportCrash",
     "ImportRefused",
     "StagedImport",
     "StagedImports",
@@ -57,6 +58,10 @@ __all__ = [
 
 STAGE_TTL_S = 600.0
 _SECTIONS = ("locations", "recipients", "destinations", "contact_points", "audiences")
+
+
+class ImportCrash(BaseException):
+    """Raised only by the ``crash_at`` seam, which production never supplies."""
 
 
 class ImportRefused(Exception):
@@ -250,6 +255,7 @@ def commit_import(
     peer: Hashable,
     *,
     now: datetime,
+    crash_at: str | None = None,
 ) -> Mapping[str, Mapping[str, int]]:
     """Commit a staged import (Task B28): recheck, replace, open a new chain epoch.
 
@@ -263,28 +269,38 @@ def commit_import(
     old = active_version(conn, "audit-chain-key")
     if old is None:
         raise ImportRefused("the comms chain has no key")
+    # Refuse before staging anything: a stale or incompatible import leaves no key behind.
+    stage = staged.take(handle, peer, _base_digest(conn))
+    if stage.incompatibilities:
+        raise ImportRefused("the staged import has unresolved incompatibilities")
     clean_orphans(conn, store, "audit-chain-key")
     material = secrets.token_bytes(32)
     version = store.write_version("audit-chain-key", material)
     checkpoint_key = load_active(conn, store, "audit-checkpoint-key")[0]
     stamp = timeutil.iso(now)
-    with writer.transaction() as tx:
-        stage = staged.take(handle, peer, _base_digest(conn))
-        if stage.incompatibilities:
-            raise ImportRefused("the staged import has unresolved incompatibilities")
-        _apply_directory(conn, stage.payload["directory"], stamp)
-        key_id = activate_in_tx(conn, "audit-chain-key", old, version, material, stamp)
-        tx.open_epoch(
-            "admin.backup_import",
-            new_key=material,
-            checkpoint_key=checkpoint_key,
-            payload={"binding": str(stage.payload["binding"]), "chain_key_id": key_id},
-        )
-        if stage.adopt is not None:
-            tx.append(
-                "admin.backup_adopt",
-                payload={"old_binding": stage.adopt[0], "new_binding": stage.adopt[1]},
+    if crash_at == "before_tx":  # the new chain key is a staged orphan; the next commit cleans it
+        raise ImportCrash(crash_at)
+    try:
+        with writer.transaction() as tx:
+            staged.take(handle, peer, _base_digest(conn))  # rechecked under the writer's lock
+            _apply_directory(conn, stage.payload["directory"], stamp)
+            key_id = activate_in_tx(conn, "audit-chain-key", old, version, material, stamp)
+            tx.open_epoch(
+                "admin.backup_import",
+                new_key=material,
+                checkpoint_key=checkpoint_key,
+                payload={"binding": str(stage.payload["binding"]), "chain_key_id": key_id},
             )
+            if stage.adopt is not None:
+                tx.append(
+                    "admin.backup_adopt",
+                    payload={"old_binding": stage.adopt[0], "new_binding": stage.adopt[1]},
+                )
+    except Exception:
+        store.destroy("audit-chain-key", version)  # never registered: nothing references it
+        raise
+    if crash_at == "after_tx":
+        raise ImportCrash(crash_at)
     return stage.diff
 
 

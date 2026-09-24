@@ -37,7 +37,9 @@ from comms.core.maintenance.redaction import UNRESOLVED_STATES, redact_campaign_
 from comms.core.storage.db import write_tx
 
 __all__ = [
+    "CRASH_POINTS",
     "LegacyRetention",
+    "RetentionCrash",
     "RetentionFailed",
     "RetentionPolicy",
     "RetentionReport",
@@ -45,6 +47,19 @@ __all__ = [
     "redact_identities",
     "run_retention",
 ]
+
+
+CRASH_POINTS = (
+    "after_legacy",
+    "after_comms_chain",
+    "after_bodies",
+    "after_identities",
+    "after_keys",
+)
+
+
+class RetentionCrash(BaseException):
+    """Raised only by the ``crash_at`` seam, which production never supplies."""
 
 
 class RetentionFailed(Exception):
@@ -89,7 +104,15 @@ def run_retention(
     *,
     now: datetime,
     store: KeySlotStore,
+    crash_at: str | None = None,
 ) -> RetentionReport:
+    """Run every phase; each is its own transaction, so a crash between phases leaves each
+    finished phase done and a rerun converges (``crash_at`` is a test seam: CRASH_POINTS)."""
+
+    def crash(point: str) -> None:
+        if crash_at == point:
+            raise RetentionCrash(point)
+
     require_not_degraded(comms_conn)
     if writer.conn is not comms_conn:
         raise ValueError("the audit writer must own the comms connection")
@@ -116,19 +139,24 @@ def run_retention(
     phases["legacy_message_refs"] = legacy.purge_message_refs(
         before(policy.message_ref_days), now=now
     )
+    crash("after_legacy")
     comms_root, phases["comms_chain"] = _truncate_comms(
         comms_conn, before(policy.audit_events_days), writer.keys.for_epoch, now
     )
     blocked = comms_root is None and _due(comms_conn, COMMS, before(policy.audit_events_days))
+    crash("after_comms_chain")
     with write_tx(comms_conn):
         phases["campaign_bodies"] = redact_campaign_bodies(
             comms_conn, cutoff=before(policy.campaign_body_days), now=now
         )
+    crash("after_bodies")
     with write_tx(comms_conn):
         phases["identities"] = redact_identities(
             comms_conn, cutoff=before(policy.identity_retention_days)
         )
+    crash("after_identities")
     phases.update(purge_retired_keys(comms_conn, store))
+    crash("after_keys")
     roots = {"legacy": root["checkpoint_ref"] if root is not None else None, "comms": comms_root}
     with writer.transaction() as tx:
         tx.append(
