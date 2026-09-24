@@ -8,6 +8,10 @@ Every decision taken while executing plan `docs/superpowers/plans/2026-09-24-com
 |---|---|
 | `docs/comms-spec-v0.3.md` (rev 2) | `7a415167bce71862…` |
 | `docs/superpowers/specs/2026-09-24-comms-v0.3-design.md` (rev 2) | `66f6a6f5d633a0c0…` |
+| `docs/comms-spec-v0.3.md` (rev 2 + R-001, `406d9dc`) | `0a893d8d6a6b92a8…` |
+| `docs/superpowers/specs/2026-09-24-comms-v0.3-design.md` (rev 2 + R-001, `406d9dc`) | `b91671682376f102…` |
+
+The last row naming a document is its current pin; `test_v03_preflight.py` fails on any edit that is not pinned here with the ruling that made it.
 
 | ID | Date | Section | Discovery | Decision | Reason | Tests | SHA |
 |---|---|---|---|---|---|---|---|

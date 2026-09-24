@@ -64,6 +64,7 @@ def test_legacy_verify_exposes_the_historical_entry_points():
     from comms.transports.telegram import legacy_verify
 
     assert set(legacy_verify.__all__) == {
+        "missing_verification_keys",
         "verify_legacy_chain",
         "verify_proof",
         "verify_receipt_v1",

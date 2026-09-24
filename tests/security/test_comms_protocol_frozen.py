@@ -81,13 +81,18 @@ def test_every_remaining_telegram_mcp_literal_is_a_frozen_identifier():
     remaining = set()
     for root in ("src/comms", "tests", "scripts"):
         for path in sorted((ROOT / root).rglob("*.py")):
-            if "migration" in path.parts or path.name in {
-                "test_migration_tools.py",
-                "test_comms_layering.py",
-                "test_comms_protocol_frozen.py",
-                "test_comms_entry_points.py",  # names the legacy entry point on purpose
-                "test_catalog_skeleton.py",  # forbids the legacy package as an import, on purpose
-            }:
+            if (
+                "migration" in path.parts
+                or path.name
+                in {
+                    "test_migration_tools.py",
+                    "test_comms_layering.py",
+                    "test_comms_protocol_frozen.py",
+                    "test_comms_entry_points.py",  # names the legacy entry point on purpose
+                    "test_catalog_skeleton.py",  # forbids the legacy package as an import, on purpose
+                    "test_v03_part_a_exit.py",  # names test IDs (test_telegram_mcp_serve_refuses), not literals
+                }
+            ):
                 continue
             tree = ast.parse(path.read_text())
             docs = _docstrings(tree)

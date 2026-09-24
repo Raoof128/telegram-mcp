@@ -18,7 +18,13 @@ from comms.transports.telegram.disclosure.keys import checkpoint_public_for
 from comms.transports.telegram.disclosure.receipts import verify_proof
 from comms.transports.telegram.disclosure.verify import verify_persisted_receipt
 
-__all__ = ["verify_legacy_chain", "verify_proof", "verify_receipt_v1", "verify_receipt_v2"]
+__all__ = [
+    "missing_verification_keys",
+    "verify_legacy_chain",
+    "verify_proof",
+    "verify_receipt_v1",
+    "verify_receipt_v2",
+]
 
 
 def _stored_version(conn: sqlite3.Connection, disclosure_ref: str) -> int | None:
@@ -50,3 +56,22 @@ def verify_legacy_chain(conn: sqlite3.Connection, chain_key: bytes) -> bool:
     except ChainError:
         return False
     return True
+
+
+def missing_verification_keys(conn: sqlite3.Connection) -> set[str]:
+    """Historical key coverage: every key a retained receipt or checkpoint names, if unregistered.
+
+    A receipt needs a ``disclosure_proof`` key and a checkpoint an ``audit_checkpoint`` key;
+    an empty result means every retained signature can still be checked.
+    """
+    needed = [
+        (row[0], "disclosure_proof")
+        for row in conn.execute("SELECT DISTINCT proof_key_id FROM disclosure_receipts")
+    ] + [
+        (row[0], "audit_checkpoint")
+        for row in conn.execute("SELECT DISTINCT signing_key_id FROM audit_checkpoints")
+    ]
+    registered = {
+        (row[0], row[1]) for row in conn.execute("SELECT key_id, purpose FROM verification_keys")
+    }
+    return {key_id for key_id, purpose in needed if (key_id, purpose) not in registered}

@@ -109,3 +109,17 @@ def test_manifest_declares_the_new_authority():
         "exposure_budgets",
     }
     assert all(m["retained_for_verification"].values())
+
+
+def test_the_spec_precedence_ranks_v03_first():
+    text = SPEC.read_text(encoding="utf-8")
+    section = text[text.index("## Precedence") : text.index("## Decisions")]
+    rows = [line for line in section.splitlines() if line.startswith("| **")]
+    ranked = [re.match(r"\| \*\*(.+?)\*\*", row).group(1) for row in rows]
+    assert ranked == [
+        "comms-spec-v0.3",
+        "comms-spec-v0.2",
+        "Telegram MCP spec v0.1.10",
+        "WhatsVault spec",
+    ]
+    assert "governed by the highest document in this table that speaks to it" in section

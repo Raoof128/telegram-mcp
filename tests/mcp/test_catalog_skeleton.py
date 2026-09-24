@@ -187,3 +187,20 @@ def test_the_mcp_package_never_reaches_a_transport_or_storage():
                         "telethon",
                     )
                 ), (path, name)
+
+
+def test_the_ai_surface_carries_no_secret(tmp_path):
+    """Canary: live key material never reaches the catalog, and the catalog cannot load keys."""
+    from comms.core.keys.slots import KeySlotStore, bootstrap_comms_audit_keys, load_active
+    from tests.core.campaign_helpers import NOW
+    from tests.security.import_closure import closure
+
+    conn = fx.migrated(tmp_path)
+    store = KeySlotStore(tmp_path / "slots")
+    bootstrap_comms_audit_keys(conn, store, now=NOW)
+    material, key_id = load_active(conn, store, "audit-chain-key")
+    surface = json.dumps(tools_list_payload()) + catalog_digest()
+    for canary in (material.hex(), key_id.split(":")[-1]):
+        assert canary not in surface
+    reached = closure("comms.mcp.catalog", "comms.mcp.dispatch")
+    assert not any(m.startswith(("comms.core.keys", "comms.transports")) for m in reached), reached
