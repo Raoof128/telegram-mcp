@@ -1,7 +1,7 @@
 """The disclosure coordinator (design §1.2, §2, §6.5).
 
 The coordinator **sequences**; it does not decide. Authority decisions stay
-in ``authority/``, consent in ``consent/``, budgets in ``budget.py``,
+in ``authority/``, budgets in ``budget.py``,
 integrity in ``audit/``. A second policy engine here would be the failure
 this design exists to prevent.
 
@@ -13,6 +13,7 @@ data without a receipt.
 
 from __future__ import annotations
 
+import secrets
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -30,7 +31,11 @@ from comms.transports.telegram.disclosure.audit.chain import (
     immediate_transaction,
     mint_event_id,
 )
-from comms.transports.telegram.disclosure.budget import BudgetError, buckets_for
+from comms.transports.telegram.disclosure.budget import (
+    BudgetError,
+    buckets_for,
+    call_binding_digest,
+)
 from comms.transports.telegram.disclosure.coverage import (
     CoverageError,
     coverage_digest,
@@ -44,7 +49,7 @@ from comms.transports.telegram.disclosure.measure import (
 )
 from comms.transports.telegram.disclosure.provenance import provenance_digest
 from comms.transports.telegram.disclosure.receipts import (
-    build_proof_payload,
+    build_proof_payload_v2,
     mint_disclosure_ref,
     sign_payload,
 )
@@ -53,7 +58,6 @@ from comms.transports.telegram.storage.settings import get_setting
 __all__ = [
     "DISCLOSURE_STEPS",
     "AuthorityRefusal",
-    "ConsentRefusal",
     "DisclosureCoordinator",
     "DisclosureOutcome",
     "RetrievalAdapter",
@@ -67,8 +71,6 @@ DISCLOSURE_STEPS: tuple[str, ...] = (
     "freeze_arguments",
     "snapshot_authority",
     "estimate_exposure",
-    "consent_issue",
-    "consent_consume",
     "reserve_budget",
     "retrieve",
     "revalidate_authority",
@@ -78,8 +80,8 @@ DISCLOSURE_STEPS: tuple[str, ...] = (
     "refresh_anchor",
 )
 
-# A single process-wide guard, acquired BEFORE step 11 and held across step
-# 12. Marking the chain ANCHOR_PENDING only after committing would leave a
+# A single process-wide guard, acquired BEFORE step 9 and held across step
+# 10. Marking the chain ANCHOR_PENDING only after committing would leave a
 # window in which a second caller commits and the chain goes two ahead.
 
 _SEARCH_TOOLS = frozenset({"telegram_search_messages", "telegram_cross_project_search"})
@@ -101,15 +103,7 @@ class RetrievalRefusal(Exception):
 
 
 class AuthorityRefusal(Exception):
-    """A seam refused before consent, with a frozen §27.1 code."""
-
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.code = code
-
-
-class ConsentRefusal(Exception):
-    """Consent could not be obtained, with a frozen §27.1 code."""
+    """A seam refused before retrieval, with a frozen §27.1 code."""
 
     def __init__(self, code: str) -> None:
         super().__init__(code)
@@ -152,7 +146,7 @@ def _now_iso() -> str:
 
 
 class DisclosureCoordinator:
-    """Runs the twelve steps. Sequences; never decides."""
+    """Runs the ten steps. Sequences; never decides."""
 
     def __init__(
         self,
@@ -164,7 +158,6 @@ class DisclosureCoordinator:
         anchor_path: Any,
         ledger: Any,
         authority: Any,
-        consent: Any,
         transport: Any = None,
         clock: Callable[[], float] = time.time,
         crash_at: str | None = None,
@@ -176,7 +169,6 @@ class DisclosureCoordinator:
         self._anchor_path = anchor_path
         self._ledger = ledger
         self._authority = authority
-        self._consent = consent
         self._transport = transport
         self._clock = clock
         self._crash_at = crash_at
@@ -191,16 +183,16 @@ class DisclosureCoordinator:
         if self._crash_at == step:
             raise RuntimeError(f"injected crash at {step}")
 
-    # -- step 10 assembly ---------------------------------------------------
+    # -- step 8 assembly ---------------------------------------------------
 
     def _prepare_proof(
         self,
         tool_name: str,
         data: Mapping[str, Any],
         snapshot: Any,
-        approval: Any,
         coverage: Mapping[str, Any] | None,
         partial: bool,
+        soft_threshold_exceeded: bool,
     ) -> dict[str, Any]:
         records = list(data.get(RECORD_ELEMENT[tool_name], []))
         level = effective_egress_level(records)
@@ -214,8 +206,9 @@ class DisclosureCoordinator:
             "partial": partial,
             "canonical_result_provenance_digest": provenance_digest(tool_name, data),
             "canonical_coverage_digest": coverage_digest(coverage),
+            "soft_threshold_exceeded": soft_threshold_exceeded,
         }
-        payload = build_proof_payload(
+        payload = build_proof_payload_v2(
             disclosure_ref=prepared["disclosure_ref"],
             principal_ref=snapshot.principal_ref,
             client_ref=snapshot.client_ref,
@@ -230,10 +223,9 @@ class DisclosureCoordinator:
             bytes_disclosed=prepared["bytes_disclosed"],
             partial=prepared["partial"],
             committed_at=prepared["committed_at"],
-            consent_key_id=approval.key_id,
-            consent_challenge_digest=approval.challenge_sha256,
             canonical_result_provenance_digest=prepared["canonical_result_provenance_digest"],
             canonical_coverage_digest=prepared["canonical_coverage_digest"],
+            soft_threshold_exceeded=soft_threshold_exceeded,
         )
         signed = sign_payload(
             payload,
@@ -242,8 +234,6 @@ class DisclosureCoordinator:
         )
         prepared["payload"] = payload
         prepared["signed"] = signed
-        prepared["consent_key_id"] = approval.key_id
-        prepared["consent_challenge_digest"] = approval.challenge_sha256
         return prepared
 
     def _insert_receipt(self, prepared: Mapping[str, Any], snapshot: Any) -> None:
@@ -251,10 +241,10 @@ class DisclosureCoordinator:
             "INSERT INTO disclosure_receipts (disclosure_ref, committed_at, principal_id,"
             " client_id, account_id, tool_name, security_epoch, policy_epoch,"
             " project_scope_digest, project_count, effective_egress_level, records_disclosed,"
-            " bytes_disclosed, partial, commit_status, consent_key_id, consent_challenge_digest,"
-            " canonical_result_provenance_digest, canonical_coverage_digest,"
-            " proof_payload_sha256, proof_key_id, proof_signature)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed', ?, ?, ?, ?, ?, ?, ?)",
+            " bytes_disclosed, partial, commit_status, canonical_result_provenance_digest,"
+            " canonical_coverage_digest, proof_payload_sha256, proof_key_id, proof_signature,"
+            " proof_version, soft_threshold_exceeded)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'committed', ?, ?, ?, ?, ?, 2, ?)",
             (
                 prepared["disclosure_ref"],
                 prepared["committed_at"],
@@ -270,13 +260,12 @@ class DisclosureCoordinator:
                 prepared["records_disclosed"],
                 prepared["bytes_disclosed"],
                 int(prepared["partial"]),
-                prepared["consent_key_id"],
-                prepared["consent_challenge_digest"],
                 prepared["canonical_result_provenance_digest"],
                 prepared["canonical_coverage_digest"],
                 prepared["signed"]["proof_payload_sha256"],
                 prepared["signed"]["proof_key_id"],
                 prepared["signed"]["proof_signature"],
+                int(prepared["soft_threshold_exceeded"]),
             ),
         )
 
@@ -296,7 +285,11 @@ class DisclosureCoordinator:
             "duration_ms": 0,
             "telegram_rpc_count": 0,
             "status": "ok",
-            "error_code": None,
+            # The frozen event schema's only free column; the flag is also signed
+            # into the v2 receipt (5b-3 design §2.4).
+            "error_code": (
+                "soft_threshold_exceeded" if prepared["soft_threshold_exceeded"] else None
+            ),
             "disclosure_ref": prepared["disclosure_ref"],
         }
 
@@ -335,7 +328,7 @@ class DisclosureCoordinator:
         adapter: RetrievalAdapter,
         principal: Any = None,
     ) -> DisclosureOutcome:
-        """Run the twelve steps. Returns a payload with its receipt, or a refusal."""
+        """Run the ten steps. Returns a payload with its receipt, or a refusal."""
         if get_setting(self._conn, "audit.integrity_degraded"):
             return DisclosureOutcome(
                 released=False, error_code="AUDIT_INTEGRITY_UNAVAILABLE", retryable=False
@@ -343,7 +336,7 @@ class DisclosureCoordinator:
 
         reservation = None
         try:
-            # ---- steps 1-6: nothing has been retrieved ----------------------
+            # ---- steps 1-4: nothing has been retrieved ----------------------
             try:
                 self._checkpoint("freeze_arguments")
                 request = self._authority.freeze_arguments(
@@ -357,74 +350,40 @@ class DisclosureCoordinator:
 
             self._checkpoint("estimate_exposure")
             worst_case = self._authority.worst_case_buckets(tool_name, snapshot)
-            decision, projected = self._ledger.consult(worst_case)
+
+            self._checkpoint("reserve_budget")
+            # consult and reserve run back to back with no await between them:
+            # on the daemon's single asyncio thread nothing can interleave,
+            # which is what "under the reservation lock" means here (Phase-3
+            # design §5.4). This consult is the soft-flag decision point
+            # (5b-3 design §2.4): `elevated` is recorded, never prompted.
+            decision, _projected = self._ledger.consult(worst_case)
             if decision == "refuse":
                 return DisclosureOutcome(
                     released=False, error_code="EXPOSURE_BUDGET_EXCEEDED", retryable=True
                 )
-
-            approval = None
-            for _attempt in range(2):  # exactly one automatic restart (design §5.5)
-                try:
-                    self._checkpoint("consent_issue")
-                    challenge = await self._consent.issue(
-                        tool_name=tool_name,
-                        snapshot=snapshot,
-                        request=request,
-                        tier=decision,
-                        projected=projected,
-                        worst_case=worst_case,
-                    )
-
-                    self._checkpoint("consent_consume")
-                    approval = await self._consent.consume(challenge)
-                except ConsentRefusal as refusal:
-                    return DisclosureOutcome(
-                        released=False, error_code=refusal.code, retryable=False
-                    )
-                if approval is None:
-                    return DisclosureOutcome(
-                        released=False, error_code="CONSENT_DENIED", retryable=False
-                    )
-
-                self._checkpoint("reserve_budget")
-                # consult and reserve run back to back with no await between
-                # them: on the daemon's single asyncio thread nothing can
-                # interleave, which is what "under the reservation lock"
-                # means here (Phase-3 design §5.4).
-                decision, projected = self._ledger.consult(worst_case)
-                if decision == "refuse":
-                    return DisclosureOutcome(
-                        released=False, error_code="EXPOSURE_BUDGET_EXCEEDED", retryable=True
-                    )
-                if not self._consent.snapshot_matches(approval, tier=decision, projected=projected):
-                    continue  # conditions moved: re-prompt with the new quantities
-                try:
-                    reservation = self._ledger.reserve(
-                        client_id=snapshot.client_id,
-                        security_epoch=snapshot.security_epoch,
-                        project_scope_digest=snapshot.project_scope_digest,
-                        consent_challenge_digest=approval.challenge_sha256,
-                        request_nonce=approval.nonce,
-                        worst_case=worst_case,
-                        ttl_seconds=60,
-                    )
-                except BudgetError:
-                    return DisclosureOutcome(
-                        released=False, error_code="EXPOSURE_BUDGET_EXCEEDED", retryable=True
-                    )
-                break
-            else:
-                # Second divergence: stop an agent spinning through prompts.
-                return DisclosureOutcome(
-                    released=False, error_code="CONSENT_UNAVAILABLE", retryable=False
+            nonce = secrets.token_hex(16)
+            try:
+                reservation = self._ledger.reserve(
+                    client_id=snapshot.client_id,
+                    security_epoch=snapshot.security_epoch,
+                    project_scope_digest=snapshot.project_scope_digest,
+                    binding_digest=call_binding_digest(tool_name, request.validated_args, nonce),
+                    request_nonce=nonce,
+                    worst_case=worst_case,
+                    ttl_seconds=60,
                 )
+            except BudgetError:
+                return DisclosureOutcome(
+                    released=False, error_code="EXPOSURE_BUDGET_EXCEEDED", retryable=True
+                )
+            soft_threshold_exceeded = decision == "elevated"
 
             # ==== SECURITY BARRIER ==========================================
             self._checkpoint("retrieve")
-            # Authority can move while the owner looks at the prompt. Step 8
-            # would catch it, but only after Telegram was already asked; a
-            # read the owner has since revoked must not reach Telegram at all.
+            # Authority can move between snapshot and retrieval. Step 6 would
+            # catch it, but only after Telegram was already asked; a read the
+            # owner has since revoked must not reach Telegram at all.
             moved = self._authority.revalidate(snapshot)
             if moved is not None:
                 return DisclosureOutcome(released=False, error_code=moved, retryable=False)
@@ -470,10 +429,12 @@ class DisclosureCoordinator:
                     )
 
             self._checkpoint("measure_and_prepare_proof")
-            prepared = self._prepare_proof(tool_name, data, snapshot, approval, coverage, partial)
+            prepared = self._prepare_proof(
+                tool_name, data, snapshot, coverage, partial, soft_threshold_exceeded
+            )
             actual = buckets_for(tool_name, data, client_id=snapshot.client_id)
 
-            # ==== DISCLOSURE BARRIER: steps 11 and 12 under one guard =======
+            # ==== DISCLOSURE BARRIER: steps 9 and 10 under one guard ========
             with APPEND_GUARD:
                 self._checkpoint("commit_disclosure")
                 try:
@@ -483,6 +444,7 @@ class DisclosureCoordinator:
                         self._insert_receipt(prepared, snapshot)
                         self._ledger.commit(
                             reservation,
+                            binding_digest=reservation.binding_digest,
                             disclosure_ref=prepared["disclosure_ref"],
                             actual=actual,
                             effective_egress_level=prepared["effective_egress_level"],
@@ -501,7 +463,7 @@ class DisclosureCoordinator:
 
                 try:
                     # The crash seam sits INSIDE the handler: an injected
-                    # failure at step 12 must take the same path as a real
+                    # failure at step 10 must take the same path as a real
                     # anchor failure, or the test would prove nothing about
                     # the degraded latch.
                     self._checkpoint("refresh_anchor")

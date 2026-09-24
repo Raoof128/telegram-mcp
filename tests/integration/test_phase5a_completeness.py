@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from comms.transports.telegram.ipc.admin import ADMIN_COMMANDS, PRESENCE_GATED, AdminRouter
+from comms.transports.telegram.ipc.admin import ADMIN_COMMANDS, AdminRouter
 from comms.transports.telegram.keys.store import provision_missing, set_store_dir
 from comms.transports.telegram.runtime.composition import admin_handlers
 from comms.transports.telegram.storage.db import open_db
@@ -19,23 +19,8 @@ LATER_IN_PHASE_5 = {"auth revoke-this-session", "project drift", "policy export"
 # Named, each with its reason (design D9):
 #  tunnel rotate-binding -- Phase 6 (the CLI `rotate` already covers the pin)
 #  release verify        -- Phase 7
-#  consent approve       -- design rev 2 G7: spec line 927 makes it a MAY, a
-#     generic admin prompt would approve a disclosure blind, and a pending
-#     challenge exists only while its own prompt is in flight
-#     (prompter.py:146-150), so there is nothing orphaned to approve.
-DEFERRED = {"tunnel rotate-binding", "release verify", "consent approve"}
-
-
-class _Broker:
-    def pending_count(self):
-        return 0
-
-    def invalidate_where(self, predicate):
-        return 0
-
-
-class _Prompter:
-    connected = False
+# (`consent approve` / `consent status` are retired by comms spec v0.2: not routed.)
+DEFERRED = {"tunnel rotate-binding", "release verify"}
 
 
 @pytest.fixture
@@ -58,8 +43,6 @@ async def handlers(tmp_path):
         key_dir=store,
         anchor_path=tmp_path / "anchor" / "anchor.json",
         telegram=session,
-        broker=_Broker(),
-        prompter=_Prompter(),
         seeds=lambda ref: None,
         runtime_id=secrets.token_bytes(16),
         clock=time.time,
@@ -72,13 +55,7 @@ async def test_exactly_the_named_commands_lack_a_handler(handlers):
 
 
 async def test_every_missing_admin_command_answers_not_available(handlers):
-    router = AdminRouter(handlers, presence_verifier=lambda proof: True)
+    router = AdminRouter(handlers)
     for command in sorted(LATER_IN_PHASE_5 | DEFERRED):
-        response = await router.adispatch({"cmd": command, "args": {"presence": {}}})
+        response = await router.adispatch({"cmd": command, "args": {}})
         assert response["code"] == "NOT_AVAILABLE_IN_PHASE", command
-
-
-def test_the_presence_set_is_unchanged_in_5a():
-    from tests.unit.test_admin_handlers import MUTATING
-
-    assert set(PRESENCE_GATED) == MUTATING  # by name, not count

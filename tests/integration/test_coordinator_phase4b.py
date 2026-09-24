@@ -35,7 +35,7 @@ async def test_authority_that_moved_during_consent_stops_before_any_rpc(tmp_path
     assert coordinator._ledger.live_usage(_global_key()) == Usage(0, 0)
 
 
-async def test_scope_mode_change_during_prompt_refuses(tmp_path):
+async def test_scope_mode_change_before_retrieval_refuses(tmp_path):
     """Review Focus 1, against the real authority seam."""
 
     def real_authority(conn):
@@ -50,16 +50,17 @@ async def test_scope_mode_change_during_prompt_refuses(tmp_path):
 
     coordinator, conn, adapter = build_coordinator(tmp_path, authority_factory=real_authority)
     adapter.calls.clear()
-    real_consume = coordinator._consent.consume
+    real_reserve = coordinator._ledger.reserve
 
-    async def owner_flips_mode_while_prompted(challenge):
+    def owner_flips_mode_after_the_snapshot(**kwargs):
+        # The last seam before the pre-retrieval revalidation.
         conn.execute(
             "UPDATE policy_state SET mode = 'all_cloud_chats', policy_epoch = policy_epoch + 1"
         )
         conn.commit()
-        return await real_consume(challenge)
+        return real_reserve(**kwargs)
 
-    coordinator._consent.consume = owner_flips_mode_while_prompted
+    coordinator._ledger.reserve = owner_flips_mode_after_the_snapshot
     principal = resolve_principal(conn, "tcl_" + "a" * 26)
     outcome = await coordinator.disclose(
         tool_name="telegram_list_chats",

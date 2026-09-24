@@ -78,10 +78,6 @@ class AuditSink:
     now: Callable[[], str]
 
 
-def _bare(args: Mapping[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in args.items() if k != "presence"}
-
-
 def _cleanup(command: TxCommand[Any, Any], result: dict[str, Any]) -> None:
     if command.post_commit is None:
         return
@@ -116,7 +112,7 @@ def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
 def run_tx(
     conn: sqlite3.Connection, command: TxCommand[Any, Any], args: Mapping[str, Any]
 ) -> dict[str, Any]:
-    parsed = command.parse(_bare(args))
+    parsed = command.parse(dict(args))
     with _transaction(conn):
         result = command.apply(conn, command.plan(conn, parsed))
     _cleanup(command, result)
@@ -134,7 +130,7 @@ def simulate_tx[T](
     observe: Callable[[sqlite3.Connection], T],
 ) -> tuple[T, T]:
     """Run the real plan and apply, observe, and roll everything back (0B G12)."""
-    parsed = command.parse(_bare(args))
+    parsed = command.parse(dict(args))
     try:
         conn.execute("BEGIN IMMEDIATE")
     except sqlite3.OperationalError as exc:
@@ -177,7 +173,7 @@ def run_audited_tx(
     event: Callable[[Any, dict[str, Any]], dict[str, Any]] | None,
     allow_degraded: bool = False,
 ) -> dict[str, Any]:
-    parsed = command.parse(_bare(args))
+    parsed = command.parse(dict(args))
     with APPEND_GUARD:
         if get_setting(conn, "audit.integrity_degraded") and not allow_degraded:
             raise PermissionError("audit integrity is degraded")

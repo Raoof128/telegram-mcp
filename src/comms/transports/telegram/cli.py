@@ -36,14 +36,13 @@ EXIT_USAGE = 2
 EXIT_NOT_RUNNING = 3
 EXIT_REFUSED = 4
 EXIT_NOT_IN_PHASE = 5
-EXIT_PRESENCE = 6
+# 6 was EXIT_PRESENCE (PRESENCE_REQUIRED); retired by comms spec v0.2, never reassigned.
 EXIT_PERMISSION = 7
 
 _ADMIN_EXITS = {
     "MALFORMED_REQUEST": EXIT_USAGE,
     "UNKNOWN_COMMAND": EXIT_USAGE,
     "NOT_AVAILABLE_IN_PHASE": EXIT_NOT_IN_PHASE,
-    "PRESENCE_REQUIRED": EXIT_PRESENCE,
     "PERMISSION_DENIED": EXIT_PERMISSION,
     "INTERNAL_ERROR": EXIT_FAILURE,
 }
@@ -231,37 +230,6 @@ def _cmd_keys(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _cmd_pair(args: argparse.Namespace) -> int:
-    import base64
-
-    from comms.transports.telegram.keys.pairing import (
-        export_public,
-        import_peer_pin,
-        verify_fingerprint,
-    )
-    from comms.transports.telegram.keys.store import KeyStoreError, set_store_dir
-
-    try:
-        set_store_dir(args.store_dir)
-        if args.action == "export":
-            public = export_public(args.name)
-            _emit({"name": args.name, "public_b64url": base64.urlsafe_b64encode(public).decode()})
-        elif args.action == "import":
-            if args.value is None:
-                return _fail("import needs the peer public key.", EXIT_USAGE)
-            raw = base64.urlsafe_b64decode(args.value + "=" * (-len(args.value) % 4))
-            _emit({"name": args.name, "fingerprint": import_peer_pin(args.name, raw)})
-        else:
-            if args.value is None:
-                return _fail("verify needs the fingerprint shown on screen.", EXIT_USAGE)
-            _emit({"name": args.name, "match": verify_fingerprint(args.name, args.value)})
-    except KeyStoreError as exc:
-        return _fail(f"{exc}.", EXIT_FAILURE)
-    except ValueError:
-        return _fail("invalid base64url input.", EXIT_USAGE)
-    return EXIT_OK
-
-
 def _cmd_rotate(args: argparse.Namespace) -> int:
     import time
 
@@ -323,9 +291,9 @@ def _build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--host", default="127.0.0.1")
     demo.add_argument("--port", type=int, default=8766)
 
-    start = sub.add_parser("start", help="start the runtime, consent agent and tunnel")
+    start = sub.add_parser("start", help="start the runtime and tunnel")
     modes = start.add_mutually_exclusive_group()
-    modes.add_argument("--local", action="store_true", help="runtime + consent UI, port 8766")
+    modes.add_argument("--local", action="store_true", help="runtime, port 8766")
     modes.add_argument("--chatgpt", action="store_true", help="adds the tunnel client, port 8767")
     modes.add_argument("--all", action="store_true", help="both listeners")
 
@@ -349,12 +317,6 @@ def _build_parser() -> argparse.ArgumentParser:
     keys = sub.add_parser("keys", help="provision or list the runtime key inventory")
     keys.add_argument("action", choices=("provision", "list"))
     keys.add_argument("--store-dir", required=True)
-
-    pair = sub.add_parser("pair", help="export, import or verify a pinned public key")
-    pair.add_argument("action", choices=("export", "import", "verify"))
-    pair.add_argument("name")
-    pair.add_argument("value", nargs="?", default=None)
-    pair.add_argument("--store-dir", required=True)
 
     rotate = sub.add_parser("rotate", help="rotate the tunnel client-certificate pin")
     rotate.add_argument("target", choices=("tunnel-binding",))
@@ -381,7 +343,6 @@ _COMMANDS = {
     "serve": _cmd_serve,
     "admin": _cmd_admin,
     "keys": _cmd_keys,
-    "pair": _cmd_pair,
     "rotate": _cmd_rotate,
     "daemon": _cmd_daemon,
 }

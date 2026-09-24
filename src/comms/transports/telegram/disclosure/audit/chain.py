@@ -19,7 +19,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
-from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.canonical import jcs_dumps
 
 __all__ = [
     "ADMIN_EVENTS",

@@ -25,14 +25,10 @@ _logger = logging.getLogger("telegram_mcp.sensitive")
 class SensitiveDispatcher:
     """One disclosure in flight per client (spec §28 ceiling, lowered to 1).
 
-    Budget buckets are per client and the approved exposure digest must match
-    exactly at step 6 (§9.8, §23C.3). A sibling call from the same client moves
-    that snapshot twice, once when it reserves and again when it commits, so
-    concurrent same-client calls would re-prompt and then refuse by
-    construction: executing revision 1 of this plan produced four prompts
-    for three calls, all approved, and one refusal. Serialising per client
-    removes the collision. Prompts are serial anyway, so the only overlap
-    lost is one call's retrieval against the next call's prompt. Different
+    Budget buckets are per client. Under v0.1.10 a sibling call moved the
+    approved exposure snapshot and forced a re-prompt; comms spec v0.2 has no
+    snapshot to move, and the per-client ceiling of 1 is kept because it keeps
+    each client's budget consult and commit strictly ordered. Different
     clients never share a bucket and are not serialised against each other.
     """
 

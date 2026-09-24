@@ -26,7 +26,7 @@ def test_headless_defaults_run_and_skip_what_cannot_be_checked():
     assert names == [name for name in CHECKS if name != "off.probe"]
     assert _status(report, "runtime.python") == "ok"
     assert _status(report, "runtime.mcp_sdk") == "ok"
-    assert _status(report, "consent.selftest") == "ok"
+    assert not {"consent.selftest", "keys.pairing"} & set(names)  # retired, comms spec v0.2
     for deferred in ("telegram.auth_state", "mcp.endpoint_credentials", "tunnel.tls_trust"):
         assert _status(report, deferred) == "skipped"
     assert _status(report, "service_accounts.separation") == "skipped"
@@ -92,10 +92,9 @@ def test_socket_permission_check_accepts_the_installed_layout(tmp_path):
     runtime_dir = tmp_path / "run"
     runtime_dir.mkdir(mode=0o770)
     os.chmod(runtime_dir, 0o770)
-    for name in ("admin.sock", "consent.sock"):
-        path = runtime_dir / name
-        path.write_bytes(b"")
-        os.chmod(path, 0o660)
+    path = runtime_dir / "admin.sock"
+    path.write_bytes(b"")
+    os.chmod(path, 0o660)
     report = doctor(("sockets.permissions",), context=DoctorContext(runtime_dir=runtime_dir))
     assert _status(report, "sockets.permissions") == "ok"
     assert stat.S_IMODE(runtime_dir.stat().st_mode) == 0o770
@@ -159,3 +158,18 @@ def test_off_probe_ignores_processes_that_merely_mention_the_labels():
         assert _status(loud, "off.probe") == "fail", loud
     finally:
         doctor_module._list_processes_ps = original
+
+
+def test_the_key_inventory_reports_retired_keys_as_retired(tmp_path):
+    from comms.transports.telegram.keys.store import provision_missing
+
+    provision_missing(tmp_path / "keys", phases=(2, 3))
+    report = doctor(("keys.inventory",), context=DoctorContext(store_dir=tmp_path / "keys"))
+    check = next(c for c in report["checks"] if c["name"] == "keys.inventory")
+    assert check["status"] == "ok"
+    assert check["extra"]["retired"] == [
+        "agent-approval-key",
+        "agent-transport-key",
+        "challenge-key",
+    ]
+    assert not set(check["extra"]["retired"]) & set(check["extra"]["externally_owned"])

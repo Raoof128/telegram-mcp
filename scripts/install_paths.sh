@@ -4,7 +4,7 @@
 # Layout (design §2, spec §12.4):
 #
 #   /private/var/run/telegram-mcp/   telegram-mcpd:telegram-mcp-admin  0770
-#     consent.sock, admin.sock       created by the runtime              0660
+#     admin.sock                     created by the runtime              0660
 #   <state>/db/                      telegram-mcpd                      0700
 #   <state>/keys/                    telegram-mcpd                      0700
 #

@@ -23,20 +23,25 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.canonical import jcs_dumps
 from comms.transports.telegram.opaque import mint_opaque_ref
 
 __all__ = [
     "APPENDIX_K_FIELDS",
+    "APPENDIX_K_FIELDS_V2",
     "PROOF_SCHEMA",
+    "PROOF_SCHEMA_V2",
     "ReceiptError",
     "build_proof_payload",
+    "build_proof_payload_v2",
     "mint_disclosure_ref",
     "sign_payload",
     "verify_proof",
 ]
 
 PROOF_SCHEMA = "tg-mcp-disclosure/v1"
+# comms spec v0.2 (5b-3 design §2.1): owner-direct receipts carry no consent.
+PROOF_SCHEMA_V2 = "tg-mcp-disclosure/v2"
 
 # Appendix K.1, in the order the appendix lists them. Set equality is what
 # is enforced; JCS sorts the keys for the signed bytes.
@@ -66,9 +71,25 @@ APPENDIX_K_FIELDS: tuple[str, ...] = (
 
 _SEARCH_TOOLS = frozenset({"telegram_search_messages", "telegram_cross_project_search"})
 
+_CONSENT_FIELDS = ("consent_verified", "consent_key_id", "consent_challenge_digest")
+APPENDIX_K_FIELDS_V2: tuple[str, ...] = (
+    *(f for f in APPENDIX_K_FIELDS if f not in _CONSENT_FIELDS),
+    "authorization_mode",
+    "soft_threshold_exceeded",
+)
+
 # Fields the caller does not supply because they are constants of a
 # committed receipt.
 _DERIVED = {"schema": PROOF_SCHEMA, "commit_status": "committed", "consent_verified": True}
+_DERIVED_V2 = {
+    "schema": PROOF_SCHEMA_V2,
+    "commit_status": "committed",
+    "authorization_mode": "owner_direct",
+}
+_SHAPES = {
+    PROOF_SCHEMA: frozenset(APPENDIX_K_FIELDS),
+    PROOF_SCHEMA_V2: frozenset(APPENDIX_K_FIELDS_V2),
+}
 
 
 class ReceiptError(Exception):
@@ -81,9 +102,22 @@ def mint_disclosure_ref() -> str:
 
 
 def build_proof_payload(**fields: Any) -> dict[str, Any]:
-    """Assemble the Appendix-K payload, rejecting anything out of contract."""
+    """Assemble the v1 Appendix-K payload (historical receipts), rejecting anything out of contract."""
+    return _assemble(fields, APPENDIX_K_FIELDS, _DERIVED)
+
+
+def build_proof_payload_v2(**fields: Any) -> dict[str, Any]:
+    """Assemble an owner-direct v2 payload: no consent fields, a boolean soft flag."""
+    if not isinstance(fields.get("soft_threshold_exceeded"), bool):
+        raise ReceiptError("soft_threshold_exceeded must be a boolean")
+    return _assemble(fields, APPENDIX_K_FIELDS_V2, _DERIVED_V2)
+
+
+def _assemble(
+    fields: Mapping[str, Any], shape: tuple[str, ...], derived: Mapping[str, Any]
+) -> dict[str, Any]:
     supplied = set(fields)
-    expected = set(APPENDIX_K_FIELDS) - set(_DERIVED)
+    expected = set(shape) - set(derived)
     unknown = supplied - expected
     if unknown:
         # Never name the offending value; the field name is enough.
@@ -93,7 +127,7 @@ def build_proof_payload(**fields: Any) -> dict[str, Any]:
         raise ReceiptError("proof payload is missing required fields")
 
     payload: dict[str, Any] = dict(fields)
-    payload.update(_DERIVED)
+    payload.update(derived)
 
     tool_name = payload["tool_name"]
     coverage = payload["canonical_coverage_digest"]
@@ -106,8 +140,11 @@ def build_proof_payload(**fields: Any) -> dict[str, Any]:
 
 
 def _canonical(payload: Mapping[str, Any]) -> bytes:
-    if set(payload) != set(APPENDIX_K_FIELDS):
-        raise ReceiptError("proof payload is not the Appendix-K shape")
+    shape = _SHAPES.get(payload.get("schema"))  # type: ignore[arg-type]
+    if shape is None or set(payload) != shape:
+        raise ReceiptError("proof payload is not a known receipt shape")
+    if payload["schema"] == PROOF_SCHEMA_V2 and payload["authorization_mode"] != "owner_direct":
+        raise ReceiptError("a v2 receipt is owner_direct by definition")
     return jcs_dumps(payload)
 
 

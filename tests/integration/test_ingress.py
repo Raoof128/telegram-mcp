@@ -9,7 +9,6 @@ import pytest
 import uvicorn
 from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
 
-from comms.transports.telegram.consent.challenge import StubSigner
 from comms.transports.telegram.http_guards import UNAUTHORIZED_BODY
 from comms.transports.telegram.ipc.leases import mint_lease
 from comms.transports.telegram.keys.store import provision_lease_seed, provision_missing
@@ -42,7 +41,6 @@ async def ingress(tmp_path, monkeypatch):
         key_dir=keys,
         anchor_path=tmp_path / "anchor" / "anchor.json",
         runtime_id=RUNTIME,
-        agent_verify=StubSigner(seed=0x07).verify,
         port=port,
         limits={"telegram_status": 3},
     )

@@ -28,9 +28,9 @@ The second check is the one that stops a model from proving nothing.
 |---|---|
 | Checker | `formal/model.py`, exhaustive BFS, pure Python 3.12 |
 | Bound | `MAX_SEQ = 3` audit events per run |
-| State variables | 20 — Appendix L's fifteen plus `anchor_epoch`, `anchor_seq`, `audit_integrity_state`, `append_guard_held`, `payload_released` |
-| Assertions | 18 — Appendix L's fourteen plus this architecture's four |
-| Reachable states | 624 |
+| State variables | 20 — Appendix L's fifteen (with `budget_decision` in place of `consent_state`, comms spec v0.2) plus `anchor_epoch`, `anchor_seq`, `audit_integrity_state`, `append_guard_held`, `payload_released`; and 13 bookkeeping variables the assertions read |
+| Assertions | 22 — Appendix L's fourteen less its two consent assertions, this architecture's four, and six owner-direct replacements |
+| Reachable states | 544 |
 | Runner | `uv run pytest tests/formal -q` |
 
 ## What the model found
@@ -50,6 +50,26 @@ and each is recorded because the fix is the interesting part:
    12 run inside one critical section with no await between them. Modelled
    without that, the search interleaved a lock between the commit and the
    anchor refresh.
+
+## Owner-direct revision (comms spec v0.2, 5b-3)
+
+Consent is gone from the gateway, so `ConsentConsumedAtMostOnce` and
+`NoReceiptWithoutVerifiedConsent` are retired. Six assertions replace them:
+`OwnerDirectReceiptNeverClaimsConsent`, `ReceiptVersionsDistinguishable`,
+`V2RequiresOwnerDirect`, `HardRefusalPrecedesRetrieval`,
+`ReservationCommitsAtMostOnce` and `NoHandoffBeforeCommitAndAnchor`. The
+budget tier is chosen nondeterministically at `consult`, and a retained v1
+receipt is present in every initial state.
+
+The search found one more gap on its first run. Without a `request_state ==
+"frozen"` guard on `reserve`, a second reservation could be minted after
+commit and carried into a later request whose consult said `refuse`, which
+then reached `retrieve`. The implementation mints exactly one reservation per
+call and releases it in `finally`. The model now says so too.
+
+A predicate that holds everywhere proves something only if it can fail.
+`tests/formal/test_invariant_mutations.py` breaks each new invariant's guard
+in the model source and requires the search to report that invariant.
 
 ## Honest bounds
 

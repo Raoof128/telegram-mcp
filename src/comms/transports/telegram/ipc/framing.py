@@ -1,7 +1,6 @@
-"""Length-prefixed frame codec shared by the admin and rendezvous sockets.
+"""Length-prefixed frame codec for the admin socket.
 
-One wire, one implementation (the admin socket and the RV-1 rendezvous
-protocol must not drift): ``uint32`` big-endian length followed by that many
+One wire, one implementation: ``uint32`` big-endian length followed by that many
 payload bytes, 64 KiB maximum, strict UTF-8, strict JSON with duplicate keys
 rejected, and an idle deadline on every read.
 

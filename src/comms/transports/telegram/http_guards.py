@@ -210,12 +210,11 @@ def duplicate_key_preflight(
 async def _run_until_disconnect(call: Any, receive: Any) -> None:
     """Run the app, cancelling it if the client disconnects first.
 
-    Spec §9.8: a consent challenge MUST be invalidated when its originating
-    request is cancelled or disconnected. The body is already buffered and
-    replayed, so the real ``receive`` is free to watch for
+    A disconnected client's call must not keep running. The body is already
+    buffered and replayed, so the real ``receive`` is free to watch for
     ``http.disconnect``. Cancelling the app runs the coordinator's
-    cancellation path, which invalidates the pending challenge and releases
-    any reservation. In stateless JSON mode the SDK never does this itself.
+    cancellation path, which releases any reservation before retrieval or
+    commit. In stateless JSON mode the SDK never does this itself.
     """
     task = asyncio.ensure_future(call)
 

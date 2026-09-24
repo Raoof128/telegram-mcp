@@ -7,8 +7,6 @@ LaunchAgent or probes elevation is ``platform_gated`` and runs only with
 ``--run-platform-gated`` on a macOS host with admin rights.
 """
 
-import plistlib
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -17,7 +15,6 @@ import pytest
 SCRIPTS = Path("scripts")
 USERS = SCRIPTS / "install_service_users.sh"
 PATHS = SCRIPTS / "install_paths.sh"
-PLIST = SCRIPTS / "consent-agent.plist"
 
 
 def _run(*args, env=None):
@@ -99,27 +96,6 @@ def test_path_plan_does_not_touch_the_host(tmp_path):
     assert _run(PATHS, "install", "--dry-run", env=env).returncode == 0
     assert not (tmp_path / "run").exists()
     assert not (tmp_path / "state").exists()
-
-
-def test_consent_launch_agent_is_disabled_by_default_and_logs_nothing():
-    with PLIST.open("rb") as handle:
-        plist = plistlib.load(handle)
-    assert plist["Label"] == "com.telegram-mcp.consent-agent"
-    assert plist["RunAtLoad"] is False
-    assert plist["KeepAlive"] is False
-    assert plist["ProcessType"] == "Interactive"
-    assert plist["StandardOutPath"] == "/dev/null"
-    assert plist["StandardErrorPath"] == "/dev/null"
-    assert plist["ProgramArguments"][0].endswith("MacOS/telegram-mcp-consent")
-    assert "/private/var/run/telegram-mcp/consent.sock" in plist["ProgramArguments"]
-
-
-@pytest.mark.skipif(shutil.which("plutil") is None, reason="plutil is macOS-only")
-def test_consent_launch_agent_passes_plutil_lint():
-    result = subprocess.run(
-        ["plutil", "-lint", str(PLIST)], capture_output=True, text=True, check=False, timeout=60
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.platform_gated

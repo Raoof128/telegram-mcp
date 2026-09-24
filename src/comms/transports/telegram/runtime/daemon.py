@@ -5,13 +5,11 @@ Order matters and is fail-closed:
 1. Take the runtime lock before touching any secret or the database. A second
    daemon learns it is second without reading anything.
 2. Open and migrate the database, and create the owner principal.
-3. Require both consent-agent pins. An unpaired daemon cannot ask anyone
-   anything, so it does not start.
-4. Read ``api_hash`` from the login Keychain once. If it is missing, Telegram
+3. Read ``api_hash`` from the login Keychain once. If it is missing, Telegram
    stays ``AUTH_REQUIRED`` and everything else still runs. An unreachable
    Telegram is a state (``TELEGRAM_UNAVAILABLE``), retried every 30 seconds,
    never a failed start: the operator keeps the admin socket.
-5. Serve consent, admin and ingress, then wait.
+4. Serve admin and ingress, then wait. There is no consent socket (comms spec v0.2).
 
 Shutdown disconnects Telegram (never ``log_out``) and unlinks the sockets.
 """
@@ -31,20 +29,10 @@ from typing import Any
 
 import uvicorn
 
-from comms.transports.telegram.consent.challenge import verify_agent_signature
 from comms.transports.telegram.ipc.admin import serve_admin
 from comms.transports.telegram.keys.keychain import KeychainError, read_api_hash
-from comms.transports.telegram.keys.store import (
-    fingerprint_for,
-    get_store_dir,
-    load_key,
-    set_store_dir,
-)
-from comms.transports.telegram.runtime.composition import (
-    build_runtime,
-    build_telegram,
-    serve_consent,
-)
+from comms.transports.telegram.keys.store import load_key, set_store_dir
+from comms.transports.telegram.runtime.composition import build_runtime, build_telegram
 from comms.transports.telegram.runtime.lock import RuntimeActive, acquire_lock
 from comms.transports.telegram.storage.db import open_db
 from comms.transports.telegram.storage.identity import ensure_owner_principal
@@ -71,15 +59,6 @@ class DaemonConfig:
     admin_group: str | None = None
 
 
-def _pins() -> tuple[bytes, bytes]:
-    root = get_store_dir()
-    approval = root / "agent-approval-key.pin"
-    transport = root / "agent-transport-key.pin"
-    if not approval.exists() or not transport.exists():
-        raise DaemonError("pair the consent agent first (telegram-mcp pair import ...)")
-    return approval.read_bytes(), transport.read_bytes()
-
-
 async def run_daemon(
     config: DaemonConfig,
     *,
@@ -99,12 +78,12 @@ async def run_daemon(
             raise DaemonError("the runtime directory is missing (run the installer)")
     else:
         runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    admin_path, consent_path = runtime_dir / "admin.sock", runtime_dir / "consent.sock"
+    admin_path = runtime_dir / "admin.sock"
     runtime_id = secrets.token_bytes(16)
     try:
         lock = acquire_lock(
             runtime_dir / "runtime.lock",
-            socket_paths=(admin_path, consent_path),
+            socket_paths=(admin_path,),
             runtime_id=runtime_id,
             mode="daemon",
         )
@@ -117,7 +96,6 @@ async def run_daemon(
     conn = None
     try:
         set_store_dir(config.key_dir)
-        approval_der, transport = _pins()
         state = Path(config.state_dir)
         state.mkdir(mode=0o700, parents=True, exist_ok=True)
         (state / "anchor").mkdir(mode=0o700, exist_ok=True)
@@ -153,13 +131,8 @@ async def run_daemon(
             key_dir=Path(config.key_dir),
             anchor_path=state / "anchor" / "anchor.json",
             runtime_id=runtime_id,
-            agent_verify=lambda sig, msg: verify_agent_signature(sig, msg, approval_der),
-            pinned_key_id=fingerprint_for("agent-approval-key", approval_der),
             port=config.port,
             telegram=session,
-        )
-        closers.append(
-            await serve_consent(services, consent_path, agent_transport_public=transport)
         )
         closers.append(
             await serve_admin(
@@ -167,7 +140,6 @@ async def run_daemon(
                 services.admin_router,
                 allow_uid=os.getuid() if admin_gid is None else None,
                 allow_gids=() if admin_gid is None else (admin_gid,),
-                approver=services.approver.approve,
             )
         )
         if admin_gid is not None:
@@ -197,7 +169,6 @@ async def run_daemon(
             await session.stop()  # disconnect only
         if conn is not None:
             conn.close()
-        for path in (admin_path, consent_path):
-            with contextlib.suppress(FileNotFoundError):
-                path.unlink()
+        with contextlib.suppress(FileNotFoundError):
+            admin_path.unlink()
         lock.release()

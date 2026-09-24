@@ -4,10 +4,10 @@
 (``secrets.token_bytes(16)``, memory-only, fresh per start). ``drain()``
 is the drain-phase unit: mark DRAINING, route new calls to the fixed
 ``INTERNAL_ERROR`` result, give in-flight work ``grace`` seconds (default
-5.0), then cancel the remainder. ``startup()`` runs steps 1-17 in order
+5.0), then cancel the remainder. ``startup()`` runs steps 1-15 in order
 with injectable seams so tests run headless; ``shutdown()`` drains, then
 closes Telegram (disconnect-only, never ``log_out``), SQLite, sockets,
-the kernel lock, and the consent UI.
+and the kernel lock.
 """
 
 from __future__ import annotations
@@ -36,7 +36,8 @@ __all__ = [
 # Controller decision: bounded INTERNAL_ERROR, never hang or half-execute.
 DRAINING_INTERNAL_ERROR = "INTERNAL_ERROR"
 
-# Ordered startup steps 1-17, in the design's normative order (§1).
+# Ordered startup steps 1-15, in the design's normative order (§1), less the
+# two consent-socket steps comms spec v0.2 retired.
 #
 # Two orderings in that list are load-bearing and were wrong here until the
 # end-to-end smoke caught them:
@@ -59,18 +60,16 @@ STARTUP_STEPS: tuple[str, ...] = (
     "gc_cursors",  # 7
     "recompute_key_ids",  # 8
     "bind_admin_socket",  # 9
-    "bind_consent_socket",  # 10
-    "handshake_consent",  # 11
-    "connect_telegram",  # 12
-    "verify_authority_snapshot",  # 13
-    "open_listeners",  # 14
-    "verify_ports",  # 15
-    "mark_ready",  # 16
-    "start_tunnel",  # 17
+    "connect_telegram",  # 10
+    "verify_authority_snapshot",  # 11
+    "open_listeners",  # 12
+    "verify_ports",  # 13
+    "mark_ready",  # 14
+    "start_tunnel",  # 15
 )
 
 # Seams injectable as callables for headless tests (brief Step 6).
-SEAM_STEPS = ("load_secrets", "open_db", "handshake_consent", "open_listeners", "start_tunnel")
+SEAM_STEPS = ("load_secrets", "open_db", "open_listeners", "start_tunnel")
 
 
 class StartupFailed(Exception):
@@ -133,7 +132,7 @@ def startup(
     lock_path: str | Path | None = None,
     **seams: Callable[[RuntimeContext], Any],
 ) -> RuntimeContext:
-    """Run ordered startup steps 1-17. Each failure raises fixed ``StartupFailed``."""
+    """Run ordered startup steps 1-15. Each failure raises fixed ``StartupFailed``."""
     ctx = RuntimeContext(runtime_id=b"\x00" * 16, started_at=time.time(), mode=mode)
     for step in STARTUP_STEPS:
         fn = seams.get(step)
@@ -163,7 +162,6 @@ async def shutdown(
     telegram: Any | None = None,
     db: Any | None = None,
     sockets: tuple[str | Path, ...] | list[str | Path] = (),
-    consent_ui: Any | None = None,
     grace: float = 5.0,
 ) -> None:
     """Drain, then release every resource in order.
@@ -190,10 +188,6 @@ async def shutdown(
     lock, ctx.lock = ctx.lock, None
     if lock is not None:
         lock.release()
-    if consent_ui is not None:
-        result = consent_ui.stop()
-        if isinstance(result, Awaitable):
-            await result
     ctx.state = "OFF"
 
 
@@ -205,7 +199,7 @@ def run_lifecycle(
     lock_path: str | Path | None = None,
     **seams: Callable[[RuntimeContext], Any],
 ) -> None:
-    """Run startup steps 1-17, block on ``stopped``, then DRAINING shutdown.
+    """Run startup steps 1-15, block on ``stopped``, then DRAINING shutdown.
 
     ``stopped`` is the stop-signal source (set by the admin-socket stop
     path in production); a pre-set event runs start-then-stop headlessly.

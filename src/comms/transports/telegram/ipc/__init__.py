@@ -1,4 +1,4 @@
-"""IPC: admin socket, bearer leases, consent rendezvous, tunnel pins."""
+"""IPC: admin socket, bearer leases, tunnel pins."""
 
 from comms.transports.telegram.ipc.admin import (
     ADMIN_COMMANDS,
@@ -28,15 +28,6 @@ from comms.transports.telegram.ipc.leases import (
     mint_lease,
     verify_lease,
 )
-from comms.transports.telegram.ipc.rendezvous import (
-    HANDSHAKE_DEADLINE_S,
-    RV_VERSION,
-    RendezvousError,
-    RendezvousSession,
-    build_challenge,
-    serve_rendezvous,
-    transcript_digest,
-)
 from comms.transports.telegram.ipc.tunnel import (
     PIN_LIFETIME_DAYS,
     TunnelPin,
@@ -51,7 +42,6 @@ from comms.transports.telegram.ipc.tunnel import (
 
 __all__ = [
     "ADMIN_COMMANDS",
-    "HANDSHAKE_DEADLINE_S",
     "IDLE_TIMEOUT_S",
     "LEASE_AUDIENCE",
     "LEASE_MAX_CHARS",
@@ -59,18 +49,14 @@ __all__ = [
     "LEASE_MAX_SKEW_S",
     "MAX_FRAME_BYTES",
     "PIN_LIFETIME_DAYS",
-    "RV_VERSION",
     "AdminRouter",
     "FrameError",
     "LeaseClaims",
     "LeaseError",
     "PeerCredentials",
-    "RendezvousError",
-    "RendezvousSession",
     "TunnelPin",
     "TunnelPinError",
     "add_pin",
-    "build_challenge",
     "current_pin",
     "decode_json_frame",
     "encode_json_frame",
@@ -81,9 +67,7 @@ __all__ = [
     "read_frame",
     "rotate_binding",
     "serve_admin",
-    "serve_rendezvous",
     "spki_digest",
-    "transcript_digest",
     "verify_lease",
     "verify_peer",
     "verify_pin",

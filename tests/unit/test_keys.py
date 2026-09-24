@@ -1,4 +1,4 @@
-"""Task 2: key registry, file store, and daemon-side pairing tests.
+"""Task 2: key registry and file store tests (pairing retired by comms spec v0.2).
 
 TDD RED step: these tests are written before ``telegram_mcp.keys`` exists.
 Controller ruling: host-mutating actions are forbidden — permission tests use
@@ -124,7 +124,7 @@ def test_provision_creates_only_phase2_file_backed_rows(store_dir):
     from comms.transports.telegram.keys.store import provision_missing
 
     created = provision_missing(store_dir, phases=(2,))
-    assert set(created) == {"principal-key", "cursor-key", "privacy-key", "challenge-key"}
+    assert set(created) == {"principal-key", "cursor-key", "privacy-key"}
     for name in created:
         mode = stat.S_IMODE(os.stat(store_dir / name).st_mode)
         assert mode == 0o600
@@ -153,10 +153,10 @@ def test_load_enforces_0600(store_dir):
     from comms.transports.telegram.keys.store import KeyStoreError, load_key, provision_missing
 
     provision_missing(store_dir, phases=(2,))
-    target = store_dir / "challenge-key"
+    target = store_dir / "cursor-key"
     os.chmod(target, 0o644)
     with pytest.raises(KeyStoreError, match="permissions must be 0600"):
-        load_key("challenge-key")
+        load_key("cursor-key")
 
 
 def test_provision_rejects_bad_parent_dir(tmp_path):
@@ -190,15 +190,15 @@ def test_key_id_ed25519_matches_raw_public_bytes(store_dir):
 
     from comms.transports.telegram.keys.store import key_id, load_key, provision_missing
 
-    provision_missing(store_dir, phases=(2,))
-    seed = load_key("challenge-key")
+    provision_missing(store_dir, phases=(3,))
+    seed = load_key("disclosure-key")
     assert len(seed) == 32
     raw_public = (
         Ed25519PrivateKey.from_private_bytes(seed)
         .public_key()
         .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     )
-    assert key_id("challenge-key") == "ed25519:sha256:" + _hashlib.sha256(raw_public).hexdigest()
+    assert key_id("disclosure-key") == "ed25519:sha256:" + _hashlib.sha256(raw_public).hexdigest()
 
 
 def test_key_id_hmac_shape(store_dir):
@@ -235,16 +235,14 @@ def _self_signed_cert():
 def test_tunnel_pin_fingerprint_is_spki(store_dir):
     from cryptography.hazmat.primitives import serialization
 
-    from comms.transports.telegram.keys import pairing
-    from comms.transports.telegram.keys.store import key_id
+    from comms.transports.telegram.keys.store import fingerprint_for
 
     cert = _self_signed_cert()
     der = cert.public_key().public_bytes(
         serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
     )
-    shown = pairing.import_peer_pin("tunnel-tls-key", cert.public_bytes(serialization.Encoding.DER))
+    shown = fingerprint_for("tunnel-tls-key", cert.public_bytes(serialization.Encoding.DER))
     assert shown == "spki:sha256:" + hashlib.sha256(der).hexdigest()
-    assert key_id("tunnel-tls-key") == shown
 
 
 def test_lease_seed_per_client(store_dir):
@@ -270,72 +268,6 @@ def test_lease_seed_rejects_unsafe_client_ref(store_dir):
 
 
 # --- Pairing (brief Step 5) ---------------------------------------------------
-
-
-def test_pairing_agent_two_slots(store_dir):
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    from comms.transports.telegram.keys import pairing
-
-    approval_pub = (
-        ec.generate_private_key(ec.SECP256R1())
-        .public_key()
-        .public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
-    )
-    transport_pub = (
-        Ed25519PrivateKey.generate()
-        .public_key()
-        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    )
-    approval_fp = pairing.import_peer_pin("agent-approval-key", approval_pub)
-    transport_fp = pairing.import_peer_pin("agent-transport-key", transport_pub)
-    assert approval_fp == "p256:sha256:" + hashlib.sha256(approval_pub).hexdigest()
-    assert transport_fp == "ed25519:sha256:" + hashlib.sha256(transport_pub).hexdigest()
-    assert approval_fp != transport_fp
-    assert pairing.export_public("agent-approval-key") == approval_pub
-    assert pairing.export_public("agent-transport-key") == transport_pub
-    assert pairing.verify_fingerprint("agent-approval-key", approval_fp) is True
-    assert pairing.verify_fingerprint("agent-approval-key", transport_fp) is False
-
-
-def test_pairing_challenge_export_and_verify(store_dir):
-    from comms.transports.telegram.keys import pairing
-    from comms.transports.telegram.keys.store import key_id, provision_missing
-
-    provision_missing(store_dir, phases=(2,))
-    raw = pairing.export_public("challenge-key")
-    assert len(raw) == 32  # raw Ed25519 public bytes, not the seed
-    assert pairing.verify_fingerprint("challenge-key", key_id("challenge-key")) is True
-    assert pairing.verify_fingerprint("challenge-key", "ed25519:sha256:" + "0" * 64) is False
-
-
-def test_pairing_rejects_hmac_pin(store_dir):
-    from comms.transports.telegram.keys import pairing
-    from comms.transports.telegram.keys.store import KeyStoreError
-
-    with pytest.raises(KeyStoreError, match="no public half"):
-        pairing.import_peer_pin("cursor-key", b"\x00" * 32)
-
-
-def test_pairing_unknown_purpose_raises(store_dir):
-    from comms.transports.telegram.keys import pairing
-    from comms.transports.telegram.keys.store import KeyStoreError
-
-    with pytest.raises(KeyStoreError, match="unknown key purpose"):
-        pairing.import_peer_pin("mallory-key", b"\x00" * 32)
-    assert pairing.verify_fingerprint("mallory-key", "ed25519:sha256:" + "0" * 64) is False
-
-
-def test_pairing_rejects_malformed_public(store_dir):
-    from comms.transports.telegram.keys import pairing
-    from comms.transports.telegram.keys.store import KeyStoreError
-
-    with pytest.raises(KeyStoreError, match="invalid key material"):
-        pairing.import_peer_pin("agent-transport-key", b"too-short")
-    with pytest.raises(KeyStoreError, match="invalid key material"):
-        pairing.import_peer_pin("agent-approval-key", b"\x00" * 32)
 
 
 def test_phase_three_rows_are_provisioned_and_have_distinct_ids(tmp_path):

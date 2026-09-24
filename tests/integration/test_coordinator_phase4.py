@@ -4,7 +4,8 @@
 from dataclasses import dataclass
 from typing import Any
 
-from comms.transports.telegram.disclosure.coordinator import AuthorityRefusal, ConsentRefusal
+from comms.transports.telegram.disclosure.budget import call_binding_digest
+from comms.transports.telegram.disclosure.coordinator import AuthorityRefusal
 from tests.coordinator_fixtures import build_coordinator
 
 
@@ -12,7 +13,7 @@ def _count(conn, table):
     return conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 
 
-async def test_the_reservation_binds_the_approval_nonce(tmp_path):
+async def test_the_reservation_binds_this_call(tmp_path):
     coordinator, _conn, adapter = build_coordinator(tmp_path)
     seen: dict[str, Any] = {}
     real_reserve = coordinator._ledger.reserve
@@ -26,44 +27,26 @@ async def test_the_reservation_binds_the_approval_nonce(tmp_path):
         tool_name="telegram_get_messages", arguments={}, adapter=adapter
     )
     assert outcome.released
-    assert seen["request_nonce"] == "N" * 22
+    nonce = seen["request_nonce"]
+    assert len(nonce) == 32 and int(nonce, 16) >= 0
+    assert seen["binding_digest"] == call_binding_digest("telegram_get_messages", {}, nonce)
 
 
-async def test_issue_is_awaited_and_sees_the_projection(tmp_path):
-    coordinator, _conn, adapter = build_coordinator(tmp_path)
-    await coordinator.disclose(tool_name="telegram_get_messages", arguments={}, adapter=adapter)
-    issued = coordinator._consent.issued
-    assert len(issued) == 1 and issued[0]["tier"] == "normal"
-    assert issued[0]["projected"], "the prompt must see the projected buckets"
-
-
-async def test_an_authority_refusal_stops_before_consent(tmp_path):
+async def test_an_authority_refusal_stops_before_reservation(tmp_path):
     coordinator, conn, adapter = build_coordinator(tmp_path)
 
     def refuse(tool_name, request):
         raise AuthorityRefusal("POLICY_UNCONFIGURED")
 
+    reserved: list[Any] = []
     coordinator._authority.snapshot = refuse
+    coordinator._ledger.reserve = lambda **kwargs: reserved.append(kwargs)
     outcome = await coordinator.disclose(
         tool_name="telegram_get_messages", arguments={}, adapter=adapter
     )
     assert (outcome.released, outcome.error_code) == (False, "POLICY_UNCONFIGURED")
-    assert coordinator._consent.issued == []
+    assert reserved == []
     assert _count(conn, "disclosure_receipts") == 0
-
-
-async def test_a_consent_refusal_carries_its_code(tmp_path):
-    coordinator, conn, adapter = build_coordinator(tmp_path)
-
-    async def unavailable(challenge):
-        raise ConsentRefusal("CONSENT_UNAVAILABLE")
-
-    coordinator._consent.consume = unavailable
-    outcome = await coordinator.disclose(
-        tool_name="telegram_get_messages", arguments={}, adapter=adapter
-    )
-    assert (outcome.released, outcome.error_code) == (False, "CONSENT_UNAVAILABLE")
-    assert _count(conn, "exposure_ledger") == 0
 
 
 @dataclass

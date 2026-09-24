@@ -53,15 +53,6 @@ def test_plan_runs_inside_the_transaction_and_run_tx_commits(conn):
     assert _name(conn) == "Renamed" and not conn.in_transaction
 
 
-def test_presence_never_reaches_parse(conn):
-    got = {}
-    cmd = TxCommand(
-        parse=lambda args: got.update(args) or {}, plan=lambda c, p: p, apply=lambda c, p: {}
-    )
-    run_tx(conn, cmd, {"presence": {"token": "t"}, "x": 1})
-    assert got == {"x": 1}
-
-
 def test_an_apply_failure_rolls_everything_back(conn):
     def apply(conn, plan):
         conn.execute("UPDATE projects SET display_name = 'half'")

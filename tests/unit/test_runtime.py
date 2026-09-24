@@ -91,10 +91,11 @@ async def test_drain_cancels_inflight_after_grace():
     assert ctx.state == "DRAINING"
 
 
-def test_startup_runs_seventeen_steps_in_order_with_seams():
+def test_startup_runs_fifteen_steps_in_order_with_seams():
     from comms.transports.telegram.runtime.lifecycle import STARTUP_STEPS, startup
 
-    assert len(STARTUP_STEPS) == 17
+    assert len(STARTUP_STEPS) == 15
+    assert not [step for step in STARTUP_STEPS if "consent" in step]
     # The design's two load-bearing orderings (§1): the single-runtime lock
     # is taken before any secret is read or the database is opened, and the
     # tunnel client starts only after READY is advertised.
@@ -102,7 +103,7 @@ def test_startup_runs_seventeen_steps_in_order_with_seams():
     assert STARTUP_STEPS.index("acquire_lock") == 1
     for later in ("load_secrets", "open_db", "run_migrations", "gc_cursors"):
         assert STARTUP_STEPS.index(later) > STARTUP_STEPS.index("acquire_lock"), later
-    assert STARTUP_STEPS.index("start_tunnel") == 16  # step 17, 1-based
+    assert STARTUP_STEPS.index("start_tunnel") == 14  # step 15, 1-based
     assert STARTUP_STEPS.index("mark_ready") < STARTUP_STEPS.index("start_tunnel")
     executed = []
 
@@ -117,7 +118,6 @@ def test_startup_runs_seventeen_steps_in_order_with_seams():
         mode="local",
         load_secrets=recorder("load_secrets"),
         open_db=recorder("open_db"),
-        handshake_consent=recorder("handshake_consent"),
         open_listeners=recorder("open_listeners"),
         start_tunnel=recorder("start_tunnel"),
     )
@@ -126,7 +126,6 @@ def test_startup_runs_seventeen_steps_in_order_with_seams():
     assert executed == [
         "load_secrets",
         "open_db",
-        "handshake_consent",
         "open_listeners",
         "start_tunnel",
     ]
@@ -163,7 +162,7 @@ async def test_shutdown_disconnects_without_logout_and_releases_lock(tmp_path):
     sock_path.write_bytes(b"x")
     ctx = RuntimeContext(runtime_id=b"\x01" * 16, started_at=1.0)
     ctx.lock = handle
-    await shutdown(ctx, telegram=adapter, db=None, sockets=[sock_path], consent_ui=None)
+    await shutdown(ctx, telegram=adapter, db=None, sockets=[sock_path])
     assert adapter.disconnected is True
     assert not sock_path.exists()
     # Lock released: a fresh acquire must succeed.
@@ -184,7 +183,6 @@ def test_ports_for_mode_mapping_is_frozen():
 def test_launcher_starts_tunnel_only_after_ready_and_stops_in_order(tmp_path, monkeypatch):
     from comms.transports.telegram.runtime import bootstrap as bootstrap_mod
     from comms.transports.telegram.runtime.bootstrap import (
-        AGENT_LABEL,
         RUNTIME_LABEL,
         TUNNEL_LABEL,
         FakeJobControl,
@@ -231,8 +229,8 @@ def test_launcher_starts_tunnel_only_after_ready_and_stops_in_order(tmp_path, mo
     kinds = [c[0] for c in jobs.calls if c[0] == "stop"]
     stopped_labels = [c[1] for c in jobs.calls if c[0] == "stop"]
     assert kinds, "expected stop calls"
-    # Stop order: tunnel intake off first, runtime drain second, agent last.
-    assert stopped_labels == [TUNNEL_LABEL, RUNTIME_LABEL, AGENT_LABEL]
+    # Stop order: tunnel intake off first, runtime drain second.
+    assert stopped_labels == [TUNNEL_LABEL, RUNTIME_LABEL]
 
 
 def test_stop_while_off_is_noop_success(tmp_path, monkeypatch):
@@ -288,7 +286,6 @@ def test_sweep_strays_kills_only_exact_argv_uid_matches():
     import os as _os
 
     from comms.transports.telegram.runtime.bootstrap import (
-        AGENT_LABEL,
         RUNTIME_LABEL,
         FakeJobControl,
         ProcessEntry,
@@ -300,6 +297,7 @@ def test_sweep_strays_kills_only_exact_argv_uid_matches():
         ProcessEntry(pid=102, uid=501, argv=("my-telegram-mcpd-wrapper",)),
         ProcessEntry(pid=103, uid=502, argv=("telegram-mcpd", "--serve")),
         ProcessEntry(pid=_os.getpid(), uid=501, argv=("telegram-mcpd",)),
+        # The retired consent agent (comms spec v0.2) is no longer a job here.
         ProcessEntry(pid=104, uid=501, argv=("telegram-mcp-agent",)),
     ]
     jobs = FakeJobControl()
@@ -309,10 +307,9 @@ def test_sweep_strays_kills_only_exact_argv_uid_matches():
         list_processes=lambda: table,
         uid_of=lambda label: 501,
     )
-    assert killed == [101, 104]
+    assert killed == [101]
     assert ("terminate", 101, RUNTIME_LABEL) in jobs.calls
-    assert ("terminate", 104, AGENT_LABEL) in jobs.calls
-    assert all(call[1] not in (102, 103, _os.getpid()) for call in jobs.calls)
+    assert all(call[1] not in (102, 103, 104, _os.getpid()) for call in jobs.calls)
 
 
 def test_sweep_strays_skips_tunnel_in_local_mode():
@@ -375,7 +372,6 @@ def test_stop_all_drains_runtime_before_stop(tmp_path, monkeypatch):
         jobs = bootstrap_mod.FakeJobControl()
         for label in (
             bootstrap_mod.RUNTIME_LABEL,
-            bootstrap_mod.AGENT_LABEL,
             bootstrap_mod.TUNNEL_LABEL,
         ):
             jobs.states[label] = "running"
@@ -397,12 +393,10 @@ def test_stop_all_drains_runtime_before_stop(tmp_path, monkeypatch):
             ("stop", bootstrap_mod.TUNNEL_LABEL),
             ("drain",),
             ("stop", bootstrap_mod.RUNTIME_LABEL),
-            ("stop", bootstrap_mod.AGENT_LABEL),
         ]
         assert result["stopped"] == [
             bootstrap_mod.TUNNEL_LABEL,
             bootstrap_mod.RUNTIME_LABEL,
-            bootstrap_mod.AGENT_LABEL,
         ]
     finally:
         handle.release()
@@ -416,7 +410,6 @@ def test_stop_all_ignores_drain_errors(tmp_path, monkeypatch):
         jobs = bootstrap_mod.FakeJobControl()
         for label in (
             bootstrap_mod.RUNTIME_LABEL,
-            bootstrap_mod.AGENT_LABEL,
             bootstrap_mod.TUNNEL_LABEL,
         ):
             jobs.states[label] = "running"
@@ -430,7 +423,6 @@ def test_stop_all_ignores_drain_errors(tmp_path, monkeypatch):
         assert result["stopped"] == [
             bootstrap_mod.TUNNEL_LABEL,
             bootstrap_mod.RUNTIME_LABEL,
-            bootstrap_mod.AGENT_LABEL,
         ]
     finally:
         handle.release()
@@ -444,7 +436,6 @@ def test_stop_all_noop_gated_on_lock_authority_not_job_states(tmp_path):
     jobs = bootstrap_mod.FakeJobControl()
     for label in (
         bootstrap_mod.RUNTIME_LABEL,
-        bootstrap_mod.AGENT_LABEL,
         bootstrap_mod.TUNNEL_LABEL,
     ):
         jobs.states[label] = "running"

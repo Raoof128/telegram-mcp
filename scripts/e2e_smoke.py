@@ -3,14 +3,12 @@
 
 This is not the test suite. The suite proves each unit; this drives the
 *shipped artifacts* end to end in one run — the real demo server over a real
-TCP socket, the real SQLite schema on disk, real Unix sockets, the real CLI,
-and the real signed agent binary against the real broker — and prints one
-ledger with an exit code.
+TCP socket, the real SQLite schema on disk, real Unix sockets, the real CLI
+and the real ingress into the real coordinator — and prints one ledger with
+an exit code. There is no consent agent (comms spec v0.2).
 
 It mutates nothing outside its own sandbox: no service accounts, no
-keychain writes, no Telegram, no host paths. Pairing state is read, never
-written, and every consent path runs through the headless selftest route so
-no biometric prompt appears.
+keychain writes, no Telegram, no host paths.
 
     uv run python scripts/e2e_smoke.py [--verbose]
 """
@@ -18,7 +16,6 @@ no biometric prompt appears.
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import os
@@ -37,8 +34,6 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parent.parent
 CLI = Path(sys.executable).parent / "telegram-mcp"  # the installed console script
-AGENT_BIN = REPO / "build/consent/TelegramMCPConsent.app/Contents/MacOS/telegram-mcp-consent"
-VECTORS = REPO / "tests/fixtures/consent/jcs_vectors.json"
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
@@ -630,7 +625,7 @@ def _seed_authority(conn: sqlite3.Connection) -> None:
 
 
 # --------------------------------------------------------------------------
-# Phase 2a: IPC — leases, admin socket, rendezvous, tunnel pins
+# Phase 2a: IPC — leases, admin socket, tunnel pins
 # --------------------------------------------------------------------------
 
 
@@ -682,7 +677,6 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
                         },
                         "lock": lambda args: {"locked": True},
                     },
-                    presence_verifier=lambda proof: proof == {"method": "smoke"},
                     control_handlers={"stop": lambda args: seen.append("stop") or {"ok": 1}},
                 )
                 server = await serve_admin(path, router)
@@ -699,13 +693,9 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
 
                     ok = await call(encode_json_frame({"cmd": "lock status"}))
                     assert ok["ok"] is True, ok
-                    gated = await call(encode_json_frame({"cmd": "lock"}))
-                    assert gated["code"] == "PRESENCE_REQUIRED", gated
-                    allowed = await call(
-                        encode_json_frame(
-                            {"cmd": "lock", "args": {"presence": {"method": "smoke"}}}
-                        )
-                    )
+                    stray = await call(encode_json_frame({"cmd": "lock", "args": {"presence": {}}}))
+                    assert stray["code"] == "MALFORMED_REQUEST", stray
+                    allowed = await call(encode_json_frame({"cmd": "lock"}))
                     assert allowed["ok"] is True, allowed
                     unrouted = await call(encode_json_frame({"cmd": "project rename"}))
                     assert unrouted["code"] == "NOT_AVAILABLE_IN_PHASE", unrouted
@@ -717,80 +707,7 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
                     assert control["ok"] is True and seen == ["stop"], (control, seen)
                     mode = oct(path.stat().st_mode)[-3:]
                     assert mode == "660", mode
-                    return "served, presence gate, unknown, duplicate keys, control stop, 0660"
-                finally:
-                    server.close()
-                    await server.wait_closed()
-
-        return asyncio.run(drive())
-
-    def rendezvous():
-        import asyncio
-
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-        from comms.transports.telegram.ipc.framing import (
-            decode_json_frame,
-            encode_json_frame,
-            read_frame,
-            write_frame,
-        )
-        from comms.transports.telegram.ipc.rendezvous import serve_rendezvous, transcript_digest
-
-        async def drive() -> str:
-            transport = Ed25519PrivateKey.from_private_bytes(b"\x05" * 32)
-            runtime_id = b"\x02" * 16
-            sessions: list[Any] = []
-            with tempfile.TemporaryDirectory(dir="/tmp") as short:
-                path = Path(short) / "consent.sock"
-                server = await serve_rendezvous(
-                    path,
-                    challenge_key=b"\x01" * 32,
-                    runtime_id=runtime_id,
-                    daemon_key_id="ed25519:sha256:" + "a" * 64,
-                    agent_transport_public=transport.public_key().public_bytes_raw(),
-                    on_session=lambda session, reader, writer: sessions.append(session),
-                )
-                try:
-                    reader, writer = await asyncio.open_unix_connection(str(path))
-                    nonce = base64.urlsafe_b64encode(b"\x09" * 16).decode().rstrip("=")
-                    await write_frame(
-                        writer,
-                        encode_json_frame(
-                            {
-                                "type": "HELLO",
-                                "version": "rv-1",
-                                "agent_key_id": "ed25519:sha256:" + "b" * 64,
-                                "agent_nonce": nonce,
-                            }
-                        ),
-                    )
-                    challenge = decode_json_frame(await read_frame(reader, idle_s=5))
-                    digest = transcript_digest(
-                        runtime_id=challenge["runtime_id"],
-                        agent_key_id="ed25519:sha256:" + "b" * 64,
-                        agent_nonce=nonce,
-                        daemon_nonce=challenge["daemon_nonce"],
-                        daemon_key_id=challenge["daemon_key_id"],
-                    )
-                    await write_frame(
-                        writer,
-                        encode_json_frame(
-                            {
-                                "type": "READY",
-                                "agent_nonce": nonce,
-                                "daemon_nonce": challenge["daemon_nonce"],
-                                "sig": base64.urlsafe_b64encode(transport.sign(digest))
-                                .decode()
-                                .rstrip("="),
-                            }
-                        ),
-                    )
-                    await asyncio.sleep(0.1)
-                    writer.close()
-                    assert len(sessions) == 1, sessions
-                    assert challenge["runtime_id"] == runtime_id.hex()
-                    return "HELLO/CHALLENGE/READY completed, transcript signed"
+                    return "served on peer authority, presence refused, unknown, duplicates, stop, 0660"
                 finally:
                     server.close()
                     await server.wait_closed()
@@ -826,7 +743,6 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
 
     ledger.run(area, "tgml1 lease wire", leases)
     ledger.run(area, "admin socket routing", admin_socket)
-    ledger.run(area, "RV-1 rendezvous handshake", rendezvous)
     ledger.run(area, "tunnel SPKI pins", tunnel_pins)
 
 
@@ -900,10 +816,10 @@ def phase2a_runtime(ledger: Ledger, sandbox: Path) -> None:
         statuses = {check["name"]: check["status"] for check in report["checks"]}
         assert statuses["keys.inventory"] == "ok", statuses
         assert statuses["db.integrity"] == "ok", statuses
-        assert statuses["consent.selftest"] == "ok", statuses
+        assert not {"consent.selftest", "keys.pairing"} & set(statuses), statuses
         assert statuses["off.probe"] == "ok", statuses
         assert report["status"] == "ok", report
-        return "keys, db, consent self-test and OFF probe all ok"
+        return "keys, db and OFF probe all ok; no consent checks remain"
 
     def doctor_production_fails():
         from comms.transports.telegram.doctor import doctor
@@ -976,183 +892,15 @@ def phase2a_runtime(ledger: Ledger, sandbox: Path) -> None:
 
 
 # --------------------------------------------------------------------------
-# Phase 2 consent: broker, gate, and the real Swift agent
-# --------------------------------------------------------------------------
-
-
-def phase2_consent(ledger: Ledger) -> None:
-    area = "Phase 2 — consent broker, gate, agent"
-
-    def broker_exact_once():
-        import asyncio
-
-        from comms.transports.telegram.consent.broker import ConsentBroker, ConsentError
-        from comms.transports.telegram.consent.challenge import (
-            StubSigner,
-            synthetic_exposure_digest,
-        )
-        from comms.transports.telegram.consent.gate import SyntheticDisclosureGate
-
-        async def drive() -> str:
-            stub = StubSigner(seed=0x09)
-            broker = ConsentBroker(
-                challenge_key=b"\x01" * 32, agent_verify=stub.verify, runtime_id=b"\x02" * 16
-            )
-            handle = await broker.issue(
-                tool="telegram_list_chats",
-                request_hmac="ab" * 32,
-                principal="prn_" + "a" * 26,
-                client="tcl_" + "b" * 26,
-                account="tga_" + "c" * 26,
-                policy_epoch=1,
-                project_scope_digest="1" * 64,
-                security_epoch=1,
-                display_digest="2" * 64,
-                exposure_snapshot_digest=synthetic_exposure_digest(),
-            )
-            challenge = broker.challenge_bytes(handle)
-            envelope = {
-                "challenge_sha256": hashlib.sha256(challenge).hexdigest(),
-                "sig": stub.sign(challenge),
-                "key_id": stub.key_id,
-            }
-            tampered = dict(envelope, sig=stub.sign(challenge + b"x"))
-            try:
-                await broker.consume(handle, tampered)
-            except ConsentError:
-                pass
-            else:
-                raise AssertionError("a tampered approval was accepted")
-            consumed = await broker.consume(handle, envelope)
-            try:
-                await broker.consume(handle, envelope)
-            except ConsentError:
-                pass
-            else:
-                raise AssertionError("an approval was consumed twice")
-            decision = await SyntheticDisclosureGate().authorize_disclosure(
-                challenge=consumed, snapshot=None
-            )
-            assert decision.allowed is True
-            assert not hasattr(broker, "approve"), "the broker must expose no approve method"
-            return "tamper refused, exact-once consume, gate allowed, no approve method"
-
-        return asyncio.run(drive())
-
-    def agent_present():
-        if not AGENT_BIN.exists():
-            raise _Skip("agent bundle not built; run scripts/package_agent.sh")
-        return str(AGENT_BIN.relative_to(REPO))
-
-    def agent_jcs():
-        if not AGENT_BIN.exists():
-            raise _Skip("agent bundle not built")
-        done = subprocess.run(
-            [str(AGENT_BIN), "selftest-jcs", str(VECTORS)],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        assert done.returncode == 0 and "JCS-OK" in done.stdout, done.stderr
-        cases = len(json.loads(VECTORS.read_text())["cases"])
-        return f"{cases} vectors byte-equal"
-
-    def agent_verify():
-        if not AGENT_BIN.exists():
-            raise _Skip("agent bundle not built")
-        done = subprocess.run(
-            [str(AGENT_BIN), "selftest-verify", str(VECTORS)],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        assert done.returncode == 0 and "VERIFY-OK" in done.stdout, done.stderr
-        return "daemon signatures verified, tamper rejected"
-
-    def agent_display_gate():
-        if not AGENT_BIN.exists():
-            raise _Skip("agent bundle not built")
-        done = subprocess.run(
-            [str(AGENT_BIN), "selftest-display-tamper", str(VECTORS)],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-            env={**os.environ, "CONSENT_NO_UI": "1"},
-        )
-        combined = done.stdout + done.stderr
-        assert done.returncode != 0 and "DISPLAY-MISMATCH" in combined, combined
-        assert "PROMPT-ATTEMPTED" not in combined, "the gate let a prompt through"
-        return "tampered display refused before any prompt"
-
-    def agent_pairing_state():
-        if not AGENT_BIN.exists():
-            raise _Skip("agent bundle not built")
-        done = subprocess.run(
-            [str(AGENT_BIN), "pairing-status"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        report = json.loads(done.stdout)
-        assert report["identity"]["kind"] == "adhoc", report["identity"]
-        assert report["pairable"] is False, report
-        refusal = subprocess.run(
-            [str(AGENT_BIN), "pairing", "generate"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        assert refusal.returncode != 0 and "AD-HOC" in (refusal.stdout + refusal.stderr).upper()
-        return "ad-hoc bundle reports unpairable and refuses to pair"
-
-    def join_scenarios():
-        if not AGENT_BIN.exists():
-            raise _Skip("agent bundle not built")
-        sys.path.insert(0, str(REPO))
-        from tests.agent.stub_broker import run_scenario
-
-        outcomes = {}
-        for scenario in (
-            "good-approval",
-            "duplicate-approval",
-            "display-tamper",
-            "broker-death-mid-prompt",
-        ):
-            result = run_scenario(scenario, timeout=90)
-            outcomes[scenario] = result
-        assert (
-            outcomes["good-approval"]["approved"] and outcomes["good-approval"]["signature_valid"]
-        )
-        assert outcomes["duplicate-approval"]["second_consume"] == "rejected"
-        assert outcomes["display-tamper"]["denial_reason"] == "DISPLAY-MISMATCH"
-        assert outcomes["broker-death-mid-prompt"]["agent_exited"]
-        assert outcomes["broker-death-mid-prompt"]["exit_seconds"] < 5.0
-        return "good, replay-rejected, tamper-denied, no orphan on broker death"
-
-    ledger.run(area, "broker exact-once and gate", broker_exact_once)
-    ledger.run(area, "agent bundle present", agent_present)
-    ledger.run(area, "agent JCS byte equality", agent_jcs)
-    ledger.run(area, "agent challenge verification", agent_verify)
-    ledger.run(area, "agent display gate", agent_display_gate)
-    ledger.run(area, "agent pairing refusal", agent_pairing_state)
-    ledger.run(area, "real broker <-> real agent", join_scenarios)
-
-
-# --------------------------------------------------------------------------
 # Phase 4a: the authenticated catalogue, end to end
 # --------------------------------------------------------------------------
 
 
 def phase4a_catalogue(ledger: Ledger) -> None:
-    """Real ingress over TCP, real broker and prompter, the packaged agent over RV-1.
+    """Real ingress over TCP into the real coordinator, owner-direct (comms spec v0.2).
 
     One event loop drives everything, because the SQLite connection is
-    thread-bound: uvicorn serves as a task beside the rendezvous server.
+    thread-bound: uvicorn serves as a task on it. No agent, no prompt.
     """
     area = "Phase 4a — authenticated catalogue"
     results: dict[str, Any] = {}
@@ -1160,34 +908,25 @@ def phase4a_catalogue(ledger: Ledger) -> None:
     def drive() -> dict[str, Any]:
         if results:
             return results
-        if not AGENT_BIN.exists():
-            raise _Skip("agent bundle not built")
         import asyncio
         import secrets
         import tempfile
 
         import httpx
         import uvicorn
-        from cryptography.hazmat.primitives.asymmetric import ed25519
         from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
 
         sys.path.insert(0, str(REPO))
         from comms.transports.telegram.disclosure.receipts import verify_proof
         from comms.transports.telegram.disclosure.verify import verify_persisted_receipt
         from comms.transports.telegram.ipc.leases import mint_lease
-        from comms.transports.telegram.keys.store import (
-            load_key,
-            provision_lease_seed,
-            provision_missing,
-        )
-        from comms.transports.telegram.runtime.composition import build_runtime, serve_consent
+        from comms.transports.telegram.keys.store import provision_lease_seed, provision_missing
+        from comms.transports.telegram.runtime.composition import build_runtime
         from comms.transports.telegram.storage.db import open_db
-        from tests.agent.stub_broker import _approval_public
         from tests.authority_fixtures import seed_authority_rows
 
         client = "tcl_" + "a" * 26
         runtime = secrets.token_bytes(16)
-        proof = {"method": "smoke"}
 
         async def main() -> dict[str, Any]:
             with tempfile.TemporaryDirectory(dir="/tmp") as short:
@@ -1198,36 +937,19 @@ def phase4a_catalogue(ledger: Ledger) -> None:
                 conn = open_db(root / "meta.db")
                 seed_authority_rows(conn)
                 (root / "anchor").mkdir(mode=0o700)
-                approval_seed = secrets.token_bytes(32)
-                approval_public, _der, approval_id = _approval_public(approval_seed)
-
-                def verify(sig: bytes, msg: bytes) -> bool:
-                    from cryptography.hazmat.primitives import hashes
-                    from cryptography.hazmat.primitives.asymmetric import ec
-
-                    try:
-                        approval_public.verify(sig, msg, ec.ECDSA(hashes.SHA256()))
-                    except Exception:  # noqa: BLE001 -- a verifier fails closed on anything
-                        return False
-                    return True
-
                 port = free_port()
                 services = build_runtime(
                     conn,
                     key_dir=keys,
                     anchor_path=root / "anchor" / "anchor.json",
                     runtime_id=runtime,
-                    agent_verify=verify,
-                    pinned_key_id=approval_id,
                     port=port,
-                    presence_verifier=lambda given: given == proof,
                 )
                 project = conn.execute("SELECT project_ref FROM projects").fetchone()[0]
                 granted = services.admin_router.dispatch(
                     {
                         "cmd": "project grant-client",
                         "args": {
-                            "presence": proof,
                             "project_ref": project,
                             "client_ref": client,
                             "egress_level": "full_text",
@@ -1235,34 +957,6 @@ def phase4a_catalogue(ledger: Ledger) -> None:
                     }
                 )
                 assert granted["ok"], granted
-                transport_seed = secrets.token_bytes(32)
-                transport_public = (
-                    ed25519.Ed25519PrivateKey.from_private_bytes(transport_seed)
-                    .public_key()
-                    .public_bytes_raw()
-                )
-                daemon_public = (
-                    ed25519.Ed25519PrivateKey.from_private_bytes(load_key("challenge-key"))
-                    .public_key()
-                    .public_bytes_raw()
-                )
-                consent = await serve_consent(
-                    services, root / "c.sock", agent_transport_public=transport_public
-                )
-                agent = await asyncio.create_subprocess_exec(
-                    str(AGENT_BIN),
-                    "selftest-rendezvous",
-                    str(root / "c.sock"),
-                    env={
-                        **os.environ,
-                        "CONSENT_NO_UI": "1",
-                        "CONSENT_SELFTEST_TRANSPORT_SEED": transport_seed.hex(),
-                        "CONSENT_SELFTEST_APPROVAL_SEED": approval_seed.hex(),
-                        "CONSENT_SELFTEST_DAEMON_PUB": daemon_public.hex(),
-                    },
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
                 server = uvicorn.Server(
                     uvicorn.Config(
                         services.ingress_app, host="127.0.0.1", port=port, log_level="warning"
@@ -1272,8 +966,8 @@ def phase4a_catalogue(ledger: Ledger) -> None:
                 out: dict[str, Any] = {}
                 try:
                     deadline = time.monotonic() + 30
-                    while not (server.started and services.prompter.connected):
-                        assert time.monotonic() < deadline, "agent never attached"
+                    while not server.started:
+                        assert time.monotonic() < deadline, "ingress never started"
                         await asyncio.sleep(0.05)
 
                     async def post(name, arguments, token):
@@ -1347,10 +1041,6 @@ def phase4a_catalogue(ledger: Ledger) -> None:
                 finally:
                     server.should_exit = True
                     await serving
-                    if agent.returncode is None:
-                        agent.kill()
-                    await agent.wait()
-                    consent.close()
                     conn.close()
                 return out
 
@@ -1362,7 +1052,10 @@ def phase4a_catalogue(ledger: Ledger) -> None:
         body = out["success"]
         assert body["ok"] is True, body
         assert out["persisted_ok"] and out["offline_ok"]
-        return f"receipt {body['meta']['disclosure']['receipt_ref'][:10]}… verifies persisted and offline"
+        payload = body["meta"]["disclosure"]["proof_payload"]
+        assert payload["schema"] == "tg-mcp-disclosure/v2", payload["schema"]
+        assert payload["authorization_mode"] == "owner_direct", payload
+        return f"v2 owner-direct receipt {body['meta']['disclosure']['receipt_ref'][:10]}… verifies persisted and offline"
 
     def bad_bearers():
         out = drive()
@@ -1374,7 +1067,7 @@ def phase4a_catalogue(ledger: Ledger) -> None:
     def others_refuse():
         out = drive()
         assert out["other"]["error"]["code"] == "AUTH_REQUIRED", out["other"]
-        return "telegram_get_context without a session -> AUTH_REQUIRED, no prompt"
+        return "telegram_get_context without a session -> AUTH_REQUIRED, nothing retrieved"
 
     def demo_still_refuses():
         from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
@@ -1403,7 +1096,7 @@ def phase4a_catalogue(ledger: Ledger) -> None:
         assert code == "POLICY_UNCONFIGURED", code
         return "demo list_projects -> POLICY_UNCONFIGURED"
 
-    ledger.run(area, "catalogue success through ingress + real agent", real_success)
+    ledger.run(area, "catalogue success through ingress, owner-direct", real_success)
     ledger.run(area, "bad bearers are 401, byte-identical", bad_bearers)
     ledger.run(area, "Telegram tools refuse without a session", others_refuse)
     ledger.run(area, "demo server still has no sensitive route", demo_still_refuses)
@@ -1495,13 +1188,12 @@ def phase4c_reads(ledger: Ledger) -> None:
         if results:
             return results
         import asyncio
-        import hashlib
         import tempfile
 
         sys.path.insert(0, str(REPO))
         from telethon.tl import types
 
-        from comms.transports.telegram.consent.challenge import jcs_dumps
+        from comms.transports.telegram.canonical import jcs_dumps
         from comms.transports.telegram.storage.refstore import RefStore
         from tests.authority_fixtures import BETA_REF, PROJECT_REF, seed_second_project
         from tests.integration.test_phase4a_end_to_end import CODEX, call
@@ -1655,37 +1347,23 @@ def phase5a_operator(ledger: Ledger) -> None:
             seed_second_project(conn)
             (root / "anchor").mkdir(mode=0o700)
 
-            class Broker:
-                def pending_count(self) -> int:
-                    return 0
-
-                def invalidate_where(self, predicate: Any) -> int:
-                    return 0
-
-            class Prompter:
-                connected = False
-
             handlers = admin_handlers(
                 conn,
                 key_dir=root / "keys",
                 anchor_path=root / "anchor" / "anchor.json",
                 telegram=None,
-                broker=Broker(),
-                prompter=Prompter(),
                 seeds=lambda ref: None,
                 runtime_id=_secrets.token_bytes(16),
                 clock=time.time,
             )
-            router = AdminRouter(handlers, presence_verifier=lambda proof: proof == {"m": "smoke"})
+            router = AdminRouter(handlers)
             sock = root / "admin.sock"
             server = await serve_admin(sock, router)
             try:
 
                 async def call(cmd: str, **args: Any) -> dict[str, Any]:
                     reader, writer = await asyncio.open_unix_connection(str(sock))
-                    payload = encode_json_frame(
-                        {"cmd": cmd, "args": {"presence": {"m": "smoke"}, **args}}
-                    )
+                    payload = encode_json_frame({"cmd": cmd, "args": args})
                     writer.write(len(payload).to_bytes(4, "big") + payload)
                     await writer.drain()
                     size = int.from_bytes(await reader.readexactly(4), "big")
@@ -1772,7 +1450,6 @@ def main() -> int:
         state = phase2a_core(ledger, sandbox)
         phase2a_ipc(ledger, sandbox, state)
         phase2a_runtime(ledger, sandbox)
-        phase2_consent(ledger)
         phase4a_catalogue(ledger)
         phase4b_reads(ledger)
         phase4c_reads(ledger)

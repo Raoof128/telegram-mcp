@@ -1,20 +1,18 @@
-"""The four tools through ingress, consent, coordinator and a fake Telegram."""
+"""The four tools through ingress, coordinator and a fake Telegram."""
 
 import asyncio
 import secrets
-import socket
 from pathlib import Path
 
 import uvicorn
 from telethon.tl import types
 
-from comms.transports.telegram.consent.challenge import StubSigner
 from comms.transports.telegram.keys.store import provision_lease_seed, provision_missing
 from comms.transports.telegram.runtime.composition import build_runtime
 from comms.transports.telegram.storage.db import open_db
 from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 from tests.authority_fixtures import PROJECT_REF, seed_authority_rows, seed_project_world
-from tests.integration.test_phase4a_end_to_end import CODEX, RUNTIME, Agent, _free_port, call
+from tests.integration.test_phase4a_end_to_end import CODEX, RUNTIME, _free_port, call
 from tests.integration.test_telegram_reads import (
     ALI,
     BOB,
@@ -63,35 +61,25 @@ async def _world(tmp_path, monkeypatch, *, with_telegram=True, authorized=True):
         )
         await session.start()
         fake.calls.clear()  # the start-up authorisation probe is not part of any tool call
-    signer = StubSigner(seed=0x07)
     port = _free_port()
     services = build_runtime(
         conn,
         key_dir=keys,
         anchor_path=tmp_path / "anchor" / "anchor.json",
         runtime_id=RUNTIME,
-        agent_verify=signer.verify,
         port=port,
         telegram=session,
     )
-    agent = Agent(signer)
-    left, right = socket.socketpair()
-    d_reader, d_writer = await asyncio.open_connection(sock=left)
-    a_reader, a_writer = await asyncio.open_connection(sock=right)
-    tasks = [
-        asyncio.create_task(services.prompter.attach(d_reader, d_writer)),
-        asyncio.create_task(agent.run(a_reader, a_writer)),
-    ]
+    tasks = []
     server = uvicorn.Server(
         uvicorn.Config(services.ingress_app, host="127.0.0.1", port=port, log_level="warning")
     )
     tasks.append(asyncio.create_task(server.serve()))
-    while not server.started or not services.prompter.connected:
+    while not server.started:
         await asyncio.sleep(0.02)
     return {
         "seeds": seeds,
         "port": port,
-        "agent": agent,
         "refs": refs,
         "conn": conn,
         "server": server,
@@ -124,7 +112,6 @@ async def test_list_chats_then_get_messages_with_receipts_and_no_body_at_rest(
         assert body["ok"] is True, body
         assert body["data"]["messages"][0]["text"] == MARKER
         assert body["meta"]["content_trust"] == "untrusted_external_content"
-        assert world["agent"].prompts == 2
         world["conn"].commit()
         for path in Path(tmp_path).glob("meta.db*"):
             assert MARKER.encode() not in path.read_bytes(), path  # §19.4: no body at rest
@@ -133,21 +120,19 @@ async def test_list_chats_then_get_messages_with_receipts_and_no_body_at_rest(
         await _close(world)
 
 
-async def test_an_unauthorised_session_refuses_before_consent(tmp_path, monkeypatch):
+async def test_an_unauthorised_session_refuses_before_retrieval(tmp_path, monkeypatch):
     world = await _world(tmp_path, monkeypatch, authorized=False)
     try:
         body = await call(world, CODEX, "telegram_list_chats", {"project_ref": PROJECT_REF})
         assert body["error"]["code"] == "AUTH_REQUIRED"
-        assert world["agent"].prompts == 0  # never ask the owner to approve a read that cannot run
     finally:
         await _close(world)
 
 
-async def test_without_a_session_the_telegram_tools_refuse_before_consent(tmp_path, monkeypatch):
+async def test_without_a_session_the_telegram_tools_refuse_before_retrieval(tmp_path, monkeypatch):
     world = await _world(tmp_path, monkeypatch, with_telegram=False)
     try:
         body = await call(world, CODEX, "telegram_list_chats", {"project_ref": PROJECT_REF})
         assert body["error"]["code"] == "AUTH_REQUIRED"
-        assert world["agent"].prompts == 0
     finally:
         await _close(world)

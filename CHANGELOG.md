@@ -430,3 +430,11 @@
 - **Files changed:** see AGENT.md entry of the same date.
 - **Verification:** Telegram 1519/10 skipped + smoke 60 + formal 624/18; WhatsVault 539 passed.
 - **Follow-ups:** merge decision; §3.4 seams or 5b-3.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms 5b-3 — owner-direct authority (comms spec v0.2).
+- **Summary:** No Touch ID and no consent ceremony anywhere: the consent subsystem is deleted; receipts are explicitly versioned (v2 `owner_direct` with the soft-threshold flag; v1 kept byte-identical and verifiable); admin authority is peer credentials; consent keys retired, not erased; six replacement formal invariants; retired identifiers tombstoned; the AI boundary stated exactly.
+- **Files changed:** see AGENT.md entry of the same date.
+- **Verification:** Telegram 1427/4 skipped + smoke 52 + formal 544/22; WhatsVault 539 passed; unexpectedly missing tests = 0.
+- **Follow-ups:** merge decision; runbook key/bundle removal; 5b-4.

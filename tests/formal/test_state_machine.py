@@ -28,3 +28,53 @@ def test_no_assertion_is_unreachable():
     assert dead == [], f"assertions never evaluated: {dead}"
     for name, count in sorted(hits.items()):
         print(f"  {name:42} {count}/{visited}")
+
+
+KEPT = {
+    "NoDisclosureWhenLocked",
+    "NoDisclosureAfterClientRevoke",
+    "NoDisclosureAfterProjectRevoke",
+    "NoDisclosureWithStaleEpoch",
+    "NoOrdinaryCrossProjectDisclosure",
+    "CrossProjectRequiresExplicitSetAndGrant",
+    "HardExposureBudgetCannotBeBypassed",
+    "ConcurrentBudgetReservationIsAtomic",
+    "EgressNeverExpandsAuthorisedPayload",
+    "ProvenanceMatchesAuthorisingProjectSet",
+    "DisclosureCommitIsAtomic",
+    "AuditSequenceNeverForks",
+    "NoPayloadBeforeAnchorRefresh",
+    "ChainNeverMoreThanOneAheadOfAnchor",
+    "ActualNeverExceedsReserved",
+    "ExfiltrationHasNoSilentPath",
+}
+# comms spec v0.2 (5b-3 design §2.6): consent's two assertions are replaced.
+REPLACEMENTS = {
+    "OwnerDirectReceiptNeverClaimsConsent",
+    "ReceiptVersionsDistinguishable",
+    "V2RequiresOwnerDirect",
+    "HardRefusalPrecedesRetrieval",
+    "ReservationCommitsAtMostOnce",
+    "NoHandoffBeforeCommitAndAnchor",
+}
+
+
+def test_the_assertion_set_is_the_owner_direct_set():
+    assert set(ASSERTIONS) == KEPT | REPLACEMENTS
+    assert not {"ConsentConsumedAtMostOnce", "NoReceiptWithoutVerifiedConsent"} & set(ASSERTIONS)
+
+
+def test_the_model_has_no_consent_protocol():
+    from formal.model import State, _transitions
+
+    assert "consent_state" not in State.__dataclass_fields__
+    labels: set[str] = set()
+    frontier, seen = [State()], {State()}
+    while frontier:
+        for label, nxt in _transitions(frontier.pop()):
+            labels.add(label)
+            if nxt not in seen:
+                seen.add(nxt)
+                frontier.append(nxt)
+    assert not [label for label in labels if "consent" in label]
+    assert {"consult_refuse", "hard_refusal", "reserve", "commit"} <= labels

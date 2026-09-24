@@ -20,7 +20,7 @@ from comms.transports.telegram.authority.policy import (
     TraceStep,
     evaluate_with_trace,
 )
-from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.canonical import jcs_dumps
 from comms.transports.telegram.opaque import validate_ref_format
 
 __all__ = [

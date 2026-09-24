@@ -1,8 +1,7 @@
 """Seams the coordinator needs, faked exactly as Phase 2 faked its own.
 
-``FakeAuthority`` and ``FakeConsent`` are the two boundaries Phase 4 replaces.
-They decide nothing interesting: the point of the crash suite is the
-coordinator's *sequencing*, so the seams answer predictably and the failures
+``FakeAuthority`` is the boundary Phase 4 replaces. It decides nothing interesting: the point of the crash suite is the
+coordinator's *sequencing*, so the seam answers predictably and the failures
 under test come from the transaction, not from policy.
 """
 
@@ -39,13 +38,6 @@ class Snapshot:
     partial: bool = False
 
 
-@dataclass(frozen=True)
-class Approval:
-    key_id: str = "p256:sha256:" + "1" * 64
-    challenge_sha256: str = "2" * 64
-    nonce: str = "N" * 22
-
-
 class FakeAuthority:
     """Fixed snapshot; reports movement only when a test asks for it."""
 
@@ -76,28 +68,6 @@ class FakeAuthority:
         return raw
 
 
-class FakeConsent:
-    """Issues a challenge and approves it. Divergence is opt-in."""
-
-    def __init__(self, *, approve: bool = True, diverge_times: int = 0) -> None:
-        self._approve = approve
-        self._diverge_times = diverge_times
-        self.issued: list[dict[str, Any]] = []
-
-    async def issue(self, *, tool_name, snapshot, request, tier, projected, worst_case) -> str:
-        self.issued.append({"tool_name": tool_name, "tier": tier, "projected": dict(projected)})
-        return "tgu_" + "a" * 26
-
-    async def consume(self, challenge: str) -> Approval | None:
-        return Approval() if self._approve else None
-
-    def snapshot_matches(self, approval: Approval, *, tier: str, projected: Any) -> bool:
-        if self._diverge_times > 0:
-            self._diverge_times -= 1
-            return False
-        return True
-
-
 def build_coordinator(
     tmp_path,
     *,
@@ -105,8 +75,6 @@ def build_coordinator(
     transport: Any = None,
     records: list[dict[str, Any]] | None = None,
     moved: str | None = None,
-    approve: bool = True,
-    diverge_times: int = 0,
     anchor_dir_mode: int = 0o700,
     moved_on_call: int = 1,
     authority_factory: Any = None,
@@ -167,7 +135,6 @@ def build_coordinator(
             if authority_factory is not None
             else FakeAuthority(moved=moved, worst_case=worst_case, moved_on_call=moved_on_call)
         ),
-        consent=FakeConsent(approve=approve, diverge_times=diverge_times),
         transport=transport,
         crash_at=crash_at,
     )

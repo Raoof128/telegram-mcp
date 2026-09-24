@@ -3,10 +3,9 @@
 Runs after retrieval and revalidation, before accounting, signing and
 serialisation. Deterministic, and it never summarises.
 
-**Message text is never sanitised here.** The Phase-2b display sanitiser
-strips C0/C1 and bidi controls so a consent prompt cannot be spoofed;
-running it over a Telegram body would corrupt the evidence the model is
-reading. The only content change this module makes is excerpt truncation.
+**Message text is never sanitised here.** Stripping control characters from
+a Telegram body would corrupt the evidence the model is reading. The only
+content change this module makes is excerpt truncation.
 """
 
 from __future__ import annotations

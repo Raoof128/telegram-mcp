@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(comms campaign send:*)",
+      "Bash(uv run comms campaign send:*)",
+      "Bash(comms campaign retry-failed:*)",
+      "Bash(uv run comms campaign retry-failed:*)"
+    ]
+  }
+}

@@ -24,7 +24,7 @@ __all__ = ["PROJECT_COMMANDS", "MemberView", "member_commands", "project_handler
 _SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,31}\Z")
 _EGRESS = ("metadata_only", "excerpt", "full_text")
 _MODES = ("allowlist", "all_cloud_chats")
-# Spec §9.8: display strings must not spoof the trusted prompt. Bidi
+# Display strings must not spoof operator output or a client's rendering. Bidi
 # embedding/override/isolate controls, LRM/RLM, the Arabic letter mark and
 # line/paragraph separators are refused. ZWNJ (U+200C) stays: Persian needs it.
 PROMPT_UNSAFE: frozenset[int] = frozenset(
@@ -37,7 +37,7 @@ def _now() -> str:
 
 
 def _args(args: dict[str, Any], allowed: set[str]) -> dict[str, Any]:
-    body = {k: v for k, v in args.items() if k != "presence"}
+    body = dict(args)
     if set(body) - allowed:
         raise ValueError("unknown argument")
     return body

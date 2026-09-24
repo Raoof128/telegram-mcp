@@ -11,7 +11,7 @@ unlock, so no authority object minted before a lock can ever be revived
 State is a plain dict shaped like the Task-7 rows so these functions stay
 storage-free; ``storage.bind_epoch_state`` loads the rows into this shape
 and writes them back transactionally. Callers that advance the security
-epoch must also sweep the in-memory consent broker and cursor store: the
+epoch must also sweep the in-memory cursor store: the
 epoch change makes those objects fail closed on their next use, and the
 sweep releases them immediately (design §5).
 """

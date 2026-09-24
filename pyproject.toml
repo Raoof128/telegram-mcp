@@ -35,8 +35,7 @@ target-version = "py312"
 line-length = 100
 
 [tool.mypy]
-# Two conftest.py files (tests/ and tests/agent/) are legal for pytest but
-# ambiguous for mypy's module resolution without explicit package bases.
+# Explicit package bases keep mypy's module resolution unambiguous for tests.
 explicit_package_bases = true
 mypy_path = "src"
 

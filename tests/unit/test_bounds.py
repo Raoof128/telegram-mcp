@@ -1,6 +1,6 @@
 import pytest
 
-from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.canonical import jcs_dumps
 from comms.transports.telegram.disclosure.bounds import (
     DATA_BYTES_MAX,
     NAME_MAX,

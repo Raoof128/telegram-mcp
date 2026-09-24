@@ -27,7 +27,7 @@ MAX_SEQ = 3
 
 @dataclass(frozen=True)
 class State:
-    """Appendix L's fifteen variables plus the five this architecture needs."""
+    """Appendix L's variables (consent removed, comms spec v0.2) plus this architecture's."""
 
     # -- Appendix L ------------------------------------------------------
     security_epoch: int = 1
@@ -37,7 +37,8 @@ class State:
     client_project_grant: bool = True
     egress_level: int = 2  # 0 metadata_only, 1 excerpt, 2 full_text
     project_membership: bool = True
-    consent_state: str = "none"  # none | issued | consumed | denied
+    # Replaces consent_state: the ledger consult immediately before reserve.
+    budget_decision: str = "none"  # none | normal | elevated | refuse
     request_state: str = "idle"  # idle | frozen | retrieved | transformed | done
     exposure_charged: int = 0
     reservation: int = 0
@@ -61,8 +62,21 @@ class State:
     # the system. These record what was true when the bytes actually left.
     released_stale: bool = False
     released_revoked: bool = False
-    # Captured AT COMMIT TIME, for the same reason.
-    receipt_without_consent: bool = False
+    # -- receipts (comms spec v0.2, 5b-3 design §2.6) ---------------------
+    # The receipt this request committed: 0 none yet, 2 owner-direct. Its
+    # authorization mode and consent claim are captured AT COMMIT TIME.
+    receipt_version: int = 0
+    receipt_mode: str = "none"  # none | owner_direct
+    receipt_claims_consent: bool = False
+    # A historical v1 receipt exists in every initial state. Nothing in the
+    # model may rewrite it: it keeps version 1 and its consent claim.
+    v1_version: int = 1
+    v1_claims_consent: bool = True
+    # Commits spent against the live reservation (reset when one is minted).
+    reservation_commits: int = 0
+    # Captured AT RETRIEVE / RELEASE TIME.
+    retrieved_under_refuse: bool = False
+    released_uncommitted: bool = False
 
 
 def _transitions(s: State) -> list[tuple[str, State]]:
@@ -79,7 +93,7 @@ def _transitions(s: State) -> list[tuple[str, State]]:
             audit_integrity_state="CLEAN",
             anchor_seq=s.audit_chain_seq,
             disclosure_commit_state="none",
-            consent_state="none",
+            budget_decision="none",
             request_state="idle",
         )
         return out
@@ -93,16 +107,32 @@ def _transitions(s: State) -> list[tuple[str, State]]:
             snapshot_epoch=s.security_epoch,
             disclosure_commit_state="none",
             payload_released=False,
+            receipt_version=0,
+            receipt_mode="none",
+            receipt_claims_consent=False,
         )
-    if s.request_state == "frozen" and s.consent_state == "none":
-        add("consent_issue", consent_state="issued")
-    if s.consent_state == "issued":
-        add("consent_consume", consent_state="consumed")
-        add("consent_deny", consent_state="denied", request_state="idle")
-    if s.consent_state == "consumed" and s.reservation == 0:
-        add("reserve", reservation=2)
+    if s.request_state == "frozen" and s.budget_decision == "none":
+        # The ledger's tier is environment-driven: any of the three may come
+        # back. `elevated` is recorded on the receipt, never prompted.
+        for decision in ("normal", "elevated", "refuse"):
+            add(f"consult_{decision}", budget_decision=decision)
+    if s.budget_decision == "refuse" and s.request_state == "frozen":
+        add("hard_refusal", budget_decision="none", request_state="idle")
+    # One reservation per call, minted only while the request is frozen: the
+    # search found that without the request_state guard a second reservation
+    # could be minted after commit and carried into a later, refused request.
+    if (
+        s.request_state == "frozen"
+        and s.budget_decision in ("normal", "elevated")
+        and s.reservation == 0
+    ):
+        add("reserve", reservation=2, reservation_commits=0)
     if s.reservation and s.request_state == "frozen":
-        add("retrieve", request_state="retrieved")
+        add(
+            "retrieve",
+            request_state="retrieved",
+            retrieved_under_refuse=s.retrieved_under_refuse or s.budget_decision == "refuse",
+        )
     if s.request_state == "retrieved":
         # Step 8, revalidate_authority. Data exists in memory; the gateway
         # re-reads the lock, the epochs, the grant and the membership before
@@ -124,20 +154,15 @@ def _transitions(s: State) -> list[tuple[str, State]]:
                 "revalidate_refuses",
                 reservation=0,
                 request_state="idle",
-                consent_state="none",
+                budget_decision="none",
             )
-        add("release_reservation", reservation=0, request_state="idle", consent_state="none")
-    # The reservation is bound to the approved consent digest, so a commit
-    # cannot proceed against anything but the consent that was consumed for
-    # this request. Without this guard the search reaches a committed
-    # receipt whose consent was never verified.
-    if (
-        s.request_state == "transformed"
-        and s.consent_state == "consumed"
-        and not s.append_guard_held
-    ):
+        add("release_reservation", reservation=0, request_state="idle", budget_decision="none")
+    # The reservation is bound to this call (call_binding_digest over tool,
+    # arguments and nonce), so a commit needs the live reservation minted for
+    # this request; nothing else can be spent.
+    if s.request_state == "transformed" and s.reservation and not s.append_guard_held:
         # The reservation is bound to (client, security_epoch, scope,
-        # consent digest, nonce, expiry) -- §23C.3. That binding is what
+        # call binding, nonce, expiry) -- §23C.3. That binding is what
         # closes the window between step 8 and step 12: revalidation alone
         # cannot, because a lock is an external event that can land after
         # it. The exhaustive search found exactly that hole before this
@@ -153,12 +178,15 @@ def _transitions(s: State) -> list[tuple[str, State]]:
                 "reservation_binding_broken",
                 reservation=0,
                 request_state="idle",
-                consent_state="none",
+                budget_decision="none",
             )
         elif s.audit_chain_seq < MAX_SEQ:
             add(
                 "commit",
-                receipt_without_consent=(s.consent_state != "consumed"),
+                receipt_version=2,
+                receipt_mode="owner_direct",
+                receipt_claims_consent=False,
+                reservation_commits=s.reservation_commits + 1,
                 append_guard_held=True,
                 disclosure_commit_state="committed",
                 audit_chain_seq=s.audit_chain_seq + 1,
@@ -172,12 +200,15 @@ def _transitions(s: State) -> list[tuple[str, State]]:
             "anchor_ok",
             released_stale=(s.snapshot_epoch != s.security_epoch or s.lock_state),
             released_revoked=(not s.client_enabled or not s.project_membership),
+            released_uncommitted=(
+                s.released_uncommitted or s.disclosure_commit_state != "committed"
+            ),
             anchor_seq=s.audit_chain_seq,
             audit_integrity_state="CLEAN",
             append_guard_held=False,
             payload_released=True,
             request_state="idle",
-            consent_state="none",
+            budget_decision="none",
             disclosure_commit_state="none",
         )
         add("anchor_fail", audit_integrity_state="DEGRADED", append_guard_held=False)
@@ -208,18 +239,12 @@ ASSERTIONS = {
     "CrossProjectRequiresExplicitSetAndGrant": lambda s: (
         not (s.cross_project and not s.client_project_grant)
     ),
-    "ConsentConsumedAtMostOnce": lambda s: (
-        not (
-            s.consent_state == "consumed" and s.reservation == 0 and s.request_state == "retrieved"
-        )
-    ),
     "HardExposureBudgetCannotBeBypassed": lambda s: s.exposure_charged <= 2 * MAX_SEQ,
     "ConcurrentBudgetReservationIsAtomic": lambda s: s.reservation in (0, 2),
     "EgressNeverExpandsAuthorisedPayload": lambda s: s.egress_level <= 2,
     "ProvenanceMatchesAuthorisingProjectSet": lambda s: (
         not (s.disclosed and not s.project_membership)
     ),
-    "NoReceiptWithoutVerifiedConsent": lambda s: not s.receipt_without_consent,
     "DisclosureCommitIsAtomic": lambda s: (
         not (s.disclosure_commit_state == "committed" and s.exposure_charged == 0)
     ),
@@ -231,6 +256,21 @@ ASSERTIONS = {
     "ChainNeverMoreThanOneAheadOfAnchor": lambda s: s.audit_chain_seq - s.anchor_seq <= 1,
     "ActualNeverExceedsReserved": lambda s: s.disclosed <= s.exposure_charged,
     "ExfiltrationHasNoSilentPath": lambda s: s.disclosed <= s.exposure_charged,
+    # comms spec v0.2: the six that replace consent's two (5b-3 design §2.6).
+    "OwnerDirectReceiptNeverClaimsConsent": lambda s: (
+        not (s.receipt_mode == "owner_direct" and s.receipt_claims_consent)
+    ),
+    "ReceiptVersionsDistinguishable": lambda s: (
+        s.v1_version == 1 and s.v1_claims_consent and s.receipt_version in (0, 2)
+    ),
+    "V2RequiresOwnerDirect": lambda s: (
+        (s.receipt_version == 2) == (s.receipt_mode == "owner_direct")
+    ),
+    "HardRefusalPrecedesRetrieval": lambda s: not s.retrieved_under_refuse,
+    "ReservationCommitsAtMostOnce": lambda s: s.reservation_commits <= 1,
+    "NoHandoffBeforeCommitAndAnchor": lambda s: (
+        not s.released_uncommitted and not (s.payload_released and s.anchor_seq < s.audit_chain_seq)
+    ),
 }
 
 

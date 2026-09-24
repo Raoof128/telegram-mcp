@@ -18,7 +18,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.canonical import jcs_dumps
 
 __all__ = [
     "PARTIAL_REASONS",

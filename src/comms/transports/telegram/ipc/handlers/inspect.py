@@ -1,4 +1,4 @@
-"""Operator inspection: receipts, keys, exposure, consent (spec §23A.3, §23C, §33)."""
+"""Operator inspection: receipts, keys, exposure (spec §23A.3, §23C, §33)."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ _SHOWN = (
 
 
 def _body(args: dict[str, Any], allowed: set[str]) -> dict[str, Any]:
-    body = {k: v for k, v in args.items() if k != "presence"}
+    body = dict(args)
     if set(body) - allowed:
         raise ValueError("unknown argument")
     return body
@@ -51,8 +51,6 @@ def inspect_handlers(
     conn: sqlite3.Connection,
     *,
     lineage: RestoreLineageLookup,
-    broker: Any,
-    prompter: Any,
     clock: Callable[[], float] = time.time,
 ) -> dict[str, Handler]:
     def _ref(args: dict[str, Any]) -> str:
@@ -158,14 +156,9 @@ def inspect_handlers(
             rows.append(row)
         return {"window_minutes": minutes, "clients": rows}
 
-    def consent(args: dict[str, Any]) -> dict[str, Any]:
-        _body(args, set())
-        return {"agent_connected": bool(prompter.connected), "pending": int(broker.pending_count())}
-
     return {
         "disclosure show": show,
         "disclosure verify": verify,
         "disclosure key": key,
         "exposure status": exposure,
-        "consent status": consent,
     }
