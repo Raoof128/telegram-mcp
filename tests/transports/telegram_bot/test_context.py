@@ -5,8 +5,13 @@ from datetime import UTC, datetime
 import pytest
 
 from comms.core import timeutil
-from comms.core.providers.protocols import ADAPTER_CONTRACTS, ContextQuery, ProviderTarget
-from comms.transports.telegram.bot.context import BotContext, ContextRefused
+from comms.core.providers.protocols import (
+    ADAPTER_CONTRACTS,
+    ContextQuery,
+    ContextRefused,
+    ProviderTarget,
+)
+from comms.transports.telegram.bot.context import BotContext
 from comms.transports.telegram.bot.http import BotApi
 from comms.transports.telegram.bot.updates import BotPoller
 from tests.conformance.registry import REGISTRY

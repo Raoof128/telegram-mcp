@@ -22,6 +22,7 @@ __all__ = [
     "CapabilitySnapshot",
     "ContextPage",
     "ContextQuery",
+    "ContextRefused",
     "ContextSource",
     "InboundEvent",
     "InboundSource",
@@ -88,6 +89,15 @@ class InboundEvent:
     kind: str  # "message" | "status" | …
     provider_event_ref: str
     payload: Mapping[str, Any] = field(repr=False)
+
+
+class ContextRefused(Exception):
+    """A context read the source will not serve (``PROVIDER_UNSUPPORTED``, ``NOT_AUTHORIZED``,
+    ``UNAVAILABLE``, …). Fixed message; the code is the contract."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"context read refused ({code})")
+        self.code = code
 
 
 class CapabilityProvider(Protocol):

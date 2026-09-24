@@ -18,21 +18,15 @@ from typing import Any
 
 from comms.core import timeutil
 from comms.core.delivery.transport import ResultKind
-from comms.core.providers.protocols import ContextPage, ContextQuery
+from comms.core.providers.protocols import ContextPage, ContextQuery, ContextRefused
 from comms.transports.telegram.args import positive_int, take
 from comms.transports.telegram.bot.classify import LookupFailed, lookup
 from comms.transports.telegram.bot.http import BotApi
 
-__all__ = ["BotContext", "ContextRefused"]
+__all__ = ["BotContext"]
 
 ACTOR = "telegram_bot"
 MAX_LIMIT = 100
-
-
-class ContextRefused(Exception):
-    def __init__(self, code: str) -> None:
-        super().__init__(f"context read refused ({code})")
-        self.code = code
 
 
 _LOOKUP_CODES = {ResultKind.FAILED_PERMANENT: "NOT_AUTHORIZED"}

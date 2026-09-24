@@ -637,6 +637,17 @@ _ADMIN_BUILDERS: Mapping[Capability, Callable[..., Any]] = MappingProxyType(
 )
 
 
+_ROLE: Mapping[type, str] = MappingProxyType(
+    {
+        types.ChannelParticipantCreator: "creator",
+        types.ChannelParticipantAdmin: "admin",
+        types.ChannelParticipantBanned: "restricted",
+        types.ChatParticipantCreator: "creator",
+        types.ChatParticipantAdmin: "admin",
+    }
+)
+
+
 def _sent_message_id(result: Any, random_id: int) -> int | None:
     if isinstance(result, types.UpdateShortSentMessage):
         return int(result.id)
@@ -978,6 +989,50 @@ class TelethonSession:
         if ref is None:
             return ProviderResult("OUTCOME_UNKNOWN", None)  # created, but no ref to name it by
         return ProviderResult("SUCCEEDED", None, provider_ref=ref)
+
+    async def fetch_participants(
+        self, peer_type: str, peer_id: int, *, offset: int, limit: int, timeout: float
+    ) -> tuple[list[tuple[int, str, str | None]], int | None]:
+        """One page of members, ``(user id, role, display name)``, and the next offset (C20).
+
+        A channel pages ``channels.getParticipants`` (recent); a basic group's members come in
+        one ``messages.getFullChat`` and are paged locally. A hidden list is an empty page.
+        """
+        if peer_type == "channel":
+            request = functions.channels.GetParticipantsRequest(
+                utils.get_input_channel(self.input_peer("channel", peer_id)),
+                types.ChannelParticipantsRecent(),
+                offset,
+                limit,
+                hash=0,
+            )
+            result = await self.call_capability(Capability.MEMBER_LIST, request, timeout=timeout)
+            parts = list(getattr(result, "participants", None) or ())
+            more = len(parts) == limit
+        elif peer_type == "chat":
+            result = await self.call_capability(
+                Capability.MEMBER_LIST,
+                functions.messages.GetFullChatRequest(peer_id),
+                timeout=timeout,
+            )
+            every = list(getattr(result.full_chat.participants, "participants", None) or ())
+            parts, more = every[offset : offset + limit], len(every) > offset + limit
+        else:
+            raise GatewayError("NOT_ACCESSIBLE")
+        names = {u.id: u for u in getattr(result, "users", None) or ()}
+        rows = []
+        for part in parts:
+            user_id = getattr(part, "user_id", None) or getattr(
+                getattr(part, "peer", None), "user_id", None
+            )
+            if type(user_id) is not int:
+                continue
+            user = names.get(user_id)
+            name = " ".join(
+                filter(None, (getattr(user, "first_name", None), getattr(user, "last_name", None)))
+            )
+            rows.append((user_id, _ROLE.get(type(part), "member"), name or None))
+        return rows, (offset + len(parts) if more else None)
 
     async def admin_log(
         self, peer_id: int, *, max_id: int, limit: int, timeout: float

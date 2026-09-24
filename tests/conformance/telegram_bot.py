@@ -13,11 +13,16 @@ import httpx
 
 from comms.core.delivery.transport import DeliveryIntent, FrozenDelivery, ResultKind
 from comms.core.providers.capability import Capability, CapabilityState
-from comms.core.providers.protocols import ContextQuery, ProviderTarget, SemanticOperation
+from comms.core.providers.protocols import (
+    ContextQuery,
+    ContextRefused,
+    ProviderTarget,
+    SemanticOperation,
+)
 from comms.core.providers.semantics import SEMANTICS
 from comms.transports.telegram.bot.admin import BotAdmin
 from comms.transports.telegram.bot.capability import BotCapability
-from comms.transports.telegram.bot.context import BotContext, ContextRefused
+from comms.transports.telegram.bot.context import BotContext
 from comms.transports.telegram.bot.delivery import BotDelivery
 from comms.transports.telegram.bot.http import BotApi
 from tests.conformance.registry import REGISTRY

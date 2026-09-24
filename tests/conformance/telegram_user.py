@@ -13,12 +13,19 @@ from comms.core.delivery.transport import (
     ResultKind,
 )
 from comms.core.providers.capability import Capability, CapabilityState
-from comms.core.providers.protocols import ProviderResult, ProviderTarget, SemanticOperation
+from comms.core.providers.protocols import (
+    ContextQuery,
+    ContextRefused,
+    ProviderResult,
+    ProviderTarget,
+    SemanticOperation,
+)
 from comms.core.providers.semantics import SEMANTICS
 from comms.transports.telegram.telegram.errors import GatewayError
 from comms.transports.telegram.telegram.rights import SelfRights
 from comms.transports.telegram.user.admin import UserAdmin
 from comms.transports.telegram.user.capability import UserCapability
+from comms.transports.telegram.user.context import UserContext
 from comms.transports.telegram.user.delivery import UserDelivery
 from tests.conformance.registry import REGISTRY
 from tests.conformance.runner import Mode, Skip
@@ -145,4 +152,49 @@ def admin_saga_is_never_one_call(mode: Mode) -> None:
         pass
     else:
         raise AssertionError("member.remove ran as one call")
+    assert session.calls == 0
+
+
+class _ReadSession:
+    def __init__(self, readiness: str | None = None) -> None:
+        self._readiness, self.calls = readiness, 0
+
+    def readiness(self) -> str | None:
+        return self._readiness
+
+    async def fetch_history(self, peer_type, peer_id, **kw):
+        self.calls += 1
+        return [], None
+
+    async def search_peer(self, peer_type, peer_id, query, **kw):
+        self.calls += 1
+        raise AssertionError("not used")
+
+    async def fetch_participants(self, peer_type, peer_id, *, offset, limit, timeout):
+        self.calls += 1
+        return [(42, "member", "Ali")], None
+
+
+def _context(mode: Mode, session: _ReadSession) -> UserContext:
+    if mode.live:
+        raise Skip("NOT_CONFIGURED")
+    return UserContext(session, run=asyncio.run, clock=lambda: NOW)
+
+
+@REGISTRY.case("telegram_user", "context")
+def context_items_are_live_and_untrusted(mode: Mode) -> None:
+    page = _context(mode, _ReadSession()).read(ContextQuery(_GROUP, "members"))
+    assert page.provenance == "telegram_live"
+    assert all(i["source"] == "telegram_live" and "untrusted" in i for i in page.items)
+
+
+@REGISTRY.case("telegram_user", "context")
+def context_refuses_on_an_unusable_session_without_a_call(mode: Mode) -> None:
+    session = _ReadSession("SESSION_REVOKED")
+    try:
+        _context(mode, session).read(ContextQuery(_GROUP, "recent"))
+    except ContextRefused as refused:
+        assert refused.code == "SESSION_REVOKED"
+    else:
+        raise AssertionError("read served on a revoked session")
     assert session.calls == 0
