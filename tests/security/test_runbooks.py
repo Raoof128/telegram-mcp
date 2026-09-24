@@ -26,6 +26,8 @@ EXPECTED = {
     "audit-degraded",
     "provider-credential-rotation",
     "cutover",
+    "live-acceptance-telegram",  # comms v0.3 C32
+    "live-acceptance-whatsapp",  # comms v0.3 C32
 }
 # The Part B contract for Part D's operator CLI (design D.7; plan D31).
 COMMS_SURFACE = {

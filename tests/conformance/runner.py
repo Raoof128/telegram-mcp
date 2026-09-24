@@ -11,8 +11,10 @@ only when a live run is asked for.
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable, Mapping
+import json
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -123,3 +125,30 @@ def run_suite(
                 else:
                     passed += 1
     return Report(passed, skipped, tuple(failures))
+
+
+EVIDENCE_SCHEMA = "comms-live-acceptance/v1"
+
+
+def record(report: Report, path: Path, *, started: str, accounts: Sequence[str]) -> Path:
+    """Write a (live) run's report as evidence: counts, skips with reasons, failures."""
+    evidence = {
+        "schema": EVIDENCE_SCHEMA,
+        "started": started,
+        "accounts": sorted(accounts),
+        "passed": report.passed,
+        "skipped": dict(report.skipped),
+        "failures": [
+            {
+                "adapter": f.adapter,
+                "contract": f.contract,
+                "case": f.case,
+                "kind": f.kind,
+                "detail": f.detail,
+            }
+            for f in report.failures
+        ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path

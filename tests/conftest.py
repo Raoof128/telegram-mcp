@@ -52,6 +52,13 @@ def pytest_addoption(parser):
     )
 
 
+def pytest_ignore_collect(collection_path, config):
+    """The live acceptance run is never collected without its flag (comms v0.3 C32)."""
+    if collection_path.name == "test_live_acceptance.py":
+        return not config.getoption("--run-live-acceptance")
+    return None
+
+
 def pytest_collection_modifyitems(config, items):
     gates = (
         ("--run-platform-gated", "platform_gated", "needs --run-platform-gated (host-mutating)"),

@@ -10,9 +10,12 @@ import pytest
 
 from comms.core.delivery import freeze
 from comms.core.delivery.engine import Engine, ExecutorLease
+from comms.core.providers.protocols import ADAPTER_CONTRACTS
 from comms.transports.whatsapp.webhooks.inbox import Inbox
 from comms.transports.whatsapp.webhooks.ingress import WebhookIngress
 from comms.transports.whatsapp.webhooks.worker import WebhookWorker
+from tests.conformance.registry import REGISTRY
+from tests.conformance.runner import Registry, run_suite
 from tests.core import fakes
 from tests.core import schema_fixtures as fx
 from tests.core.campaign_helpers import NOW, job_states, person, ready
@@ -229,3 +232,9 @@ def test_body_and_phone_absent_from_events_and_logs(conn, caplog):
     )
     texts = [events, repr(report), repr(inbox)] + [r.getMessage() for r in caplog.records]
     assert all("salam" not in t and "61400000001" not in t for t in texts)
+
+
+def test_the_whole_whatsapp_webhooks_conformance_suite_passes():
+    registry = Registry({k: v for k, v in REGISTRY.cases.items() if k[0] == "whatsapp_webhooks"})
+    report = run_suite(registry, {"whatsapp_webhooks": ADAPTER_CONTRACTS["whatsapp_webhooks"]})
+    assert report.ok and report.skipped == {} and report.passed == 3, report.failures
