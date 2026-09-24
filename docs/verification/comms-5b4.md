@@ -113,7 +113,7 @@ The engine's own seams are covered by `test_engine.py::test_crash_seams_leave_th
 | Check | Result |
 |---|---|
 | `uv sync --locked`, contracts | exit 0 |
-| Telegram pytest | 2214 passed, 4 skipped (was 1427/4 at `main`) |
+| Telegram pytest | 2215 passed, 4 skipped (was 1427/4 at `main`) |
 | smoke | 52/52 |
 | formal | 544 states / 22 assertions (unchanged); campaign model 96,528 states / 11 properties; 25 formal tests |
 | ruff / format / mypy | clean; mypy 110 source files |
@@ -137,6 +137,11 @@ The engine's own seams are covered by `test_engine.py::test_crash_seams_leave_th
 13. **Task 12.** A scheduled campaign's start appends `campaign.send_started`.
 14. **Task 14, model bound.** The model bound is **2 jobs, not 3**. With three jobs, exploration did not finish in 90 s, over the 60 s ceiling (P12).
 15. **Task 14, walk scope.** The walk applies freeze and invalidate only when the model enables them for bound reasons, and provider updates only for bound references.
+
+## Final review (self-review; the session runs without subagents by standing instruction)
+
+- **Fixed:** `write_tx` left the transaction open when `COMMIT` itself failed, for example on a deferred constraint or a lock held by a reader, so every later write on that connection refused as "nested". `COMMIT` now sits inside the `try`. Covered by `test_a_failed_commit_rolls_back_and_leaves_no_open_transaction`, which went RED then GREEN; full gate 2215 passed.
+- **Deferred minor:** `schedule()` accepts a send time already in the past. Such a campaign is due at the next `run_due`. The spec is silent; 5e's CLI may want to refuse it.
 
 ## Open items for the owner
 

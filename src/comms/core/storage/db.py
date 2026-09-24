@@ -71,11 +71,13 @@ def write_tx(conn: Any) -> Iterator[Any]:
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield conn
+        conn.execute(
+            "COMMIT"
+        )  # inside the try: a failed COMMIT must not leave the transaction open
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
-    conn.execute("COMMIT")
 
 
 def io_guard(conn: Any) -> None:

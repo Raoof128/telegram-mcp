@@ -148,3 +148,18 @@ def test_lock_contention_raises_after_the_timeout(tmp_path):
         first.execute("CREATE TABLE t (x INTEGER)")
         with pytest.raises(sqlcipher3.dbapi2.OperationalError, match="locked"):
             second.execute("BEGIN IMMEDIATE")
+
+
+def test_a_failed_commit_rolls_back_and_leaves_no_open_transaction(tmp_path):
+    """A COMMIT can itself fail (a deferred constraint, a lock held by a reader); the
+    transaction must not stay open, or every later write_tx refuses as 'nested'."""
+    conn = open_comms_db(tmp_path / "comms.db", KEY)
+    conn.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
+    conn.execute("CREATE TABLE child (p INTEGER REFERENCES parent(id))")
+    with pytest.raises(sqlcipher3.dbapi2.IntegrityError), write_tx(conn):
+        conn.execute("PRAGMA defer_foreign_keys = ON")
+        conn.execute("INSERT INTO child VALUES (42)")  # fails only at COMMIT
+    assert not conn.in_transaction
+    assert conn.execute("SELECT count(*) FROM child").fetchone()[0] == 0
+    with write_tx(conn):
+        conn.execute("INSERT INTO parent VALUES (1)")

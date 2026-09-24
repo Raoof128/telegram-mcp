@@ -453,5 +453,5 @@
 
   It is proved by a bounded model with mutation tests and by a differential walk against the library.
 - **Files changed:** see the `AGENT.md` entry of the same date.
-- **Verification:** Telegram 2214 passed, 4 skipped; smoke 52; formal 544/22 plus the campaign model at 96,528 states and 11 properties; WhatsVault 539 passed.
+- **Verification:** Telegram 2215 passed, 4 skipped; smoke 52; formal 544/22 plus the campaign model at 96,528 states and 11 properties; WhatsVault 539 passed.
 - **Follow-ups:** the owner's ruling on the snapshot-digest contradiction; the merge decision; 5c/5d/5e.

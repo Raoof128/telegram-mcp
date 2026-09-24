@@ -567,7 +567,7 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
   - `tests/security/{test_comms_wire_frozen,test_comms_layering,test_ai_boundary}.py`, `tests/unit/{test_core_moves,test_canonical}.py`, `tests/formal/test_campaign_model{,_mutations}.py`;
   - the design (rev 4) and the plan (rev 3), `docs/verification/comms-5b4.md`, `CLAUDE.md`, `AGENT.md`, `CHANGELOG.md`.
 - **Verification:** Full gate at branch head:
-  - Telegram 2214 passed, 4 skipped; smoke 52/52;
+  - Telegram 2215 passed, 4 skipped; smoke 52/52;
   - formal: 544/22, plus the campaign model at 96,528 states and 11 properties;
   - ruff, format and mypy (110 files) clean; build OK;
   - WhatsVault 539 passed, and its subtree is byte-identical to `main`;
