@@ -51,27 +51,15 @@ def test_no_telegram_mcp_tool_is_a_transmission_primitive():
         assert not any(verb in name for verb in SEND_VERBS), name
 
 
-def _whatsvault_tool_names() -> set[str]:
-    """The keys of the dict ``build_tool_handlers`` returns: the registered tools."""
-    tree = ast.parse(WHATSVAULT_MCP.read_text(encoding="utf-8"))
-    builder = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "build_tool_handlers"
-    )
-    returned = [
-        node.value
-        for node in builder.body
-        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
-    ]
-    assert len(returned) == 1, "the tool registry must be one literal dict"
-    return {key.value for key in returned[0].keys if isinstance(key, ast.Constant)}
+def test_whatsvault_mcp_app_is_retired_and_its_tools_were_read_only():
+    """comms v0.3 retired `apps/mcp` (R-A16); its six tool names are tombstoned (A2).
 
-
-def test_no_whatsvault_mcp_tool_is_a_transmission_primitive():
-    registered = _whatsvault_tool_names()
-    assert registered == WHATSVAULT_TOOLS
-    for name in registered:
+    The names stay pinned here so a reintroduction under any of them is noticed, and so
+    the record shows none was ever a transmission primitive.
+    """
+    assert not WHATSVAULT_MCP.exists()
+    assert len(WHATSVAULT_TOOLS) == 6
+    for name in WHATSVAULT_TOOLS:
         assert not any(verb in name for verb in SEND_VERBS), name
 
 

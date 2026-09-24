@@ -95,7 +95,7 @@ def test_broken_keystore_is_not_reported_as_uninitialised(fresh, capsys):
 
 # ---- the declared console scripts resolve --------------------------------------
 def test_declared_entry_points_are_importable_and_callable():
-    """pyproject declares `whatsvault` and `whatsvault-mcp`. Nothing else asserts
+    """pyproject declares the `whatsvault` console script. Nothing else asserts
     that those targets exist, and a rename would only surface on a user's machine
     after `pip install`."""
     import importlib

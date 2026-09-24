@@ -54,15 +54,14 @@ Issues = "https://github.com/Raoof128/whatsvault/issues"
 
 [project.scripts]
 whatsvault = "whatsvault.cli.main:main"
-whatsvault-mcp = "apps.mcp.server:main"
+# whatsvault-mcp (apps.mcp.server) was retired by comms v0.3; the comms MCP server replaces it.
 
 # ---------------------------------------------------------------------------
 # Packaging
 # ---------------------------------------------------------------------------
 [tool.setuptools.packages.find]
-# apps/ must be packaged too: the launchd units run `-m apps.mcp.server`, and the
-# console scripts resolve into it. With where=["src"] only, an installed wheel
-# contained no `apps` at all and both entry points failed.
+# apps/ must be packaged too: the launchd units run `-m apps.<daemon>`. With
+# where=["src"] only, an installed wheel contained no `apps` at all.
 where = ["src", "."]
 include = ["whatsvault*", "apps*"]
 
@@ -142,7 +141,7 @@ ignore = [
     "SIM108",  # a ternary is not always clearer than if/else here
     # Daemon entry points import uvicorn/keyring/apscheduler lazily so that merely
     # importing a module never pulls in a heavy or platform-bound dependency. This
-    # is load-bearing: the negative-surface tests import apps.mcp.server directly.
+    # is load-bearing: the negative-surface tests import the daemon modules directly.
     "PLC0415",
     # `(value,) = cursor.fetchone()` is the idiom used to assert single-row shape.
     "RUF059",
