@@ -168,3 +168,11 @@ async def test_an_unrouted_gated_command_is_refused_without_a_prompt(tmp_path):
     assert seen == []  # the agent was never asked
     for task in tasks:
         task.cancel()
+
+
+async def test_the_prompt_shows_the_summary_not_just_the_command(tmp_path):
+    approver, seen, tasks = await _world(tmp_path)
+    await approver.approve("project disable", {"project_ref": "tpr_" + "q" * 26})
+    assert seen[0][1]["action_display"] == "project disable · project tpr_qqqq…qqqq"
+    for t in tasks:
+        t.cancel()
