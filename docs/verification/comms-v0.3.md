@@ -200,5 +200,8 @@ Registered: R-C27 (the Meta oracle in WhatsVault's `fake_meta.py`). The ledger r
 
 Unchanged: the R-A20 `.claude/settings.json` change, and the out-of-repo runbook steps.
 
-No production claim.
+### Tag
 
+`comms-v0.3-part-c` is an annotated local tag, **not pushed**: tag object `b7501031a7608a62334d8d1132af23bde811289c` → commit `631b776fead53fdfde02096e37fbf807a8860dfe`.
+
+No production claim.
