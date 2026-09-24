@@ -124,6 +124,10 @@ SETTINGS_REGISTRY: dict[str, SettingSpec] = {
         "int", 30, minimum=1, maximum=3_650, phase=3
     ),
     "retention.message_ref_days": SettingSpec("int", 180, minimum=1, maximum=3_650, phase=3),
+    # comms v0.3 cutover (A6, G3): once "sealed", legacy audit appends are refused by a trigger.
+    "audit.append_state": SettingSpec(
+        "str", "open", choices=("open", "sealed"), origin="impl", phase=3
+    ),
     # non-secret release metadata.
     "release.profile": SettingSpec("str", "safe_demo", choices=_RELEASE_PROFILES),
     "release.version": SettingSpec("str", "0.1.10", origin="impl"),

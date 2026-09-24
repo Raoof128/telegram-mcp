@@ -57,6 +57,7 @@ ADMIN_EVENTS: tuple[str, ...] = (
     "admin.key_rotation",
     "admin.repair_anchor",
     "admin.policy_import",
+    "system.cutover_final",  # comms v0.3: the legacy chain's last event, sealed by the next checkpoint
 )
 _TOOLS = (
     "telegram_status",

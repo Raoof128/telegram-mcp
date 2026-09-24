@@ -50,7 +50,9 @@ __all__ = [
     "migrate",
 ]
 
-SCHEMA_VERSION = 2  # 2: versioned receipts, owner-direct v2 (comms 5b-3 design §2.2)
+SCHEMA_VERSION = (
+    3  # 2: versioned receipts (5b-3 §2.2); 3: the v0.3 legacy audit seal (comms v0.3 A6)
+)
 
 # Spec §12.2 table order.
 SCHEMA_TABLES: tuple[str, ...] = (
@@ -609,9 +611,29 @@ _RECEIPTS_V2: tuple[str, ...] = (
 )
 
 
+# comms v0.3 cutover (spec A6, G3): the legacy seal is enforced by the database itself.
+_V03_SEAL = (
+    """
+    CREATE TRIGGER legacy_audit_sealed BEFORE INSERT ON audit_events
+      WHEN (SELECT value_json FROM settings WHERE key = 'audit.append_state') = '"sealed"'
+      BEGIN SELECT RAISE(ABORT, 'legacy chain is sealed'); END
+    """,
+    """
+    CREATE TRIGGER legacy_seal_one_way_u BEFORE UPDATE ON settings
+      WHEN OLD.key = 'audit.append_state' AND OLD.value_json = '"sealed"'
+      BEGIN SELECT RAISE(ABORT, 'legacy seal is one-way (sealed)'); END
+    """,
+    """
+    CREATE TRIGGER legacy_seal_one_way_d BEFORE DELETE ON settings
+      WHEN OLD.key = 'audit.append_state' AND OLD.value_json = '"sealed"'
+      BEGIN SELECT RAISE(ABORT, 'legacy seal is one-way (sealed)'); END
+    """,
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, _TABLES + _INDEXES + _TRIGGERS + _SEEDS),
     Migration(2, _RECEIPTS_V2, rebuild=True),
+    Migration(3, _V03_SEAL),
 )
 
 
