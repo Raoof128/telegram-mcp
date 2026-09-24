@@ -54,8 +54,8 @@ def audit_handlers(
     def lock_command(locked: bool) -> TxCommand[Any, Any]:
         def apply(conn: sqlite3.Connection, _plan: Any) -> dict[str, Any]:
             state = bind_epoch_state(conn)
-            # Presence was verified by the router before this handler ran
-            # (both commands are in PRESENCE_GATED).
+            # The admin socket is the trusted path set_locked demands for an
+            # unlock: its peer credentials are the authority (comms spec v0.2).
             epoch = set_locked(state, locked, presence=True, now=sink.now())
             write_epoch_state(conn, state)
             return {"locked": locked, "security_epoch": epoch}
@@ -78,7 +78,7 @@ def audit_handlers(
         )
 
     def status(args: dict[str, Any]) -> dict[str, Any]:
-        _no_args({k: v for k, v in args.items() if k != "presence"})
+        _no_args(dict(args))
         epoch, locked = load_security(conn)
         return {
             "locked": locked,
@@ -102,7 +102,7 @@ def audit_handlers(
         return run_audited_tx(conn, sink, command, args, event=None)
 
     def verify(args: dict[str, Any]) -> dict[str, Any]:
-        _no_args({k: v for k, v in args.items() if k != "presence"})
+        _no_args(dict(args))
         return {
             "integrity": derive_integrity(conn, sink.chain_key, sink.anchor_path),
             "checkpoints": verify_checkpoints_registry(conn),
@@ -110,7 +110,7 @@ def audit_handlers(
         }
 
     def repair(args: dict[str, Any]) -> dict[str, Any]:
-        _no_args({k: v for k, v in args.items() if k != "presence"})
+        _no_args(dict(args))
         with APPEND_GUARD:
             try:
                 repair_anchor(

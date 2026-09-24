@@ -14,7 +14,6 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from comms.transports.telegram.ipc.admin import (
     ADMIN_COMMANDS,
-    PRESENCE_GATED,
     AdminRouter,
     serve_admin,
     verify_peer,
@@ -259,7 +258,7 @@ def _router(**over):
 
     handlers = {"lock": lock, "lock status": lambda args: {"locked": False}}
     handlers.update(over)
-    router = AdminRouter(handlers, presence_verifier=lambda proof: proof == {"method": "stub"})
+    router = AdminRouter(handlers)
     return router, calls
 
 
@@ -279,7 +278,7 @@ async def test_admin_command_is_served_for_an_authorized_peer(run_dir):
     try:
         response = await _call(
             run_dir / "admin.sock",
-            encode_json_frame({"cmd": "lock", "args": {"presence": {"method": "stub"}}}),
+            encode_json_frame({"cmd": "lock", "args": {}}),
         )
         assert response == {"ok": True, "data": {"security_epoch": 2, "locked": True}}
         assert calls and calls[0][0] == "lock"
@@ -366,26 +365,11 @@ async def test_duplicate_admin_keys_never_dispatch(run_dir):
         await server.wait_closed()
 
 
-def test_presence_gated_commands_need_a_verified_proof():
-    router, calls = _router()
-    assert router.dispatch({"cmd": "lock"})["code"] == "PRESENCE_REQUIRED"
-    assert router.dispatch({"cmd": "lock", "args": {"presence": {"method": "no"}}})["code"] == (
-        "PRESENCE_REQUIRED"
-    )
-    assert calls == []
-    no_verifier = AdminRouter({"lock": lambda args: {}})
-    assert (
-        no_verifier.dispatch({"cmd": "lock", "args": {"presence": {"method": "stub"}}})["code"]
-        == "PRESENCE_REQUIRED"
-    )
-
-
 def test_every_spec_command_is_routed_and_unknown_names_are_refused():
     router, _ = _router()
     assert len(ADMIN_COMMANDS) == 51
     for command in ADMIN_COMMANDS:
-        args = {"presence": {"method": "stub"}} if command in PRESENCE_GATED else {}
-        response = router.dispatch({"cmd": command, "args": args})
+        response = router.dispatch({"cmd": command, "args": {}})
         assert response["ok"] is True or response["code"] == "NOT_AVAILABLE_IN_PHASE"
     for bad in ("", "telegram-mcp lock", "rm -rf", "LOCK", "lock  status"):
         response = router.dispatch({"cmd": bad})

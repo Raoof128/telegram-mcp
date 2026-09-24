@@ -682,7 +682,6 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
                         },
                         "lock": lambda args: {"locked": True},
                     },
-                    presence_verifier=lambda proof: proof == {"method": "smoke"},
                     control_handlers={"stop": lambda args: seen.append("stop") or {"ok": 1}},
                 )
                 server = await serve_admin(path, router)
@@ -699,13 +698,9 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
 
                     ok = await call(encode_json_frame({"cmd": "lock status"}))
                     assert ok["ok"] is True, ok
-                    gated = await call(encode_json_frame({"cmd": "lock"}))
-                    assert gated["code"] == "PRESENCE_REQUIRED", gated
-                    allowed = await call(
-                        encode_json_frame(
-                            {"cmd": "lock", "args": {"presence": {"method": "smoke"}}}
-                        )
-                    )
+                    stray = await call(encode_json_frame({"cmd": "lock", "args": {"presence": {}}}))
+                    assert stray["code"] == "MALFORMED_REQUEST", stray
+                    allowed = await call(encode_json_frame({"cmd": "lock"}))
                     assert allowed["ok"] is True, allowed
                     unrouted = await call(encode_json_frame({"cmd": "project rename"}))
                     assert unrouted["code"] == "NOT_AVAILABLE_IN_PHASE", unrouted
@@ -717,7 +712,7 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
                     assert control["ok"] is True and seen == ["stop"], (control, seen)
                     mode = oct(path.stat().st_mode)[-3:]
                     assert mode == "660", mode
-                    return "served, presence gate, unknown, duplicate keys, control stop, 0660"
+                    return "served on peer authority, presence refused, unknown, duplicates, stop, 0660"
                 finally:
                     server.close()
                     await server.wait_closed()
@@ -1187,7 +1182,6 @@ def phase4a_catalogue(ledger: Ledger) -> None:
 
         client = "tcl_" + "a" * 26
         runtime = secrets.token_bytes(16)
-        proof = {"method": "smoke"}
 
         async def main() -> dict[str, Any]:
             with tempfile.TemporaryDirectory(dir="/tmp") as short:
@@ -1220,14 +1214,12 @@ def phase4a_catalogue(ledger: Ledger) -> None:
                     agent_verify=verify,
                     pinned_key_id=approval_id,
                     port=port,
-                    presence_verifier=lambda given: given == proof,
                 )
                 project = conn.execute("SELECT project_ref FROM projects").fetchone()[0]
                 granted = services.admin_router.dispatch(
                     {
                         "cmd": "project grant-client",
                         "args": {
-                            "presence": proof,
                             "project_ref": project,
                             "client_ref": client,
                             "egress_level": "full_text",
@@ -1676,16 +1668,14 @@ def phase5a_operator(ledger: Ledger) -> None:
                 runtime_id=_secrets.token_bytes(16),
                 clock=time.time,
             )
-            router = AdminRouter(handlers, presence_verifier=lambda proof: proof == {"m": "smoke"})
+            router = AdminRouter(handlers)
             sock = root / "admin.sock"
             server = await serve_admin(sock, router)
             try:
 
                 async def call(cmd: str, **args: Any) -> dict[str, Any]:
                     reader, writer = await asyncio.open_unix_connection(str(sock))
-                    payload = encode_json_frame(
-                        {"cmd": cmd, "args": {"presence": {"m": "smoke"}, **args}}
-                    )
+                    payload = encode_json_frame({"cmd": cmd, "args": args})
                     writer.write(len(payload).to_bytes(4, "big") + payload)
                     await writer.drain()
                     size = int.from_bytes(await reader.readexactly(4), "big")

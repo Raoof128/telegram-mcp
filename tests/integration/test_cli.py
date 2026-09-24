@@ -172,7 +172,6 @@ async def test_admin_verb_proxies_to_a_live_socket(monkeypatch, capsys, tmp_path
             "lock status": lambda args: {"locked": False, "security_epoch": 1},
             "lock": lambda args: {"locked": True},
         },
-        presence_verifier=lambda proof: proof == {"method": "stub"},
     )
     server = await serve_admin(Path("run") / "admin.sock", router)
     try:
@@ -189,10 +188,10 @@ async def test_admin_verb_proxies_to_a_live_socket(monkeypatch, capsys, tmp_path
         assert code == 5
         assert "NOT_AVAILABLE_IN_PHASE" in capsys.readouterr().err
 
-        # presence-gated without a proof
+        # a mutating command runs on the peer's authority alone (comms spec v0.2)
         code = await asyncio.to_thread(_run, ["admin", "lock", "--runtime-dir", "run"], monkeypatch)
-        assert code == 6
-        assert "PRESENCE_REQUIRED" in capsys.readouterr().err
+        assert code == 0
+        assert json.loads(capsys.readouterr().out) == {"locked": True}
 
         # off the §33 surface entirely
         code = await asyncio.to_thread(

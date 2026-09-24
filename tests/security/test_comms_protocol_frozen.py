@@ -23,6 +23,10 @@ ADDED_IN_V0_2 = Counter({"'tg-mcp-disclosure/v2'": 1})
 TOMBSTONED_IN_V0_2 = Counter(
     {
         "'tg-mcp-exposure-snapshot/v1'": 1,  # disclosure/exposure.py (5b-3 Task 6)
+        # consent/admin_approval.py (5b-3 Task 8): request-bound Touch ID tokens.
+        "b'telegram-mcp-admin-request/v1\\x00'": 1,
+        "b'telegram-mcp-admin-secret/v1\\x00'": 1,
+        "b'telegram-mcp-sentinel/v1\\x00'": 1,
     }
 )
 

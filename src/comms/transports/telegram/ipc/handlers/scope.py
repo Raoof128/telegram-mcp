@@ -34,7 +34,7 @@ def _owner(conn: sqlite3.Connection) -> tuple[int, int, int]:
 
 
 def _parse_handle(args: dict[str, Any], extra: frozenset[str] = frozenset()) -> dict[str, Any]:
-    body = {k: v for k, v in args.items() if k != "presence"}
+    body = dict(args)
     if set(body) - {"handle", *extra}:
         raise ValueError("unknown argument")
     handle = body.get("handle")
@@ -169,7 +169,7 @@ def scope_handlers(
         }
 
     def list_(args: dict[str, Any]) -> dict[str, Any]:
-        if {k for k in args if k != "presence"}:
+        if set(args):
             raise ValueError("unknown argument")
         rows = conn.execute(
             "SELECT pp.decision, p.display_name_cache, p.telegram_peer_type FROM peer_policy pp"

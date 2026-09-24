@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 from comms.transports.telegram.authority.staging import StagingRegistry
-from comms.transports.telegram.consent.admin_approval import AdminApprover
 from comms.transports.telegram.consent.broker import ConsentBroker
 from comms.transports.telegram.consent.prompter import Prompter
 from comms.transports.telegram.disclosure.budget import BudgetLedger
@@ -75,7 +74,6 @@ class RuntimeServices:
     prompter: Prompter
     broker: ConsentBroker
     runtime_id: bytes
-    approver: AdminApprover
 
 
 class _Seeds:
@@ -162,7 +160,6 @@ def build_runtime(
     pinned_key_id: str | None = None,
     host: str = "127.0.0.1",
     port: int = 8766,
-    presence_verifier: Callable[[Any], bool] | None = None,
     limits: Mapping[str, int] | None = None,
     clock: Callable[[], float] = time.time,
     telegram: Any = None,
@@ -243,7 +240,6 @@ def build_runtime(
         limiter=RateLimiter(limits or DEFAULT_LIMITS),
         status_key=_disclosure_public(conn),
     )
-    approver = AdminApprover(broker, prompter, privacy_key=privacy_key, conn=conn)
     handlers = admin_handlers(
         conn,
         key_dir=key_dir,
@@ -257,16 +253,11 @@ def build_runtime(
     )
     return RuntimeServices(
         ingress_app=app,
-        admin_router=AdminRouter(
-            handlers,
-            presence_verifier=presence_verifier,
-            request_verifier=None if presence_verifier is not None else approver.verify,
-        ),
+        admin_router=AdminRouter(handlers),
         coordinator=coordinator,
         prompter=prompter,
         broker=broker,
         runtime_id=runtime_id,
-        approver=approver,
     )
 
 

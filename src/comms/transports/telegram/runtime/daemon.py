@@ -167,7 +167,6 @@ async def run_daemon(
                 services.admin_router,
                 allow_uid=os.getuid() if admin_gid is None else None,
                 allow_gids=() if admin_gid is None else (admin_gid,),
-                approver=services.approver.approve,
             )
         )
         if admin_gid is not None:

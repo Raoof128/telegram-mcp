@@ -29,7 +29,6 @@ from tests.authority_fixtures import seed_authority_rows
 CODEX = "tcl_" + "a" * 26
 CLAUDE = "tcl_" + "c" * 26
 RUNTIME = b"\x05" * 16
-PROOF = {"method": "stub"}
 
 
 def _b64url(raw):
@@ -103,7 +102,6 @@ async def world(tmp_path, monkeypatch):
         runtime_id=RUNTIME,
         agent_verify=signer.verify,
         port=port,
-        presence_verifier=lambda proof: proof == PROOF,
     )
     admin = services.admin_router
 
@@ -111,7 +109,7 @@ async def world(tmp_path, monkeypatch):
         return admin.dispatch(
             {
                 "cmd": "project create",
-                "args": {"presence": PROOF, "slug": slug, "display_name": name},
+                "args": {"slug": slug, "display_name": name},
             }
         )["data"]["project_ref"]
 
@@ -125,7 +123,6 @@ async def world(tmp_path, monkeypatch):
             {
                 "cmd": "project grant-client",
                 "args": {
-                    "presence": PROOF,
                     "project_ref": project,
                     "client_ref": client,
                     "egress_level": level,

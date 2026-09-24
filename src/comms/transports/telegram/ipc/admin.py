@@ -1,11 +1,10 @@
 """Admin Unix socket: peer credentials, strict frames, §33 command routing.
 
-Two facts hold this module together. Filesystem permissions grant
-*reachability* and peer credentials prove *which OS identity connected*;
-neither is consent (design §2). Sensitive operations therefore ask the
-consent agent as well, which here means a presence proof the router refuses
-to accept unless an injected verifier accepts it — with no verifier wired,
-``lock``/``unlock`` fail closed.
+Filesystem permissions grant *reachability* and peer credentials prove
+*which OS identity connected*. Under comms spec v0.2 that is the whole of
+admin authority: the owner's own account, on the owner's own machine. There
+is no second factor, and a ``presence`` argument is refused as malformed so
+nothing can pretend otherwise.
 
 Frames are decoded strictly before dispatch, so a body like
 ``{"cmd": "lock", "cmd": "status"}`` never reaches a handler: duplicate keys
@@ -44,7 +43,7 @@ from comms.transports.telegram.ipc.framing import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
+    from collections.abc import Callable, Mapping
 
 __all__ = [
     "ADMIN_COMMANDS",
@@ -64,7 +63,6 @@ _logger = logging.getLogger("telegram_mcp.admin")
 MALFORMED_REQUEST = "MALFORMED_REQUEST"
 UNKNOWN_COMMAND = "UNKNOWN_COMMAND"
 NOT_AVAILABLE_IN_PHASE = "NOT_AVAILABLE_IN_PHASE"
-PRESENCE_REQUIRED = "PRESENCE_REQUIRED"
 PERMISSION_DENIED = "PERMISSION_DENIED"
 INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -124,45 +122,6 @@ ADMIN_COMMANDS: tuple[str, ...] = (
     "release verify",
     "doctor",
     "serve",
-)
-
-# §33: "mutations remain separate user-presence-gated commands". Two reads are
-# gated too because they expose private metadata: ``scope discover`` (§10.2)
-# and ``policy export``. The test pins this set against an explicit list.
-PRESENCE_GATED: frozenset[str] = frozenset(
-    {
-        "auth login",
-        "auth logout-local",
-        "auth revoke-this-session",
-        "client rotate",
-        "client disable",
-        "consent approve",
-        "tunnel rotate-binding",
-        "scope discover",
-        "scope allow",
-        "scope deny",
-        "scope remove",
-        "scope mode",
-        "project create",
-        "project rename",
-        "project enable",
-        "project disable",
-        "project add-peer",
-        "project remove-peer",
-        "project grant-client",
-        "project set-egress",
-        "project revoke-client",
-        "project grant-cross-search",
-        "project revoke-cross-search",
-        "project instruction",
-        "policy export",
-        "policy import",
-        "disclosure key",
-        "audit repair-anchor",
-        "audit checkpoint",
-        "lock",
-        "unlock",
-    }
 )
 
 # Bootstrap control requests, outside the §33 surface (design §2).
@@ -229,9 +188,7 @@ class AdminRouter:
         self,
         handlers: Mapping[str, Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
         *,
-        presence_verifier: Callable[[Any], bool] | None = None,
         control_handlers: Mapping[str, Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
-        request_verifier: Callable[[Any, str, dict[str, Any]], bool] | None = None,
     ) -> None:
         unknown = set(handlers or {}) - set(ADMIN_COMMANDS)
         if unknown:
@@ -240,8 +197,6 @@ class AdminRouter:
         if bad_control:
             raise ValueError("handler for an unknown control request")
         self._handlers = dict(handlers or {})
-        self._presence = presence_verifier
-        self._request_verifier = request_verifier
         self._control = dict(control_handlers or {})
 
     @staticmethod
@@ -288,17 +243,9 @@ class AdminRouter:
             return self._error(MALFORMED_REQUEST, "unknown request field")
         if command not in ADMIN_COMMANDS:
             return self._error(UNKNOWN_COMMAND, "unknown command")
-        if command in PRESENCE_GATED:
-            proof = args.get("presence")
-            bare = {k: v for k, v in args.items() if k != "presence"}
-            if self._request_verifier is not None:
-                verified = proof is not None and self._request_verifier(proof, command, bare)
-            else:
-                verified = (
-                    proof is not None and self._presence is not None and self._presence(proof)
-                )
-            if not verified:
-                return self._error(PRESENCE_REQUIRED, "user presence is required")
+        if "presence" in args:
+            # Retired by comms spec v0.2: authority is the peer, not a proof.
+            return self._error(MALFORMED_REQUEST, "unknown argument")
         handler = self._handlers.get(command)
         if handler is None:
             return self._error(NOT_AVAILABLE_IN_PHASE, "command is not implemented in this phase")
@@ -319,9 +266,8 @@ class AdminRouter:
     async def adispatch(self, request: Mapping[str, Any]) -> dict[str, Any]:
         """``dispatch``, awaiting handlers that are coroutines (network commands).
 
-        A routed command with no handler in this phase is refused before the
-        presence check: asking the owner for Touch ID to run nothing would
-        train them to approve blind (design D8: ``auth revoke-this-session``).
+        A routed command with no handler in this phase is refused first, as
+        ``dispatch`` would.
         """
         command = request.get("cmd")  # a decoded strict-JSON object (framing guarantees it)
         if isinstance(command, str) and command in ADMIN_COMMANDS and not self.has_handler(command):
@@ -359,7 +305,6 @@ async def serve_admin(
     allow_uid: int | None = None,
     allow_gids: tuple[int, ...] = (),
     idle_s: float = IDLE_TIMEOUT_S,
-    approver: Callable[[str, dict[str, Any]], Awaitable[str | None]] | None = None,
 ) -> asyncio.Server:
     """Serve the admin socket; caller owns the returned server's lifetime."""
     target = Path(socket_path)
@@ -391,18 +336,6 @@ async def serve_admin(
                     _logger.warning("admin frame refused", extra={"reason": str(exc)})
                     await _refuse(writer, MALFORMED_REQUEST, str(exc))
                     return
-                command = request.get("cmd")
-                args = request.get("args", {})
-                if (
-                    approver is not None
-                    and isinstance(command, str)
-                    and command in PRESENCE_GATED
-                    and router.has_handler(command)
-                    and isinstance(args, dict)
-                ):
-                    token = await approver(command, args)
-                    if token is not None:
-                        request = {**request, "args": {**args, "presence": {"token": token}}}
                 peer_token = ADMIN_PEER.set(creds)
                 try:
                     await write_frame(writer, encode_json_frame(await router.adispatch(request)))

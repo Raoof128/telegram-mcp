@@ -1,50 +1,15 @@
-"""Project, grant and scope handlers; the presence set (design §2.5)."""
+"""Project, grant and scope handlers (design §2.5)."""
 
 import pytest
 
-from comms.transports.telegram.ipc.admin import ADMIN_COMMANDS, PRESENCE_GATED, AdminRouter
+from comms.transports.telegram.ipc.admin import AdminRouter
 from comms.transports.telegram.ipc.handlers.leases import auth_headers_handler
 from comms.transports.telegram.ipc.handlers.projects import project_handlers
 from comms.transports.telegram.ipc.leases import verify_lease
 from comms.transports.telegram.storage.db import open_db
 from tests.authority_fixtures import seed_authority_rows
 
-PROOF = {"method": "stub"}
 CLIENT = "tcl_" + "a" * 26
-
-MUTATING = {
-    "auth login",
-    "auth logout-local",
-    "auth revoke-this-session",
-    "client rotate",
-    "client disable",
-    "consent approve",
-    "tunnel rotate-binding",
-    "scope discover",
-    "scope allow",
-    "scope deny",
-    "scope remove",
-    "scope mode",
-    "project create",
-    "project rename",
-    "project enable",
-    "project disable",
-    "project add-peer",
-    "project remove-peer",
-    "project grant-client",
-    "project set-egress",
-    "project revoke-client",
-    "project grant-cross-search",
-    "project revoke-cross-search",
-    "project instruction",
-    "policy export",
-    "policy import",
-    "disclosure key",
-    "audit repair-anchor",
-    "audit checkpoint",
-    "lock",
-    "unlock",
-}
 
 
 @pytest.fixture
@@ -53,25 +18,11 @@ def router(tmp_path):
     seed_authority_rows(conn)
     conn.execute("DELETE FROM projects")
     conn.commit()
-    return conn, AdminRouter(project_handlers(conn), presence_verifier=lambda proof: proof == PROOF)
+    return conn, AdminRouter(project_handlers(conn))
 
 
 def _call(router, cmd, **args):
-    return router.dispatch({"cmd": cmd, "args": {"presence": PROOF, **args}})
-
-
-def test_the_presence_set_is_exactly_the_mutating_set():
-    assert set(PRESENCE_GATED) == MUTATING
-    assert set(PRESENCE_GATED) <= set(ADMIN_COMMANDS)
-
-
-def test_every_handler_that_writes_refuses_without_presence(router):
-    conn, admin = router
-    before = conn.total_changes
-    for cmd in ("project create", "project enable", "project grant-client", "scope mode"):
-        response = admin.dispatch({"cmd": cmd, "args": {}})
-        assert response["code"] == "PRESENCE_REQUIRED"
-    assert conn.total_changes == before
+    return router.dispatch({"cmd": cmd, "args": args})
 
 
 def test_create_grant_and_list(router):

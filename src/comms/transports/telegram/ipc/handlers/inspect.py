@@ -41,7 +41,7 @@ _SHOWN = (
 
 
 def _body(args: dict[str, Any], allowed: set[str]) -> dict[str, Any]:
-    body = {k: v for k, v in args.items() if k != "presence"}
+    body = dict(args)
     if set(body) - allowed:
         raise ValueError("unknown argument")
     return body

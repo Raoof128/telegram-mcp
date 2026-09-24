@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from comms.transports.telegram.ipc.admin import ADMIN_COMMANDS, PRESENCE_GATED, AdminRouter
+from comms.transports.telegram.ipc.admin import ADMIN_COMMANDS, AdminRouter
 from comms.transports.telegram.keys.store import provision_missing, set_store_dir
 from comms.transports.telegram.runtime.composition import admin_handlers
 from comms.transports.telegram.storage.db import open_db
@@ -72,13 +72,7 @@ async def test_exactly_the_named_commands_lack_a_handler(handlers):
 
 
 async def test_every_missing_admin_command_answers_not_available(handlers):
-    router = AdminRouter(handlers, presence_verifier=lambda proof: True)
+    router = AdminRouter(handlers)
     for command in sorted(LATER_IN_PHASE_5 | DEFERRED):
-        response = await router.adispatch({"cmd": command, "args": {"presence": {}}})
+        response = await router.adispatch({"cmd": command, "args": {}})
         assert response["code"] == "NOT_AVAILABLE_IN_PHASE", command
-
-
-def test_the_presence_set_is_unchanged_in_5a():
-    from tests.unit.test_admin_handlers import MUTATING
-
-    assert set(PRESENCE_GATED) == MUTATING  # by name, not count

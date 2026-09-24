@@ -59,7 +59,7 @@ def _now() -> str:
 
 
 def _parse_disable(args: dict[str, Any]) -> dict[str, Any]:
-    body = {k: v for k, v in args.items() if k != "presence"}
+    body = dict(args)
     if set(body) - {"client"}:
         raise ValueError("unknown argument")
     if body.get("client") not in _KINDS:
@@ -81,7 +81,7 @@ CLIENT_COMMANDS["client disable"] = TxCommand(_parse_disable, lambda c, p: p, _a
 
 def client_handlers(conn: sqlite3.Connection, *, key_dir: Path) -> dict[str, Handler]:
     def rotate(args: dict[str, Any]) -> dict[str, Any]:
-        body = {k: v for k, v in args.items() if k != "presence"}
+        body = dict(args)
         if set(body) - {"client", "enable"}:
             raise ValueError("unknown argument")
         kind = body.get("client")
@@ -136,7 +136,7 @@ def client_handlers(conn: sqlite3.Connection, *, key_dir: Path) -> dict[str, Han
         return {**result, "seed": "activated"}
 
     def list_(args: dict[str, Any]) -> dict[str, Any]:
-        if {k for k in args if k != "presence"}:
+        if set(args):
             raise ValueError("unknown argument")
         # body otherwise verbatim from the shipped clients.py:62-71 (callers: test_identity_bootstrap,
         # test_daemon); only bearer clients are listed.
