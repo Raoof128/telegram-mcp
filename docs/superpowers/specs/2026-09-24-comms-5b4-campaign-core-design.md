@@ -1,13 +1,13 @@
 # Comms 5b-4 Design: the Campaign Core (fake transports only)
 
-**Status:** Revision 2. The owner approved the design on 2026-09-24 with six required corrections and further hardening (§0A). Revision 2 folds in the line-by-line gauntlet (§0B), whose SQLCipher findings were measured, not argued.
+**Status:** Revision 3. Revision 1 carried the owner's six corrections (§0A). Revision 2 folded in a line-by-line self-gauntlet whose SQLCipher findings were measured. Revision 3 folds in the owner's gauntlet of revision 1 (§0B): 7 blockers and 8 hardening items, 11 adopted, 1 refined, 3 already fixed by revision 2.
 **Date:** 2026-09-24 (Australia/Sydney)
 **Parent:** [`comms-consolidation-design.md`](2026-09-24-comms-consolidation-design.md) rev 2, §4.2; governed by [`docs/comms-spec-v0.2.md`](../../comms-spec-v0.2.md).
-**Source requirements:** the owner's *Persian Society Communications Gateway v0.1*, §§4–19 and §32 (recovered verbatim into [`docs/provenance/comms-gateway-v0.1.md`](../../provenance/comms-gateway-v0.1.md)).
+**Source requirements:** the owner's *Persian Society Communications Gateway v0.1*, §§4–19 and §32 ([`docs/provenance/comms-gateway-v0.1.md`](../../provenance/comms-gateway-v0.1.md)).
 
 ## Controlling statement
 
-The campaign core turns "send this campaign" into durable, deduplicated, idempotent delivery jobs, and executes them against transports without ever resending blindly. **The campaign the operator can inspect is the campaign that will execute.** An operator command is the authorization; there is no second approval anywhere. Nothing here talks to Telegram or Meta: every transport in 5b-4 is a fake.
+The campaign core turns "send this campaign" into durable, deduplicated, idempotent delivery jobs, and executes them against transports **without ever resending blindly**. **The campaign the operator can inspect is the campaign that will execute.** An operator command is the authorization; there is no second approval anywhere. Nothing here talks to Telegram or Meta: every transport in 5b-4 is a fake.
 
 ## 0. Owner decisions
 
@@ -19,193 +19,228 @@ The campaign core turns "send this campaign" into durable, deduplicated, idempot
 | D4 | Lifecycle events go to a plain append-only journal now; 5c puts them on the tamper-evident chain. |
 | D5 | `SCHEDULED` is immutable. To edit: unschedule, edit, validate, schedule again (deviation from source §19, approved). |
 
-## 0A. Owner corrections and hardening (all adopted)
+## 0A. Revision 1: the owner's six corrections and hardening
 
-| # | Correction | Where |
+| # | Item | Where |
 |---|---|---|
-| C1 | No transport operation inside a database transaction; `prepare()` is pure and local | §4, §5 |
-| C2 | `INDETERMINATE` campaign outcome: unknown ≠ failed | §6.3 |
-| C3 | Cancel and retry act on jobs; one explicit campaign state machine | §6 |
-| C4 | One logical job per `(campaign, transport, endpoint)` forever; attempts in their own table | §3, §7 |
-| C5 | Recipient (the person) is separate from contact points (per-transport endpoints) | §3 |
-| C6 | Scheduled jobs are time-gated; recovery never runs a job early | §8 |
-| H1 | Execution-time revalidation may remove, never add: execution set ⊆ frozen set | §5.3 |
-| H2 | Adapter interface is `prepare` / `deliver`; the prepared payload and its digest are frozen | §4 |
-| H3 | Asynchronous provider updates: idempotent, monotonic | §7.3 |
-| H4 | "Campaign event log", explicitly not the audit chain | §9 |
-| H5 | SQLCipher: no key and wrong key fail closed; a canary is absent from raw bytes; `cipher_version` recorded | §2 |
-| H6 | `canonical.py` keeps the TG-JCS-v1 identifier; a central prefix registry prevents namespace collisions | §1 |
-| H7 | Unscheduling destroys the frozen unsent snapshot and its jobs in one transaction | §6.2 |
+| C1 | No external side effect or I/O inside a database transaction | §5 |
+| C2 | `INDETERMINATE`: unknown ≠ failed | §6.3 |
+| C3 | Cancel and retry act on jobs | §6 |
+| C4 | One logical job per frozen delivery; attempts in their own table | §7 |
+| C5 | Recipient separate from contact points | §3 |
+| C6 | Scheduled jobs are time-gated | §8 |
+| H1 | Execution set ⊆ frozen set | §5.3 |
+| H2 | `prepare` / `deliver`; the prepared payload is frozen | §4 |
+| H3 | Asynchronous provider updates, idempotent and monotonic | §7.3 |
+| H4 | "Campaign event log", not the audit chain | §9 |
+| H5 | SQLCipher fail-closed tests | §2 |
+| H6 | TG-JCS-v1 identifier kept; central prefix registry | §1 |
+| H7 | Unscheduling discards the frozen generation | §6.2 |
 
-## 0B. Gauntlet findings (revision 2)
+## 0B. Findings folded into revisions 2 and 3
 
-| # | Sev | Finding | Receipt | Fix |
-|---|---|---|---|---|
-| G1 | 🔴 | A wrong SQLCipher key is **accepted silently** by `PRAGMA key`; failure appears only at the first read. | Measured on 4.12.0: `PRAGMA key` with a wrong key returns; `SELECT … FROM sqlite_master` then raises `file is not a database`. | `open_comms_db` proves the key inside open (a read of `sqlite_master`) and raises a fixed error before returning. |
-| G2 | 🔴 | A **new file opened without a key is created as plaintext** SQLite; an empty key raises. | Measured: keyless create → header `SQLite format 3\0`. | `open_comms_db` refuses a key that is not exactly 32 bytes before `connect`, sets it first, and after creating a file asserts the header is not plaintext; `cipher_version` must be non-empty (proves the library really is SQLCipher). |
-| G3 | 🔴 | **Same person, two Telegram endpoints.** A Telegram private chat's ID equals the user's ID, so a destination and a Telegram contact point can name one identity, and ref-based dedup sends twice. | Telegram Bot API: a private chat's `id` is the user's `id`. | Dedup keys on `(transport, platform_identity)`, not on refs. `UNIQUE(transport, platform_identity)` spans destinations **and** contact points (one `endpoints` identity table, §3). |
-| G4 | 🔴 | Outcome states are not final: an `ACCEPTED` job can later report `FAILED_PERMANENT`, turning `SENT` into `PARTIAL`; revision 1's machine had no such edge. | §7.3's own lattice allows `ACCEPTED → FAILED_PERMANENT`. | The outcome (`SENT`/`PARTIAL`/`FAILED`/`INDETERMINATE`/`CANCELLED`-after-send) is a **pure function of the job states**, recomputed after every job change; re-aggregation may move between outcomes (§6.3). |
-| G5 | 🟠 | A webhook can arrive **before `deliver` returns**; recording the synchronous result afterwards could regress `DELIVERED → ACCEPTED`. | Ordering is not guaranteed by any provider. | Every job-state write — `deliver` result, provider update, resolution — goes through one monotonic transition function; a lower-rank result on a higher-rank job is recorded on the attempt and ignored for the job. |
-| G6 | 🟠 | Claim is only safe as **compare-and-set**. A cancel and a claim, or two executors, race on one `PENDING` job. | — | `UPDATE … SET state='IN_FLIGHT' WHERE job=? AND state='PENDING' AND <campaign SENDING>`; `rowcount == 1` or skip. Cancel is the same CAS. |
-| G7 | 🟠 | `recover()` turns every `IN_FLIGHT` into `OUTCOME_UNKNOWN`; a **second live executor** mid-`deliver` would be misclassified. | — | `recover()` and execution require the caller to hold the single-runtime lock (5e wires it; 5b-4 takes an `ExecutorLease` object and the tests assert it is required). |
-| G8 | 🟠 | **WhatsApp eligibility is time-dependent** (the 24-hour customer-service window decides free-form vs template), so a payload prepared Tuesday for Friday can be invalid on Friday. | Source §13; WhatsVault `conversation_windows`. | `prepare(intent, send_at)` renders for the **send time** (`scheduled_at`, or now). The adapter adds a pure `still_valid(prepared, now) -> bool | reason`, checked at claim; failure → `SKIPPED_REVALIDATION`. Never re-render: removal only. |
-| G9 | 🟠 | Revision 1 left the **disabled-location rule** ambiguous for destinations reached directly through an audience. | Source §31 "disabled location excluded". | A destination is sendable only if it **and its location** are enabled, however it was reached. A disabled location contributes no members. A recipient is included only via an enabled path, and only if the recipient and the contact point are enabled and not opted out. |
-| G10 | 🟠 | **Nothing stops an MCP surface importing the send library.** 5b-3's guard covers tool names, not imports. | `tests/security/test_ai_boundary.py` checks registries only. | New guard: nothing under `comms/transports/*/{server,dispatch,sensitive_dispatch,mcp}` or WhatsVault's `apps/mcp` imports `comms.core.campaigns` / `comms.core.delivery`. |
-| G11 | 🟠 | "Optional bounded model, decided at plan time" was an unsigned IOU. | Doctrine: no IOU without a name. | Adopted: an exhaustive state-product test enumerates every multiset of job states for campaigns of ≤ 3 jobs and every operation, asserting aggregation, monotonicity and the unknown ≠ failed rule on each (§11). |
-| G12 | 🟠 | Snapshot digest stability is ill-defined: `prepare` takes a time. | — | The snapshot digest covers the send time explicitly; the stability test fixes the clock and proves byte-identical digests across runs and processes. |
-| G13 | 🟡 | `DeliveryJob` vs `PreparedDelivery` named the same thing twice. | §4. | One name: `deliver(job: DeliveryJob)`; `DeliveryJob` carries the frozen `PreparedDelivery`, the idempotency key and the attempt number. |
-| G14 | 🟡 | "Every applicable job succeeded" — "applicable" undefined. | §6.3. | "Every job". A skipped or cancelled job makes the outcome at best `PARTIAL`, matching source §14 (372 accepted + 12 skipped = `PARTIAL`). |
-| G15 | 🟡 | Retry past the cap was undefined. | §7.2. | At the cap a job stays `FAILED_TRANSIENT`, is excluded from `retry_failed`, and is reported as `retry_exhausted`. |
-| G16 | 🟡 | Digests in the event log could be brute-forced if taken over phone numbers. | Source §20 allows `audience_digest`. | Every digest in events is over opaque refs only; a test proves no digest input contains a platform identity. |
-| G17 | 🟡 | Times: source §19 uses a `+10:00` offset. | — | All stored times are UTC ISO-8601 `Z`; naive datetimes are refused at the API. |
+| # | Finding | Resolution |
+|---|---|---|
+| R1 | 🔴 A wrong SQLCipher key is accepted silently by `PRAGMA key`; failure shows only at the first read (**measured**, 4.12.0). | `open_comms_db` proves the key with a read before returning (§2). |
+| R2 | 🔴 A new file opened without a key is created as **plaintext** (**measured**); an empty key raises. | Key must be exactly 32 bytes before `connect`; header asserted non-plaintext; `cipher_version` required (§2). |
+| R3 | 🔴 Same-transport dedupe keyed on refs: `dst_A` and `rct_B` can both be Telegram peer 12345; one person may hold two WhatsApp points. | A canonical **delivery identity** per transport, produced by the transport's pure normalizer, controls dedupe and the idempotency key. **Refinement:** it is the ID of the chat actually sent to, *not* kind-qualified — `telegram:user:12345` vs `telegram:chat:12345` would re-open the bug, because a private chat's ID is the user's ID. At most one **enabled** contact point per recipient per transport (§3, §5.1). |
+| R4 | 🔴 Provider events bound to a job, not an attempt; three independent writers of job state could regress `DELIVERED → ACCEPTED`; `SENT` could not become `PARTIAL` without breaking the lifecycle. | Events carry `(transport, provider_event_ref)` and the attempt; **one reducer** for every job-state write; campaign **lifecycle** separated from the derived **delivery summary** (§6, §7.3). |
+| R5 | 🔴 `FAILED_TRANSIENT` could permit a blind resend when the provider has no idempotency. | `FAILED_TRANSIENT` is legal only when no send provably occurred, or the provider's idempotency makes this exact retry safe; every ambiguous failure is `OUTCOME_UNKNOWN` (§7.2). |
+| R6 | 🔴 Unschedule deleted jobs, then an edited reschedule reused the same idempotency key for a different payload. | Every freeze creates a new immutable **generation** (`gen_`); the key binds it; an unscheduled generation is discarded, never reused (§7.1, §8). |
+| R7 | 🔴 A crash after the last job outcome but before aggregation stranded the campaign in `SENDING`. | The summary is recomputed **in the same transaction** as every job change; recovery also re-derives it and closes abandoned attempts (§6.3, §10). |
+| R8 | 🔴 An empty job set vacuously satisfied "every job succeeded". | Freeze refuses `NO_ELIGIBLE_ENDPOINTS` when no job would be `PENDING`; the summary is defined only over a non-empty set (§5.1, §6.3). |
+| R9 | 🔴 Claim-time revalidation could not know *why* a contact point was targeted (which location, which audience). | Each job freezes its **origin paths**; revalidation keeps a job only if some frozen path is still valid now (§5.3). |
+| R10 | 🟠 `deliver(PreparedDelivery)` vs "`DeliveryJob` is what deliver receives". | One boundary type, `FrozenDelivery` (§4). |
+| R11 | 🟠 Endpoint identity mutability undefined. | Transport and platform identity are **immutable**; a change is disable-old, create-new (§3). |
+| R12 | 🟠 Canary test covered only the main file. | Every file the database produces (WAL, SHM, journal, temp) is searched; `temp_store=MEMORY` (§2). |
+| R13 | 🟠 `provider_event_ref` globally unique could collide across providers. | `UNIQUE(transport, provider_event_ref)` (§7.3). |
+| R14 | 🟠 Snapshot digest preimage underspecified. | Exact domain and preimage pinned (§5.4). |
+| R15 | 🟠 Journal and state could diverge on a crash. | Every event is appended in the transaction of its state change; `event_seq` is a global sequence (§9). |
+| R16 | 🟠 Time representation. | UTC instants; naive datetimes refused; offsets normalized before persistence; comparisons on UTC (§8). |
+| R17 | 🟠 The bounded model was optional. | Required, with named properties (§11). |
+| R18 | 🟠 Wording: C1 said "no transport operation" in a transaction, but `prepare` runs inside the freeze. | "No external side effect or I/O"; `prepare` is pure computation and may run inside; `deliver` must not (§5). |
+| R19 | 🟠 WhatsApp eligibility depends on send time (24-hour window). | `prepare` renders for the send time; pure `still_valid` at claim may only remove (§4). |
+| R20 | 🟠 Claim, cancel and a second executor race on one job; recovery could misclassify a live executor's job. | Claim and cancel are compare-and-set; execution and recovery require the `ExecutorLease` (§5.2, §10). |
+| R21 | 🟠 Nothing stopped an MCP surface importing the send library. | Import guard (§1). |
+| R22 | 🟡 Retry past the cap, event digests over identities, freeze-transaction size. | `retry_exhausted`; digests over opaque refs only; a bounded freeze-size and timing test (§7.2, §9, §11). |
 
 ## 1. Placement and the first shared-core extraction
 
-- **`comms.core` gains domain code.** The empty-core guard (`test_core_has_no_production_implementation`) is replaced by the rule that matters: core never imports `comms.transports.*`, `telegram_mcp` or `whatsvault`, statically or dynamically, and holds no transport path strings. The transitive-closure and planted-violation guards stay.
-- **No AI surface can reach the send library (G10).** No module under `comms/transports/*/{server,dispatch,sensitive_dispatch}.py`, any `mcp` package, or WhatsVault's `apps/mcp` may import `comms.core.campaigns` or `comms.core.delivery`, statically or dynamically. The operator plane (5e) is the only caller of `send`, `schedule`, `retry_failed`, `resolve_outcome` and `cancel`.
-- **Two single-copy moves, before any campaign code** (same method as 5b-3 Task 1: AST equality plus byte vectors):
-  - `transports/telegram/canonical.py` → `comms/core/canonical.py`. It still implements **TG-JCS-v1** byte for byte; moving the package does not rename the wire identifier.
-  - `transports/telegram/opaque.py` → `comms/core/opaque.py`. Telegram imports both from core.
-- **Prefix registry.** `comms/core/refs.py` declares the core's prefixes. A test requires them to be disjoint from Telegram's `REF_PREFIXES` (including tombstoned `tgu_`) and from WhatsVault's `ids.PREFIXES`. The source spec's example `aud_` and `job_` collide with WhatsVault's audit-log and scheduled-job IDs, so:
+- **`comms.core` gains domain code.** The empty-core guard is replaced by the rule that matters: core never imports `comms.transports.*`, `telegram_mcp` or `whatsvault`, statically or dynamically, and holds no transport path strings. The transitive-closure and planted-violation guards stay.
+- **No AI surface can reach the send library (R21).** No module under `comms/transports/*/{server,dispatch,sensitive_dispatch}.py`, any `mcp` package, or WhatsVault's `apps/mcp` may import `comms.core.campaigns` or `comms.core.delivery`. The operator plane (5e) is the only caller of `send`, `schedule`, `retry_failed`, `resolve_outcome` and `cancel`.
+- **Two single-copy moves, before any campaign code** (5b-3 Task 1's method: AST equality plus byte vectors): `transports/telegram/canonical.py` → `comms/core/canonical.py` (still **TG-JCS-v1** byte for byte; the identifier is not renamed) and `transports/telegram/opaque.py` → `comms/core/opaque.py`. Telegram imports both from core.
+- **Prefix registry.** `comms/core/refs.py` declares the core's prefixes; a test requires them disjoint from Telegram's `REF_PREFIXES` (including tombstoned `tgu_`) and WhatsVault's `ids.PREFIXES`. The source spec's example `aud_` and `job_` collide with WhatsVault's audit-log and scheduled-job IDs.
 
-| Object | Prefix |
-|---|---|
-| Location | `loc_` |
-| Destination | `dst_` |
-| Recipient | `rcp_` |
-| Contact point | `rct_` |
-| Audience | `cau_` |
-| Campaign | `cmp_` |
-| Delivery job | `djb_` |
-| Delivery attempt | `dat_` |
-| Campaign event | `cev_` |
+| Object | Prefix | Object | Prefix |
+|---|---|---|---|
+| Location | `loc_` | Campaign | `cmp_` |
+| Destination | `dst_` | Snapshot generation | `gen_` |
+| Recipient | `rcp_` | Delivery job | `djb_` |
+| Contact point | `rct_` | Delivery attempt | `dat_` |
+| Audience | `cau_` | Campaign event | `cev_` |
 
 ## 2. Storage: `comms.db`
 
-- SQLCipher (`sqlcipher3` 0.6.2, already pinned; measured `cipher_version` `4.12.0 community`). `open_comms_db(path, key: bytes)` takes a 32-byte key from the caller and is the only way to open the file:
-  1. refuse any key that is not exactly 32 bytes, before `connect` (G2);
-  2. `connect`; set `PRAGMA key` as a raw hex key first, before any other statement;
-  3. require a non-empty `PRAGMA cipher_version`;
-  4. prove the key with a read of `sqlite_master`; a wrong key raises a fixed `CommsDbKeyError` (G1);
-  5. after creating a new file, assert its first 16 bytes are not the plaintext SQLite header (G2);
-  6. foreign keys on; every write in `BEGIN IMMEDIATE`.
-- Append-only numbered migrations, the Telegram pattern (`Migration(version, statements)`), in `comms/core/storage/`.
-- Platform identities (E.164 numbers, Telegram peer IDs) are stored as plain values **inside** the encrypted file, so `UNIQUE(transport, platform_identity)` works. Everywhere outside the database — return values, events, logs, errors — they appear only as opaque refs.
-- **Tests (H5):** a fresh file has no SQLite plaintext header; opening without a key fails closed; opening with a wrong key fails closed; a planted canary (a phone number and a message body) is absent from the raw file bytes; `PRAGMA cipher_version` is printed into the evidence.
+SQLCipher (`sqlcipher3` 0.6.2, pinned; measured `cipher_version` `4.12.0 community`). `open_comms_db(path, key: bytes)` is the only way to open the file:
+
+1. refuse any key that is not exactly 32 bytes, **before** `connect` (R2);
+2. `connect`; `PRAGMA key` as a raw hex key, before any other statement;
+3. require a non-empty `PRAGMA cipher_version` (proves the library is SQLCipher);
+4. prove the key by reading `sqlite_master`; a wrong key raises a fixed `CommsDbKeyError` (R1);
+5. after creating a file, assert its first 16 bytes are not the plaintext SQLite header (R2);
+6. `PRAGMA foreign_keys=ON`, `PRAGMA temp_store=MEMORY` (R12); every write in `BEGIN IMMEDIATE`.
+
+Append-only numbered migrations (the Telegram `Migration(version, statements)` pattern) in `comms/core/storage/`. Platform identities are plain values **inside** the encrypted file so `UNIQUE` constraints work; everywhere outside — return values, events, logs, errors — only opaque refs appear.
+
+**Tests (H5, R12):** no key and a wrong key fail closed with the fixed error; a keyless or short key is refused before any file exists; a phone-number canary and a message-body canary are absent from the bytes of **every** file in the database directory after writes, checkpoints and a crash (main, `-wal`, `-shm`, `-journal`, anything else); `cipher_version` is printed into the evidence.
+
+**Schema constraints (pinned, not left to Python):** `CHECK` on every state column; `audience_members` has exactly one member-type column non-null (`CHECK`); `UNIQUE(job_id, attempt_no)`; `UNIQUE(transport, provider_event_ref)`; `UNIQUE(generation_id, transport, delivery_identity)` on jobs; foreign keys are `ON DELETE RESTRICT` throughout — destinations, contact points and recipients referenced by any job are **never deleted**, only disabled; identity columns are immutable (an `UPDATE` trigger refuses changes, R11).
 
 ## 3. Domain model (source §§4–7)
 
 | Table | Holds |
 |---|---|
 | `locations` | `loc_`, name, `enabled` |
-| `endpoint_identities` | `(transport, platform_identity)` `UNIQUE`, owned by exactly one destination **or** one contact point (G3). |
-| `destinations` | `dst_`, `location_id`, transport (`telegram`), identity, `display_name`, `enabled`, `capabilities`. A Telegram chat, group or channel. |
+| `destinations` | `dst_`, `location_id`, transport (`telegram`), `platform_identity`, `delivery_identity`, `display_name`, `enabled`, `capabilities`. A Telegram chat, group or channel. |
 | `recipients` | `rcp_`, `enabled`. The logical person. |
-| `contact_points` | `rct_`, `recipient_id`, transport, identity, `enabled`, `opted_out_at`. A future SMS or email point is a row, not a column. |
+| `contact_points` | `rct_`, `recipient_id`, transport, `platform_identity`, `delivery_identity`, `enabled`, `opted_out_at`. Partial `UNIQUE(recipient_id, transport) WHERE enabled` (R3). A future SMS or email point is a row. |
+| `delivery_identities` | `UNIQUE(transport, delivery_identity)`, owned by exactly one destination **or** one contact point (R3). |
 | `location_members` | location → recipient |
 | `audiences`, `audience_members` | `cau_`; a member is exactly one of location, audience, destination, recipient |
-| `campaigns` | `cmp_`, title, state, draft content (canonical/fa/en body, links, media descriptors `{sha256, mime, name, size}`), targets (audiences, locations, transports), options, `scheduled_at`, snapshot digest |
-| `delivery_jobs` | `djb_`, campaign, transport, `endpoint_ref` (a `dst_` or `rct_`), `idempotency_key UNIQUE`, frozen prepared payload + digest, state, `attempt_count` |
-| `delivery_attempts` | `dat_`, job, `attempt_no`, `started_at`, `finished_at`, outcome, provider message ref |
-| `provider_events` | `provider_event_ref UNIQUE`, job, reported status |
+| `campaigns` | `cmp_`, title, `lifecycle`, draft content (canonical/fa/en body, links, media descriptors `{sha256, mime, name, size}`), targets, options, current generation |
+| `generations` | `gen_`, campaign, `created_at`, `send_at`, frozen content, snapshot digest, `status` (`active` / `discarded`). Immutable once written, except `status`. |
+| `delivery_jobs` | `djb_`, generation, transport, `delivery_identity`, `endpoint_ref`, `idempotency_key UNIQUE`, frozen payload + digest, `state`, `attempt_count` |
+| `job_origins` | job, ordered origin path (§5.3) |
+| `delivery_attempts` | `dat_`, job, `attempt_no`, `started_at`, `finished_at`, `outcome`, `provider_message_ref` |
+| `provider_events` | transport, `provider_event_ref`, job, attempt, reported status, applied or refused |
 | `campaign_events` | the event log (§9) |
 
-**Operator authorization is not recipient eligibility.** Removing Touch ID removed a ceremony, not opt-outs: a contact point that is disabled or opted out is never sendable, whatever the operator commands.
+**Delivery identity (R3).** Each transport supplies a pure `normalize(platform_identity) -> delivery_identity`: the canonical identity of the thing a message is actually sent to on that transport. For Telegram it is the target chat ID (a user and their private chat normalize to the same identity); for WhatsApp it is the E.164 number. It is computed once when the endpoint is created and stored; it is immutable (R11).
 
-**Sendability (G9).** A destination is sendable only if it and its location are enabled, however it was reached. A disabled location contributes no members. A contact point is sendable only if it, its recipient and at least one enabled path to it are enabled, and it is not opted out.
+**Operator authorization is not recipient eligibility.** Removing Touch ID removed a ceremony, not opt-outs: a disabled or opted-out contact point is never sendable, whatever the operator commands.
 
-**Audiences** form a DAG. A write that would create a cycle is refused; resolution re-checks and refuses a cycle too (fail closed). An unknown ref fails closed. "All locations" is an ordinary audience whose members are the configured locations.
+**Audiences** form a DAG; a write creating a cycle is refused, and resolution re-checks (fail closed). An unknown ref fails closed. "All locations" is an ordinary audience over the configured locations.
 
-## 4. Transport adapter interface (H2, C1)
+## 4. Transport adapter interface
 
 ```python
 class DeliveryTransport(Protocol):
     name: str  # "telegram" | "whatsapp"
 
-    def prepare(self, intent: DeliveryIntent, send_at: datetime) -> PreparedDelivery | SkippedDelivery: ...
-    def still_valid(self, prepared: PreparedDelivery, now: datetime) -> bool | str: ...
-    def deliver(self, job: DeliveryJob) -> DeliveryResult: ...
+    def normalize(self, platform_identity: str) -> str: ...
+    def prepare(self, intent: DeliveryIntent, send_at: datetime) -> PreparedPayload | Skip: ...
+    def still_valid(self, payload: PreparedPayload, now: datetime) -> bool | str: ...
+    def deliver(self, delivery: FrozenDelivery) -> DeliveryResult: ...
 ```
 
-- **`prepare`** is pure and local: no network, no filesystem side effect, deterministic for its inputs. It renders **for the send time** (`scheduled_at`, or now for an immediate send), because WhatsApp eligibility depends on it (G8). It renders the transport-specific payload from the frozen content, decides locally knowable eligibility, and returns the payload (opaque bytes to the core) with its SHA-256. A skip carries a fixed reason code.
-- **`still_valid`** is pure and local: at claim time it says whether the frozen payload is still permitted (for example, the 24-hour window closed). `False` or a reason → `SKIPPED_REVALIDATION`. The payload is never re-rendered.
-- **`deliver`** is the only side-effect boundary. It receives an already frozen job and cannot change audience or content. It returns `ACCEPTED`, `DELIVERED`, `FAILED_TRANSIENT` or `FAILED_PERMANENT` (plus an optional provider message ref). A provider refusing the message is a delivery outcome, not an eligibility check. An exception means the outcome is unknown.
-- The core never interprets the payload. What is previewed is what is frozen: the snapshot digest covers every prepared payload digest, so a rendering change between scheduling and execution cannot alter what sends.
-- `DeliveryJob` (what `deliver` receives: the frozen `PreparedDelivery`, the idempotency key, the attempt number) is the contract 5d freezes for the real adapters (G13).
+- **`normalize`, `prepare`, `still_valid` are pure computation**: no network, no filesystem side effect, deterministic for their inputs. They may run inside a transaction (R18).
+- **`prepare`** renders the transport payload from the frozen content **for the send time** (R19), decides locally knowable eligibility, and returns the payload (opaque bytes to the core) with its SHA-256, or a `Skip` with a fixed reason code.
+- **`still_valid`** says at claim time whether the frozen payload is still permitted (for example, the WhatsApp 24-hour window closed). A falsy answer → `SKIPPED_REVALIDATION`. **Never re-render.**
+- **`deliver`** is the only external side-effect boundary. It receives one **`FrozenDelivery`** (R10) — the exact 5d contract: job ref, generation ref, transport, delivery identity, frozen payload and digest, idempotency key, attempt number. It cannot change audience or content. It returns a `DeliveryResult` classified by §7.2.
+- What is previewed is what is frozen: the snapshot digest (§5.4) covers every payload digest, so a rendering change between scheduling and execution cannot change what sends.
 
-## 5. Send (source §10, §32)
+## 5. Send and schedule (source §10, §32)
 
-### 5.1 Freeze — one transaction, no I/O (C1)
+**Rule (R18, pinned by test):** no external side effect, no network I/O, no `await` and no filesystem write happens inside a campaign-database transaction. Pure adapter computation may. A transport double records whether `deliver` or any I/O hook ran with a transaction open.
+
+### 5.1 Freeze — one transaction
 
 ```text
 BEGIN IMMEDIATE
-  load campaign; validate state (READY, or due SCHEDULED)
-  resolve audiences and locations (skip disabled)
-  resolve per-transport endpoints: telegram → destinations (+ telegram contact points);
-                                   whatsapp → whatsapp contact points
-  deduplicate within each transport on (transport, platform_identity) (G3; never across transports)
-  prepare() each endpoint locally      → job, or SKIPPED_PLATFORM_POLICY job
-  freeze snapshot: content + prepared payload digests; compute snapshot, audience and recipient digests
-  write every delivery job (PENDING or SKIPPED_PLATFORM_POLICY)
-  campaign → SENDING (or SCHEDULED, §8); event
+  load campaign; require lifecycle READY (send or schedule)
+  resolve targets through the audience DAG, recording every origin path (§5.3)
+  keep only sendable endpoints (§5.3 rules, evaluated now)
+  group by (transport, delivery_identity)  → one candidate per identity, all origin paths merged (R3)
+  prepare(intent, send_at) each candidate  → PENDING job, or SKIPPED_PLATFORM_POLICY job
+  if no job would be PENDING               → ROLLBACK, NO_ELIGIBLE_ENDPOINTS (R8)
+  create generation gen_ (active); write jobs, origins, snapshot digest (§5.4)
+  campaign → SENDING (send) or SCHEDULED (schedule); append event (§9)
 COMMIT
 ```
 
-**Rule, pinned by test:** no network I/O, no `await`, no filesystem side effect and no provider call happens between `BEGIN` and `COMMIT` of any campaign-database transaction. A transport double that records whether its `deliver` or any I/O hook was called while a transaction is open proves it.
+Deduplication is within a transport, never across: one person may receive one Telegram copy and one WhatsApp copy.
 
 ### 5.2 Execute — the external-effect boundary
 
 ```text
-BEGIN IMMEDIATE; claim by compare-and-set (G6): PENDING → IN_FLIGHT only if still PENDING
-                and the campaign is SENDING; revalidate (§5.3); new attempt row; COMMIT
-deliver(job)                                    ← external side effect, no transaction open
-BEGIN IMMEDIATE; record outcome on job and attempt; COMMIT
+BEGIN IMMEDIATE
+  claim by compare-and-set: UPDATE job SET state='IN_FLIGHT'
+      WHERE id=? AND state='PENDING' AND campaign lifecycle = 'SENDING'   (rowcount must be 1)
+  revalidate (§5.3); on failure → SKIPPED_REVALIDATION instead
+  insert attempt (attempt_no = attempt_count + 1); append event if any
+COMMIT
+deliver(frozen_delivery)                      ← external side effect; no transaction open
+BEGIN IMMEDIATE
+  reduce(job, attempt, result) (§7.3); recompute summary (§6.3); append events
+COMMIT
 ```
 
-Only a holder of the `ExecutorLease` (the single-runtime lock, G7) may claim, execute or recover. Transports are isolated: each transport's jobs run in their own loop, and an exception or failure in one never stops another (source §29).
+Only the holder of the `ExecutorLease` (the single-runtime lock) may claim, execute or recover (R20). Transports are isolated: each runs its own loop; an exception or failure in one never stops another (source §29).
 
-### 5.3 Revalidation at claim time (H1)
+### 5.3 Origin paths and revalidation (R9, H1)
 
-Inside the claim transaction, the job's endpoint is re-checked against current sendability (§3, G9) and the adapter's pure `still_valid` (G8). A job that fails becomes `SKIPPED_REVALIDATION`. **Revalidation may only remove.** No job is ever created after the freeze, so the execution set is always a subset of the frozen set.
+Every job stores its **origin paths**: each is the ordered chain of refs by which the endpoint was reached, from a campaign target to the endpoint — for example `cau_A → cau_B → loc_X → rcp_P → rct_Q`, or `dst_D` targeted directly. A job has at least one.
 
-## 6. State machines (C2, C3, D5)
+A path is **valid now** if every node on it is enabled (location, destination, recipient, contact point, not opted out) and every edge still exists (audience membership, location membership, contact point ownership).
 
-### 6.1 Campaign
+At claim time a job is kept only if **at least one of its frozen paths is still valid** and the adapter's `still_valid` holds. Otherwise it becomes `SKIPPED_REVALIDATION`. Consequences:
+
+- removing a person from the targeted audience after scheduling suppresses them;
+- disabling a location suppresses everyone reached only through it;
+- **nothing is ever added**: no job is created after the freeze, so the execution set is always a subset of the frozen set.
+
+### 5.4 Snapshot digest (R14)
 
 ```text
-DRAFT ⇄ READY                 (validate / edit)
-READY → SCHEDULED             (schedule: freezes, §8)
-SCHEDULED → READY             (unschedule: destroys the frozen snapshot and jobs, H7)
-READY → SENDING               (send)
-SCHEDULED → SENDING           (run_due, when due)
-SENDING → SENT | PARTIAL | FAILED | INDETERMINATE | CANCELLED   (aggregation, §6.3)
-outcome ⇄ outcome                                              (re-aggregation after a job change, G4)
-PARTIAL | FAILED | INDETERMINATE → SENDING                      (retry_failed puts jobs back to PENDING)
+snapshot_digest = SHA256("comms-campaign-snapshot/v1\0" ‖ TG-JCS-v1({
+  "campaign": cmp_, "generation": gen_, "send_at": <UTC>,
+  "content_digest": SHA256(TG-JCS-v1(frozen content)),
+  "transports": [sorted],
+  "jobs": [sorted by (transport, delivery_identity):
+           {"transport", "delivery_identity", "payload_digest", "initial_state", "skip_reason"}]
+}))
+```
+
+The stability test fixes the clock and proves byte-identical digests across runs and processes, and a second test changes each field in turn and proves the digest moves.
+
+## 6. State machines (R4, C3, D5)
+
+### 6.1 Campaign lifecycle — what the campaign is doing
+
+```text
+DRAFT ⇄ READY                  (validate / edit)
+READY → SCHEDULED              (schedule: freeze, §8)
+SCHEDULED → READY              (unschedule: generation discarded, §8)
+READY → SENDING                (send: freeze)
+SCHEDULED → SENDING            (run_due, when due)
+SENDING → COMPLETE             (no job PENDING or IN_FLIGHT; same transaction as the last job change)
+COMPLETE → SENDING             (retry_failed returns jobs to PENDING)
 DRAFT | READY | SCHEDULED → CANCELLED
 ```
 
-- Content is editable only in `DRAFT`; `READY` returns to `DRAFT` to edit. `SCHEDULED` refuses every edit.
-- No state after `SENDING` ever returns to `DRAFT`, `READY` or `SCHEDULED`.
+- Content is editable only in `DRAFT`; `READY` returns to `DRAFT` to edit; `SCHEDULED` refuses every edit (D5).
+- Nothing in `SENDING` or `COMPLETE` returns to `DRAFT`, `READY` or `SCHEDULED`, and the frozen generation of a sent campaign never changes.
 
 ### 6.2 Cancel
 
-- `DRAFT`, `READY`: → `CANCELLED`.
-- `SCHEDULED`: the frozen snapshot and its jobs are deleted and the campaign → `CANCELLED`, in one transaction.
-- `SENDING`: **job** cancellation. `PENDING → CANCELLED`; `IN_FLIGHT` unchanged; terminal jobs unchanged. Returns counts `cancelled_before_send`, `already_sent` (accepted or delivered) and `currently_in_flight`, then re-aggregates. A campaign that delivered 40 and cancelled 60 ends `PARTIAL`, never `CANCELLED`.
+- `DRAFT`, `READY` → `CANCELLED`.
+- `SCHEDULED`: the generation → `discarded`, its jobs → `CANCELLED` (kept, not deleted), campaign → `CANCELLED`, one transaction.
+- `SENDING`: **job** cancellation by compare-and-set: `PENDING → CANCELLED`; `IN_FLIGHT` and terminal jobs unchanged. Returns counts `cancelled_before_send`, `already_sent` (accepted or delivered) and `currently_in_flight`. The lifecycle becomes `COMPLETE` once nothing is pending or in flight; the summary says what happened.
 
-### 6.3 Aggregation — a pure function of the job states (G4)
+### 6.3 Delivery summary — what actually happened (derived, R4, R7, R8)
 
-While any job is `PENDING` or `IN_FLIGHT` the campaign is `SENDING`. Otherwise the outcome is recomputed from the jobs after **every** job change (outcome, provider update, resolution, cancel), so `SENT` can become `PARTIAL` if an accepted message later fails, and `INDETERMINATE` can become `SENT` when a webhook confirms.
+The summary is a pure function of the generation's jobs, recomputed **in the same transaction as every job change** and stored for reading. The job set is never empty (R8). Over the jobs:
 
-| Condition, in order | Campaign |
+| Condition, in order | Summary |
 |---|---|
+| any job `PENDING` or `IN_FLIGHT` | `IN_PROGRESS` |
 | any job `OUTCOME_UNKNOWN` | `INDETERMINATE` |
-| every job succeeded (`ACCEPTED`/`DELIVERED`) (G14) | `SENT` |
-| at least one success, and at least one failure, skip or cancellation | `PARTIAL` |
-| zero attempts ever left `PENDING` and every job is `CANCELLED` or skipped | `CANCELLED` if any job was cancelled, else `FAILED` (no eligible endpoints) |
-| zero successes otherwise | `FAILED` |
+| every job `ACCEPTED` or `DELIVERED` | `SENT` |
+| at least one `ACCEPTED`/`DELIVERED` | `PARTIAL` |
+| no successes, at least one `CANCELLED`, and no attempt was ever made | `CANCELLED` |
+| otherwise (no successes) | `FAILED` |
 
-**Unknown ≠ failed.** A campaign with three unknown jobs and nothing else is `INDETERMINATE`, not `FAILED`.
+"Every job" means every job of the generation, skipped and cancelled included (so 372 accepted + 12 skipped = `PARTIAL`, source §14). Because the summary is derived, a late provider failure can move `SENT` to `PARTIAL`, and a late confirmation can move `INDETERMINATE` to `SENT`, **without** touching the lifecycle. **Unknown ≠ failed.**
 
 ### 6.4 Job
 
@@ -213,66 +248,73 @@ While any job is `PENDING` or `IN_FLIGHT` the campaign is `SENDING`. Otherwise t
 PENDING → IN_FLIGHT → ACCEPTED | DELIVERED | FAILED_TRANSIENT | FAILED_PERMANENT | OUTCOME_UNKNOWN
 PENDING → CANCELLED | SKIPPED_REVALIDATION
 (frozen as)  SKIPPED_PLATFORM_POLICY
-FAILED_TRANSIENT → PENDING               (retry_failed: new attempt, same job and key)
-OUTCOME_UNKNOWN → operator resolution    (§7.2)
-provider updates                          (§7.3)
+FAILED_TRANSIENT → PENDING         (retry_failed: new attempt, same job and key)
+OUTCOME_UNKNOWN → ACCEPTED | FAILED_TRANSIENT    (operator resolution, §7.2)
 ```
 
-**One transition function (G5).** Every job-state write — `deliver`'s result, a provider update, an operator resolution, a cancel, a claim — goes through a single monotonic function over the lattice of §7.3. A result that would lower a job's rank (the synchronous `ACCEPTED` arriving after a webhook's `DELIVERED`) is recorded on the attempt and ignored for the job.
+## 7. Idempotency, attempts and outcomes
 
-## 7. Idempotency, retry and outcomes (C4)
-
-### 7.1 One logical job forever
-
-`idempotency_key = SHA256("comms-delivery-idem/v1\0" ‖ JCS({"campaign": cmp_, "endpoint": dst_/rct_, "transport": t}))`, `UNIQUE` on `delivery_jobs` — for all time, not only while "active". Built from opaque refs, it can never reveal a phone number. A retry is a new **attempt** on the same job; it is never a new job. The key is what 5d passes to providers that accept one.
-
-### 7.2 Retry and operator resolution
-
-- `retry_failed(cmp)`: only `FAILED_TRANSIENT` jobs, under an attempt cap (default 5), return to `PENDING` (a job at the cap stays `FAILED_TRANSIENT` and is reported `retry_exhausted`, G15); the campaign returns to `SENDING`; content stays frozen. `ACCEPTED`, `DELIVERED`, `FAILED_PERMANENT`, skipped, cancelled and `OUTCOME_UNKNOWN` jobs are never retried by it.
-- `resolve_outcome(job, "sent" | "not_sent")`: an operator statement about an `OUTCOME_UNKNOWN` job, recorded as an event. `sent` → `ACCEPTED`; `not_sent` → `FAILED_TRANSIENT`, which `retry_failed` may then pick up. Nothing resolves an unknown automatically. (5e surfaces it.)
-
-### 7.3 Provider updates (H3)
-
-`record_provider_update(job, provider_event_ref, status)` is idempotent on `provider_event_ref` (a duplicate is a no-op) and monotonic:
+### 7.1 One logical job per frozen delivery (C4, R6)
 
 ```text
-IN_FLIGHT | OUTCOME_UNKNOWN → ACCEPTED | DELIVERED | FAILED_PERMANENT
-ACCEPTED → DELIVERED | FAILED_PERMANENT
-DELIVERED: terminal (no regression to ACCEPTED)
+idempotency_key = SHA256("comms-delivery-idem/v1\0" ‖ TG-JCS-v1({
+    "campaign": cmp_, "generation": gen_, "transport": t, "delivery_identity": id }))
 ```
 
-Anything else is refused and recorded. An update can move a campaign out of `INDETERMINATE` on re-aggregation. 5d wires the webhooks; 5b-4 owns the state machinery.
+`UNIQUE` for all time. A retry is a new **attempt** on the same job with the same key. A new generation (edit and reschedule) has new keys, so one key never describes two payloads. Discarded generations and their jobs are kept (as `discarded` / `CANCELLED`), never deleted, so a key is never reused. The platform identity enters the key only inside the hash, and the key itself appears only inside the encrypted database and the `FrozenDelivery` handed to the adapter.
 
-## 8. Scheduling (source §19, D5, C6)
+### 7.2 Result classification, retry and resolution (R5)
 
-- `schedule(cmp, at)`: runs the §5.1 freeze with the campaign → `SCHEDULED` and `scheduled_at = at`. Jobs are written `PENDING` at scheduling time, so the snapshot is durable and frozen.
-- `unschedule(cmp)`: deletes the unsent snapshot and jobs, campaign → `READY`, event `campaign.unscheduled`, in one transaction (H7).
-- `run_due(now)`: for each `SCHEDULED` campaign with `scheduled_at ≤ now` (injected clock), **first** transitions it to `SENDING` in its own transaction, then executes (§5.2 with §5.3 revalidation). No re-authorization.
-- **Time gate, pinned by test:** a `PENDING` job is runnable only if its campaign is `SENDING`. Recovery never runs a job whose campaign is still `SCHEDULED`, so a restart on Thursday cannot send Friday's campaign.
+`deliver` must classify, and 5d's adapter contract tests enforce it:
 
-## 9. Campaign event log (H4, source §20)
+- **`FAILED_TRANSIENT`** only when (a) the adapter can prove no provider-side send occurred (for example, the connection was refused before any byte was written), or (b) the provider's idempotency mechanism makes resending this exact `FrozenDelivery` under this key safe.
+- **`OUTCOME_UNKNOWN`** for everything ambiguous: timeouts, connection loss after writing, ambiguous HTTP responses, process failure mid-request, uncertain acknowledgement, and any exception.
+- **`FAILED_PERMANENT`** when the provider definitively refused.
 
-`campaign_events(event_id cev_, event_seq, campaign_ref, event_type, ts, payload)` is an **append-only operational event journal inside the encrypted `comms.db`. It is not the tamper-evident audit chain.** 5c integrates these events with the chain-backed audit system.
+`retry_failed(cmp)` returns only `FAILED_TRANSIENT` jobs below the attempt cap (default 5) to `PENDING` (lifecycle `COMPLETE → SENDING`); a job at the cap is reported `retry_exhausted`. It never touches `OUTCOME_UNKNOWN`.
 
-Events: `campaign.created`, `.modified`, `.validated`, `.scheduled`, `.unscheduled`, `.send_started`, `.transport_completed`, `.partial`, `.indeterminate`, `.completed`, `.failed`, `.cancelled`, `.retry_started`, `delivery.outcome_resolved`, `delivery.provider_update_refused`.
+`resolve_outcome(job, "sent" | "not_sent")` is an operator statement about an `OUTCOME_UNKNOWN` job, recorded as an event: `sent` → `ACCEPTED`; `not_sent` → `FAILED_TRANSIENT`, which `retry_failed` may then pick up. Nothing resolves an unknown automatically except provider evidence (§7.3).
 
-The payload may hold refs, digests, counts, transport and timestamps. Every digest is taken over opaque refs only, never over a platform identity (G16). All stored times are UTC ISO-8601 `Z`; naive datetimes are refused (G17). It must never hold a message body, phone number, raw Telegram ID, credential or private recipient data; a test plants each and proves absence from events, return values and log records.
+### 7.3 One reducer for every job-state write (R4)
 
-## 10. Recovery (source §32)
+Every write of a job's state — claim, `deliver`'s result, a provider update, an operator resolution, a cancel, a revalidation skip, a retry — goes through **one function**, `reduce(job, attempt, evidence)`, which records the evidence on its attempt and applies:
 
-`recover(lease, now)` on startup, under the `ExecutorLease` (G7):
+- **Rank:** `PENDING < IN_FLIGHT < {FAILED_TRANSIENT, OUTCOME_UNKNOWN} < ACCEPTED < DELIVERED`; `FAILED_PERMANENT`, `CANCELLED` and the skips are terminal.
+- **Success evidence** (`ACCEPTED`, `DELIVERED`) from **any** attempt of the job raises the job's state if higher (a message delivered is delivered). `DELIVERED` never regresses.
+- **Failure evidence** changes the job only if it concerns the job's **current** attempt; a late failure from an earlier attempt is recorded on that attempt and does not touch the job.
+- A synchronous `ACCEPTED` arriving after a webhook's `DELIVERED` is recorded on the attempt and ignored for the job.
+- `ACCEPTED → FAILED_PERMANENT` is allowed only on provider evidence for the current attempt.
+- Anything else is refused and recorded (`delivery.provider_update_refused`).
 
-| Found | Becomes |
-|---|---|
-| `IN_FLIGHT` | `OUTCOME_UNKNOWN` (the request may have escaped) |
-| `PENDING`, campaign `SENDING` | resumes |
-| `PENDING`, campaign `SCHEDULED` | untouched until due (§8) |
-| `ACCEPTED`, `DELIVERED` | never resent |
-| `FAILED_PERMANENT` | stays failed |
-| `FAILED_TRANSIENT` | only via `retry_failed` |
-| `OUTCOME_UNKNOWN` | only via `resolve_outcome` or a provider update |
+`record_provider_update(transport, provider_event_ref, provider_message_ref, status)` is idempotent on `(transport, provider_event_ref)` (R13): a duplicate is a no-op. It resolves the attempt from `provider_message_ref`; an update that matches no attempt is refused and recorded. 5d wires the webhooks; 5b-4 owns the reducer.
 
-**Crash semantics:**
+## 8. Scheduling (source §19, D5, C6, R6, R16)
+
+- `schedule(cmp, at)`: the §5.1 freeze with `send_at = at`, lifecycle → `SCHEDULED`. Jobs are durable and the content is frozen at scheduling time.
+- `unschedule(cmp)`: generation → `discarded`, its jobs → `CANCELLED`, lifecycle → `READY`, event `campaign.unscheduled` — one transaction. The next `schedule` creates a new generation with new keys.
+- `run_due(lease, now)`: for each `SCHEDULED` campaign whose generation's `send_at ≤ now`, **first** moves the lifecycle to `SENDING` in its own transaction, then executes (§5.2) with revalidation (§5.3). No re-authorization.
+- **Time gate:** a `PENDING` job is claimable only while its campaign's lifecycle is `SENDING` (enforced inside the claim's compare-and-set), so a restart on Thursday cannot send Friday's campaign.
+- **Time:** every stored time is a UTC instant in ISO-8601 `Z`. Naive datetimes are refused at the API; offset-bearing inputs are normalized to UTC before persistence; every comparison is between UTC instants.
+
+## 9. Campaign event log (H4, R15)
+
+`campaign_events(event_seq INTEGER PRIMARY KEY, event_id cev_, campaign_ref, event_type, ts, payload)` is an **append-only operational event journal inside the encrypted `comms.db`. It is not the tamper-evident audit chain.** 5c integrates these events with the chain-backed audit system. `event_seq` is one global, monotonically increasing sequence.
+
+**Every event is appended in the same transaction as the state change it records**: freeze + `campaign.send_started`/`campaign.scheduled`; unschedule + `campaign.unscheduled`; retry + `campaign.retry_started`; resolution + `delivery.outcome_resolved`; the lifecycle reaching `COMPLETE` + `campaign.completed` carrying the summary; summary changes after completion + `campaign.summary_changed`.
+
+Events: `campaign.created`, `.modified`, `.validated`, `.scheduled`, `.unscheduled`, `.send_started`, `.transport_completed`, `.retry_started`, `.completed`, `.summary_changed`, `.cancelled`, `delivery.outcome_resolved`, `delivery.provider_update_refused`.
+
+The payload may hold refs, digests, counts, transport and timestamps. Every digest is taken over opaque refs only, never over a platform identity. It must never hold a message body, phone number, raw Telegram ID, credential or private recipient data; a test plants each and proves absence from events, return values, exceptions and log records.
+
+## 10. Recovery (source §32, R7, R20)
+
+`recover(lease, now)` on startup, under the `ExecutorLease`, in one transaction per campaign:
+
+1. every `IN_FLIGHT` job → `OUTCOME_UNKNOWN`, and its open attempt gets `outcome = OUTCOME_UNKNOWN`, `finished_at = now`;
+2. every campaign in `SENDING` with no `PENDING` or `IN_FLIGHT` job → recompute the summary and move the lifecycle to `COMPLETE` (never stranded);
+3. `PENDING` jobs of a `SENDING` campaign resume; `SCHEDULED` campaigns wait for `run_due`.
+
+`ACCEPTED`/`DELIVERED` are never resent; `FAILED_PERMANENT` stays failed; `FAILED_TRANSIENT` only via `retry_failed`; `OUTCOME_UNKNOWN` only via `resolve_outcome` or provider evidence.
 
 | Crash point | Truth after restart |
 |---|---|
@@ -281,31 +323,42 @@ The payload may hold refs, digests, counts, transport and timestamps. Every dige
 | after claim, before `deliver` | `OUTCOME_UNKNOWN`: conservative |
 | during `deliver` | `OUTCOME_UNKNOWN` |
 | provider accepted, before the outcome commits | `OUTCOME_UNKNOWN`: never blind resend |
-| after the outcome commits | the recorded truth |
+| after the last outcome commits | summary and lifecycle already committed with it; recovery re-derives them regardless |
+| during unschedule / cancel / retry / resolution | the transaction either happened or did not |
 
-A crash-injection seam (constructor argument, dead in production, as the coordinator's `crash_at`) drives every row, and each is a test.
+A crash-injection seam (a constructor argument, dead in production, like the coordinator's `crash_at`) drives every row, and each row is a test.
 
 ## 11. Fakes and tests
 
-- **Fake transports** (`tests/`, not `src`): scriptable per endpoint — accept, deliver, transient, permanent, raise, ineligible at prepare, crash after accept — recording every call with whether a transaction was open.
-- **Tests:** the source §31 list in full; the G1/G2 SQLCipher behaviours (wrong key, keyless create, empty key, header, `cipher_version`); the G3 same-person-two-endpoints case; G5 webhook-before-return; G6 cancel/claim and double-claim races; G7 lease required; G8 window closing between schedule and run; G10 import guard; the §10 crash table; every §6 transition, allowed and refused (schedule/cancel/retry/`OUTCOME_UNKNOWN` combinations exhaustively over the state product); audience DAG property tests (random DAGs resolve; any added back-edge is refused); snapshot-digest stability; execution set ⊆ frozen set under randomized revalidation; provider-update monotonicity and duplicate-webhook idempotence; the no-I/O-in-transaction rule; SQLCipher H5; privacy canaries; the prefix registry.
-- **Exhaustive state-product test (G11):** every multiset of job states for campaigns of ≤ 3 jobs × every operation (claim, outcome, provider update, cancel, retry, resolve, recover) — asserting the transition function's monotonicity, the aggregation table, and that `OUTCOME_UNKNOWN` never yields `FAILED` or triggers a send. Snapshot-digest stability under a fixed clock (G12).
+- **Fake transports** (in `tests/`, not `src`): scriptable per delivery identity — accept, deliver, transient-proven-unsent, permanent, raise, ineligible at prepare, window-closes, crash after accept, late webhook, duplicate webhook — recording every call and whether a transaction was open.
+- **Tests:** the source §31 list in full; R1/R2/R12 SQLCipher behaviours; R3 same-person-two-endpoints and two-WhatsApp-points; R4 webhook-before-return and late-attempt events; R5 classification; R6 edit-and-reschedule gives new keys; R7 the stranded-`SENDING` crash; R8 zero eligible endpoints; R9 membership removed after scheduling; R13 cross-provider event IDs; R14 digest stability and sensitivity; R15 journal atomicity under crash; R16 offsets and naive datetimes; R20 claim/cancel and double-claim races, lease required; R21 import guard; schema constraints (each `CHECK`/`UNIQUE`/`RESTRICT`/immutability trigger violated once).
+- **Bounded model (required, R17):** an exhaustive exploration over campaigns of ≤ 3 jobs and ≤ 2 attempts per job, over every operation (freeze, claim, deliver results, provider updates including late and duplicate, cancel, retry, resolve, unschedule, reschedule, crash, recover, run_due with the clock before and after `send_at`), proving on every reachable state:
+  - no job's state ever falls below `DELIVERED` once there;
+  - `OUTCOME_UNKNOWN` is never retried or resent automatically;
+  - no job ever gains a second job for the same `(generation, transport, delivery_identity)`; no idempotency key ever names two payloads;
+  - no scheduled campaign executes before `send_at`;
+  - no endpoint appears after the freeze (execution set ⊆ frozen set);
+  - no campaign is `SENDING` with only terminal jobs after `recover`;
+  - an empty generation never exists; the summary is never `SENT` unless every job succeeded;
+  - unknown never yields `FAILED`.
+
+  Each property is mutation-tested (the guard it protects is removed and the exploration must find a violation), as in 5b-3's formal model.
+- **Freeze size bound (R22):** a freeze of 5,000 endpoints completes inside a measured budget, recorded in the evidence; the plan fixes the number from a measurement, not a guess.
 
 ## 12. Out of scope
 
-The CLI and admin commands, AI drafting tools and `.claude` rules (5e); real adapters and webhooks (5d); chain-backed audit, rotation and retention (5c); media byte storage (descriptors only); a daemon scheduler loop (5b-4 provides `run_due`).
+The CLI and admin commands, AI drafting tools and `.claude` rules (5e); real adapters, webhooks and adapter contract tests for §7.2 classification (5d); chain-backed audit, rotation and retention (5c); media byte storage (descriptors only); a daemon scheduler loop (5b-4 provides `run_due`).
 
 ## 13. Sequencing (one plan)
 
-1. Move `canonical` and `opaque` into core (single copy; AST + bytes); replace the empty-core guard; prefix registry.
-2. `comms.db`: SQLCipher open, migrations, H5 tests.
-3. Domain model and audience DAG.
+1. Move `canonical` and `opaque` into core; replace the empty-core guard; prefix registry; import guard.
+2. `comms.db`: SQLCipher open, migrations, schema constraints, R1/R2/R12 tests.
+3. Domain model, delivery identities, audience DAG.
 4. Adapter interface and fake transports.
-5. Freeze (send and schedule) with the no-I/O rule.
-6. Execute, isolation and revalidation.
-7. Aggregation, cancel, retry, resolution, provider updates.
-8. Scheduling and recovery; the crash table.
+5. Freeze (send and schedule), origin paths, snapshot digest, the no-I/O rule.
+6. Execute: claim, revalidation, isolation, the reducer.
+7. Summary, cancel, retry, resolution, provider updates.
+8. Scheduling, generations, recovery, the crash table.
 9. Event log and privacy canaries.
-10. Evidence: §31 checklist mapped to tests; full gate.
-
-Hammer hardest in the gauntlet: every crash point between `PENDING → IN_FLIGHT → external call → durable outcome`, and every transition combining schedule, cancel, retry and `OUTCOME_UNKNOWN`.
+10. Bounded model with mutation tests; freeze size bound.
+11. Evidence: the source §31 checklist mapped to tests; full gate.
