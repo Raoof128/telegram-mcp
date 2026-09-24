@@ -336,7 +336,7 @@ def reduce(
         append_event(conn, "delivery.provider_update_refused", cmp, payload, now=now)
     if t.disposition != "applied":
         return t
-    if state in ACTIVE and t.new_state not in ACTIVE:
+    if _lifecycle == "SENDING" and state in ACTIVE and t.new_state not in ACTIVE:
         still = conn.execute(
             "SELECT 1 FROM delivery_jobs WHERE generation_id = ? AND transport = ?"
             " AND state IN ('PENDING','IN_FLIGHT') LIMIT 1",

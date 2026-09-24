@@ -17,7 +17,14 @@ CORE = SRC / "core"
 DOMAINS = CORE / "domains.py"
 
 PINNED = Counter({"b'comms-call-binding/v1\\x00'": 1})  # 5b-3, disclosure/binding
-ADDED_IN_5B4: Counter[str] = Counter()
+ADDED_IN_5B4 = Counter(  # comms/core/domains.py
+    {
+        "b'comms-delivery-idem/v1\\x00'": 1,
+        "b'comms-campaign-snapshot/v1\\x00'": 1,
+        "b'comms-campaign-target/v1\\x00'": 1,
+        "b'comms-campaign-recipients/v1\\x00'": 1,
+    }
+)
 
 
 def _constants(path: Path) -> list[str]:
