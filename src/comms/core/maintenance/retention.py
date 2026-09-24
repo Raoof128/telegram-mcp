@@ -10,6 +10,9 @@ The legacy phases (Task B17), in the order the legacy foreign keys force (N8):
    audit rows are gone, so the foreign keys make this mechanical);
 4. ``message_refs`` older than ``message_ref_days`` that no live cursor names.
 
+Then the comms chain prefix (Task B18): events strictly before the latest verified comms
+checkpoint at or before ``audit_events_days``.
+
 Core never reads the Telegram schema: the transport supplies a ``LegacyRetention``.
 Retention refuses while the audit integrity latch is set.
 """
@@ -22,10 +25,13 @@ from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 from comms.core import timeutil
+from comms.core.audit.chain import COMMS, append_guard
 from comms.core.audit.integrity import require_not_degraded
 from comms.core.audit.retention_root import choose_root
 from comms.core.audit.verify_all import LegacyVerify
 from comms.core.audit.writer import AuditWriter
+from comms.core.keys.slots import registry_public_for
+from comms.core.storage.db import write_tx
 
 __all__ = ["LegacyRetention", "RetentionPolicy", "RetentionReport", "run_retention"]
 
@@ -87,8 +93,37 @@ def run_retention(
     phases["legacy_message_refs"] = legacy.purge_message_refs(
         before(policy.message_ref_days), now=now
     )
+    comms_root, phases["comms_chain"] = _truncate_comms(
+        comms_conn, before(policy.audit_events_days)
+    )
     return RetentionReport(
         phases=phases,
-        roots={"legacy": root["checkpoint_ref"] if root is not None else None},
+        roots={
+            "legacy": root["checkpoint_ref"] if root is not None else None,
+            "comms": comms_root,
+        },
         outcome="ok",
     )
+
+
+def _truncate_comms(conn: Any, cutoff: datetime) -> tuple[str | None, int]:
+    """Phase 4 (B18): delete comms events strictly before the latest verified root.
+
+    Under the COMMS append guard, so no append interleaves; the ``truncating`` flag is set
+    only inside this transaction, and a trigger refuses every other delete. Checkpoints and
+    the lineage record are never deleted.
+    """
+    with append_guard(COMMS):
+        root = choose_root(
+            conn, COMMS, cutoff=timeutil.iso(cutoff), public_keys=registry_public_for(conn)
+        )
+        if root is None:
+            return None, 0
+        with write_tx(conn):
+            conn.execute("UPDATE maintenance_flags SET value = 1 WHERE name = 'truncating'")
+            deleted = conn.execute(
+                "DELETE FROM audit_events WHERE chain_epoch < ? OR (chain_epoch = ? AND chain_seq < ?)",
+                (root["chain_epoch"], root["chain_epoch"], root["chain_seq"]),
+            ).rowcount
+            conn.execute("UPDATE maintenance_flags SET value = 0 WHERE name = 'truncating'")
+    return str(root["checkpoint_ref"]), int(deleted)

@@ -170,6 +170,7 @@ def test_counts_per_phase_reported(env):
         "legacy_chain",
         "legacy_receipts",
         "legacy_message_refs",
+        "comms_chain",  # B18
     }
     assert report.phases["legacy_exposure"] == 1
     assert report.outcome == "ok"

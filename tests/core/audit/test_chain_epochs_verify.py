@@ -33,6 +33,7 @@ def public_for(key_id):
 def _unguard(conn):
     for name in (
         "audit_events_append_only_d",
+        "audit_events_delete_only_behind_root",  # schema v3 (B18)
         "audit_events_append_only_u",
         "audit_checkpoints_append_only_d",
         "audit_checkpoints_append_only_u",

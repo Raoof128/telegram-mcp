@@ -59,6 +59,7 @@ class VerifyReport:
     comms: str  # "ok" | "fail"
     ok: bool
     problems: tuple[str, ...]
+    comms_root: str | None = None  # the verified checkpoint the comms chain is truncated at
 
 
 def _rows(
@@ -67,7 +68,7 @@ def _rows(
     return [dict(zip(names, row, strict=True)) for row in conn.execute(sql, args).fetchall()]
 
 
-def _legacy_root(conn: Any, profile: ChainProfile) -> Mapping[str, Any] | None:
+def _root_of(conn: Any, profile: ChainProfile) -> Mapping[str, Any] | None:
     """The checkpoint signing the first retained event, when the chain no longer starts at 1."""
     first = conn.execute(
         f"SELECT chain_epoch, chain_seq FROM {profile.events_table}"
@@ -75,7 +76,7 @@ def _legacy_root(conn: Any, profile: ChainProfile) -> Mapping[str, Any] | None:
     ).fetchone()
     if first is None or tuple(first) == (1, 1):
         return None
-    names = ("chain_epoch", "chain_seq", "last_event_id", "last_event_mac")
+    names = ("checkpoint_ref", "chain_epoch", "chain_seq", "last_event_id", "last_event_mac")
     roots = _rows(
         conn,
         f"SELECT {', '.join(names)} FROM {profile.checkpoints_table}"
@@ -83,16 +84,16 @@ def _legacy_root(conn: Any, profile: ChainProfile) -> Mapping[str, Any] | None:
         names,
         (first[0], first[1]),
     )
-    if len(roots) != 1:
+    if not roots:
         raise ChainError("a truncated chain has no signed root")
-    return roots[0]
+    return roots[-1]  # verify_chain checks the signature of every checkpoint at that position
 
 
 def _legacy(conn: Any, lv: LegacyVerify, problems: list[str]) -> cutover.LegacySeal | None:
     profile = lv.profile
     try:
         verify_checkpoints(conn, profile, lv.public_for)
-        verify_chain(conn, profile, lv.key_for_epoch, root=_legacy_root(conn, profile))
+        verify_chain(conn, profile, lv.key_for_epoch, root=_root_of(conn, profile))
     except ChainError:
         problems.append("LEGACY_CHAIN_INVALID")
     finals = _rows(
@@ -153,6 +154,15 @@ def _lineage(
         "SELECT chain_epoch, chain_seq, kind, subject_ref, subject_digest, payload"
         " FROM audit_events ORDER BY chain_epoch, chain_seq LIMIT 1"
     ).fetchall()
+    if firsts and tuple(firsts[0][:2]) != (cutover.COMMS_FIRST_EPOCH, 1):
+        # Truncated behind a root (B18): the genesis event is gone; the lineage above still
+        # binds the legacy seal, and the chain check verifies the root's signature.
+        try:
+            _root_of(conn, COMMS)
+        except ChainError:
+            problems.append("GENESIS_MISMATCH")
+            return "fail"
+        return "ok"
     key_id = ids.hmac_key_id(keys.comms_key_for_epoch(cutover.COMMS_FIRST_EPOCH))
     try:
         payload = json.loads(firsts[0][5]) if firsts else None
@@ -175,16 +185,21 @@ def _lineage(
     return "ok"
 
 
-def _comms(conn: Any, keys: VerifyKeys, problems: list[str]) -> str:
+def _comms(conn: Any, keys: VerifyKeys, problems: list[str]) -> tuple[str, str | None]:
     before = len(problems)
+    root: Mapping[str, Any] | None = None
     try:
-        verify_chain(conn, COMMS, keys.comms_key_for_epoch, public_for=keys.comms_public_for)
+        root = _root_of(conn, COMMS)
+        verify_chain(
+            conn, COMMS, keys.comms_key_for_epoch, root=root, public_for=keys.comms_public_for
+        )
     except ChainError:
         problems.append("COMMS_CHAIN_INVALID")
+    root_ref = str(root["checkpoint_ref"]) if root is not None else None
     current = head(conn, COMMS)
     if current is None:
         problems.append("COMMS_CHAIN_EMPTY")
-        return "fail"
+        return "fail", root_ref
     try:
         anchored = read_anchor(
             COMMS_ANCHOR, keys.comms_anchor_path, keys.comms_key_for_epoch(current["chain_epoch"])
@@ -194,7 +209,7 @@ def _comms(conn: Any, keys: VerifyKeys, problems: list[str]) -> str:
     fields = ("chain_epoch", "chain_seq", "event_id", "event_mac")
     if anchored is None or any(anchored[f] != current[f] for f in fields):
         problems.append("COMMS_ANCHOR_MISMATCH")
-    return "ok" if len(problems) == before else "fail"
+    return ("ok" if len(problems) == before else "fail"), root_ref
 
 
 def verify_all(comms_conn: Any, legacy_conn: Any, keys: VerifyKeys) -> VerifyReport:
@@ -202,7 +217,12 @@ def verify_all(comms_conn: Any, legacy_conn: Any, keys: VerifyKeys) -> VerifyRep
     seal = _legacy(legacy_conn, keys.legacy, problems)
     legacy = "fail" if problems else "ok"
     lineage = _lineage(comms_conn, seal, keys, problems)
-    comms = _comms(comms_conn, keys, problems)
+    comms, comms_root = _comms(comms_conn, keys, problems)
     return VerifyReport(
-        legacy=legacy, lineage=lineage, comms=comms, ok=not problems, problems=tuple(problems)
+        legacy=legacy,
+        lineage=lineage,
+        comms=comms,
+        ok=not problems,
+        problems=tuple(problems),
+        comms_root=comms_root,
     )

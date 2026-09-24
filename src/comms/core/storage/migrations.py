@@ -264,6 +264,12 @@ CREATE TRIGGER verification_keys_trust_one_way BEFORE UPDATE OF trust_state ON v
      < (CASE OLD.trust_state WHEN 'ACTIVE' THEN 0 WHEN 'TRUSTED_RETIRED' THEN 1
           WHEN 'VERIFICATION_ONLY' THEN 2 ELSE 3 END)
   BEGIN SELECT RAISE(ABORT, 'signer trust is one-way'); END;
+CREATE TABLE maintenance_flags (name TEXT PRIMARY KEY, value INTEGER NOT NULL CHECK (value IN (0, 1)));
+INSERT INTO maintenance_flags (name, value) VALUES ('truncating', 0);
+DROP TRIGGER audit_events_append_only_d;
+CREATE TRIGGER audit_events_delete_only_behind_root BEFORE DELETE ON audit_events
+  WHEN (SELECT value FROM maintenance_flags WHERE name = 'truncating') IS NOT 1
+  BEGIN SELECT RAISE(ABORT, 'audit is append-only: deletes only by truncation behind a root'); END;
 """
 SCHEMA_V3: tuple[str, ...] = _statements(_SCHEMA_V3_SQL)
 
