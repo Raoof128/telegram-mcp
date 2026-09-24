@@ -75,6 +75,20 @@ def clean_orphans(conn: Any, store: KeySlotStore, purpose: str) -> list[int]:
     return orphans
 
 
+# What a cursor-key rotation invalidates (design §B.4), children first. The tables arrive
+# with the context engine (Task D9); before then there is nothing to invalidate.
+_INVALIDATED_BY_CURSOR_ROTATION = ("cursors", "ctx_handles")
+
+
+def _invalidate_context(conn: Any) -> None:
+    present = {
+        row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    for table in _INVALIDATED_BY_CURSOR_ROTATION:
+        if table in present:
+            conn.execute(f"DELETE FROM {table}")
+
+
 def _open_epoch(
     conn: Any, store: KeySlotStore, purpose: str, material: bytes
 ) -> Callable[[AuditTx, int, int], bool]:
@@ -150,6 +164,8 @@ def rotate(
                     (stamp, old[1]),
                 )
         key_id = register_version(conn, purpose, version, material, stamp)
+        if spec.rotation == "invalidate":
+            _invalidate_context(conn)  # every cursor and ctx_ handle dies with the old key
         if consequence is None or not consequence(tx, old_version, version):
             tx.append(
                 "admin.key_rotation",
