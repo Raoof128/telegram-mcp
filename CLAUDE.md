@@ -1,7 +1,9 @@
 # Telegram MCP gateway — working agreement
 
-Read-only Telegram MCP gateway for one owner, with project isolation, human
-consent and accountable disclosure. The frozen product specification is
+Read-only Telegram MCP gateway for one owner, with project isolation and
+accountable disclosure. Since comms spec v0.2 (`docs/comms-spec-v0.2.md`) an
+owner command is the authorization: there is no consent ceremony and no Touch
+ID anywhere. The frozen product specification is
 `telegram-mcp-v0.1.10-final-engineering-spec.md`
 (SHA-256 `36b67f488415f2ab1c44b8d906de7f192fbe0dc562a2aeac76938b24c4a61b0a`);
 it controls wherever anything else is silent.
@@ -43,6 +45,12 @@ on-host identifier is unchanged. Evidence: `docs/verification/comms-5b1.md`.
 `transports/whatsapp/` with full history (tree-hash proven; `docs/provenance/whatsvault.md`),
 importable as `whatsvault` in the one Python 3.12 environment. Its suite runs under its own
 pytest config (command above). Nothing in the subtree is edited until design §3.4 seams begin.
+**Comms 5b-3** (branch `comms-5b3`): owner-direct authority. The consent
+subsystem is deleted; receipts are v2 `owner_direct` (v1 kept byte-identical,
+verified by `proof_version`); admin authority is peer credentials; retired
+identifiers are tombstoned. Evidence: `docs/verification/comms-5b3.md`. The
+history above describes each phase as it shipped; where it mentions consent,
+prompts or Touch ID, v0.2 has since retired them.
 Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 
 ## Non-negotiables
@@ -70,8 +78,8 @@ Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 1519 passed, 10 skipped
-uv run python scripts/e2e_smoke.py                # 60 checks, end to end
+uv run pytest -q                                  # 1427 passed, 4 skipped
+uv run python scripts/e2e_smoke.py                # 52 checks, end to end
 uv run pytest tests/formal -q -s                  # 544 states, 22 assertions
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
