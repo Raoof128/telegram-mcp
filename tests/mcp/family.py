@@ -34,7 +34,8 @@ def annotations(spec, capability=None):
     assert spec.requires_request_id
     if capability is not None:
         classes = {s.retry_class for (c, _a), s in SEMANTICS.items() if c is capability}
-        assert spec.destructive == ("DESTRUCTIVE_NONIDEMPOTENT" in classes)
+        if "DESTRUCTIVE_NONIDEMPOTENT" in classes:  # at least; an overwrite may add it
+            assert spec.destructive
         assert spec.idempotent == (classes == {"SET_STATE"})
         assert spec.open_world
 

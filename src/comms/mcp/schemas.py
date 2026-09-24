@@ -19,6 +19,7 @@ from comms.core.refs import CORE_PREFIXES
 from comms.mcp.spec import ToolSpec
 
 __all__ = [
+    "ACTOR",
     "ANY_OBJECT",
     "BOOL",
     "READ_FAILURES",
@@ -32,6 +33,7 @@ __all__ = [
     "ref",
     "string",
     "write",
+    "write_result",
 ]
 
 BOOL: Mapping[str, Any] = {"type": "boolean"}
@@ -103,6 +105,24 @@ def obj(
 
 
 REQUEST_ID = ref("request")
+ACTORS = ("telegram_bot", "telegram_user", "whatsapp_cloud")
+ACTOR: Mapping[str, Any] = enum(ACTORS)
+OUTCOMES = ("SUCCEEDED", "FAILED", "OUTCOME_UNKNOWN", "IN_FLIGHT", "INVITE_REQUIRED")
+
+
+def write_result(**extra: Mapping[str, Any]) -> dict[str, Any]:
+    """A provider write's structured truth (P §73): what ran, as whom, and how it ended."""
+    fields = {
+        "group": ref("group", "recipient"),
+        "operation": string(1, 64),
+        "result": enum(OUTCOMES),
+        "code": nullable(string(1, 64)),
+        "actor": nullable(ACTOR),
+        "op_ref": nullable(ref("operation")),
+        "replayed": BOOL,
+        **extra,
+    }
+    return obj(fields, list(fields))
 
 
 def read(
@@ -155,9 +175,12 @@ def write(
     failures: Sequence[str] = (),
 ) -> ToolSpec:
     """A write. With ``capability`` it is a provider write whose annotations come from
-    ``SEMANTICS``; without, a local write whose annotations are given."""
+    ``SEMANTICS``; without, a local write whose annotations are given. ``destructive=True``
+    also marks a provider write that overwrites what cannot be restored automatically (an
+    edit, a title, a restriction), even when retrying it is safe (A-list, test_ai_boundary)."""
     if capability is not None:
-        destructive, idempotent = _semantics(capability)
+        semantic_destructive, idempotent = _semantics(capability)
+        destructive = destructive or semantic_destructive
         failures = (*WRITE_FAILURES, *PROVIDER_FAILURES, *failures)
     else:
         failures = (*WRITE_FAILURES, *failures)

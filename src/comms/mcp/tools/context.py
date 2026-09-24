@@ -22,7 +22,15 @@ from comms.mcp.schemas import (
 )
 from comms.mcp.spec import ToolSpec
 
-__all__ = ["CONTEXT_TOOLS", "CURSOR", "ITEM", "PAGE", "PROVENANCE"]
+__all__ = [
+    "CONTEXT_FAILURES",
+    "CONTEXT_TOOLS",
+    "CURSOR",
+    "ITEM",
+    "PAGE",
+    "PROVENANCE",
+    "SEARCH_RESULT",
+]
 
 PROVENANCE = ("telegram_live", "telegram_local", "whatsapp_webhook_archive", "campaign_store")
 INCLUDES = (
@@ -61,7 +69,7 @@ PAGE = obj(
     },
     ["group_ref", "source", "items", "next_cursor"],
 )
-_FAILURES = (
+CONTEXT_FAILURES = (
     *READ_FAILURES,
     "CAPABILITY_UNAVAILABLE",
     "NOT_AUTHORIZED",
@@ -72,6 +80,15 @@ _FAILURES = (
 )
 _GROUP = ref("group")
 _MESSAGE = ref("message")
+SEARCH_RESULT = obj(
+    {
+        "items": array(ITEM, high=50),
+        "stopped_by": nullable(enum(_STOPS)),
+        "requests": integer(0),
+        "groups": integer(0),
+    },
+    ["items", "stopped_by", "requests", "groups"],
+)
 
 CONTEXT_TOOLS: tuple[ToolSpec, ...] = (
     read(
@@ -94,7 +111,7 @@ CONTEXT_TOOLS: tuple[ToolSpec, ...] = (
             },
             ["group_ref"],
         ),
-        failures=_FAILURES,
+        failures=CONTEXT_FAILURES,
         open_world=True,
     ),
     read(
@@ -106,7 +123,7 @@ CONTEXT_TOOLS: tuple[ToolSpec, ...] = (
         {"group": SUBJECT, "limit": integer(1, 100), "cursor": CURSOR},
         ["group"],
         PAGE,
-        failures=_FAILURES,
+        failures=CONTEXT_FAILURES,
         open_world=True,
     ),
     read(
@@ -122,7 +139,7 @@ CONTEXT_TOOLS: tuple[ToolSpec, ...] = (
         },
         ["group", "message"],
         PAGE,
-        failures=_FAILURES,
+        failures=CONTEXT_FAILURES,
         open_world=True,
     ),
     read(
@@ -133,7 +150,7 @@ CONTEXT_TOOLS: tuple[ToolSpec, ...] = (
         {"group": _GROUP, "message": _MESSAGE, "limit": integer(1, 100)},
         ["group", "message"],
         PAGE,
-        failures=_FAILURES,
+        failures=CONTEXT_FAILURES,
         open_world=True,
     ),
     read(
@@ -149,16 +166,8 @@ CONTEXT_TOOLS: tuple[ToolSpec, ...] = (
             "across_accounts": BOOL,
         },
         ["groups", "query"],
-        obj(
-            {
-                "items": array(ITEM, high=50),
-                "stopped_by": nullable(enum(_STOPS)),
-                "requests": integer(0),
-                "groups": integer(0),
-            },
-            ["items", "stopped_by", "requests", "groups"],
-        ),
-        failures=_FAILURES,
+        SEARCH_RESULT,
+        failures=CONTEXT_FAILURES,
         open_world=True,
     ),
     read(
@@ -185,7 +194,7 @@ CONTEXT_TOOLS: tuple[ToolSpec, ...] = (
             },
             ["group_ref", "sources"],
         ),
-        failures=_FAILURES,
+        failures=CONTEXT_FAILURES,
     ),
     read(
         "comms_context_page",
@@ -196,7 +205,7 @@ CONTEXT_TOOLS: tuple[ToolSpec, ...] = (
         {"cursor": CURSOR},
         ["cursor"],
         PAGE,
-        failures=_FAILURES,
+        failures=CONTEXT_FAILURES,
         open_world=True,
     ),
 )
