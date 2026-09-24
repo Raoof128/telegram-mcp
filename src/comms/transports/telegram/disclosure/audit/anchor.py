@@ -21,7 +21,7 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.canonical import jcs_dumps
 from comms.transports.telegram.disclosure.audit.chain import ChainError, head, verify_chain
 
 __all__ = [

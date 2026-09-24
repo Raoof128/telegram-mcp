@@ -29,7 +29,6 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
-import json
 import re
 import secrets
 import time
@@ -43,6 +42,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from comms.transports.telegram.canonical import jcs_dumps
 from comms.transports.telegram.opaque import mint_opaque_ref, validate_ref_format
 
 __all__ = [
@@ -81,47 +81,6 @@ SYNTHETIC_EXPOSURE_SNAPSHOT: dict[str, Any] = {
 
 _HEX64_RE = re.compile(r"[0-9a-f]{64}\Z")
 _NONCE_BYTES = 16
-
-
-def _walk_canonicalizable(obj: Any) -> None:
-    """Pre-walk: reject float, lone surrogates, non-ASCII/non-string keys."""
-    if obj is None or isinstance(obj, bool):
-        return
-    if isinstance(obj, int):
-        return
-    if isinstance(obj, float):
-        raise ValueError("non-canonical float")  # noqa: TRY004 -- frozen TG-JCS-v1 contract mandates ValueError
-    if isinstance(obj, str):
-        for char in obj:
-            code = ord(char)
-            if 0xD800 <= code <= 0xDFFF:
-                raise ValueError("lone surrogate")
-        try:
-            obj.encode("utf-8")
-        except UnicodeEncodeError as exc:
-            raise ValueError("lone surrogate") from exc
-        return
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            if not isinstance(key, str):
-                raise ValueError("non-string key")  # noqa: TRY004 -- frozen TG-JCS-v1 contract mandates ValueError
-            if not key.isascii():
-                raise ValueError("non-ASCII key")
-            _walk_canonicalizable(value)
-        return
-    if isinstance(obj, list):
-        for item in obj:
-            _walk_canonicalizable(item)
-        return
-    raise ValueError("non-canonical value")
-
-
-def jcs_dumps(obj: Any) -> bytes:
-    """Dump exact TG-JCS-v1 bytes (sorted keys, compact, literal UTF-8)."""
-    _walk_canonicalizable(obj)
-    return json.dumps(
-        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
-    ).encode("utf-8")
 
 
 def display_digest(payload: Any) -> str:

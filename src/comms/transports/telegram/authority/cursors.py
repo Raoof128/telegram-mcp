@@ -58,7 +58,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from comms.transports.telegram.authority.refs import validate_ref_format
-from comms.transports.telegram.consent.challenge import jcs_dumps  # single JCS implementation
+from comms.transports.telegram.canonical import jcs_dumps  # single JCS implementation
 from comms.transports.telegram.opaque import mint_opaque_ref
 
 if TYPE_CHECKING:

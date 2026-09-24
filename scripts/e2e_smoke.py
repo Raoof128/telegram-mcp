@@ -38,7 +38,7 @@ from typing import Any
 REPO = Path(__file__).resolve().parent.parent
 CLI = Path(sys.executable).parent / "telegram-mcp"  # the installed console script
 AGENT_BIN = REPO / "build/consent/TelegramMCPConsent.app/Contents/MacOS/telegram-mcp-consent"
-VECTORS = REPO / "tests/fixtures/consent/jcs_vectors.json"
+VECTORS = REPO / "tests/fixtures/canonical/jcs_vectors.json"
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 

@@ -50,7 +50,7 @@ import hashlib
 import json
 import subprocess
 
-VECTORS = "tests/fixtures/consent/jcs_vectors.json"
+VECTORS = "tests/fixtures/canonical/jcs_vectors.json"
 AGENT_BIN = "build/consent/TelegramMCPConsent.app/Contents/MacOS/telegram-mcp-consent"
 
 

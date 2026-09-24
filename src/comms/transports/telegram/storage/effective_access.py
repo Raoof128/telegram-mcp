@@ -14,7 +14,7 @@ from comms.transports.telegram.authority.policy import (
     evaluate_with_trace,
 )
 from comms.transports.telegram.authority.staging import Binding
-from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.canonical import jcs_dumps
 from comms.transports.telegram.storage.authority_view import load_security, load_view, owner_account
 
 __all__ = ["base_digest", "current_binding", "explain", "known_refs", "snapshot"]

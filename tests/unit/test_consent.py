@@ -424,7 +424,7 @@ async def test_error_codes_map_to_dispatch():
 
 # --- Step 7: frozen JCS vectors (single source of truth for Plan 2b) ---
 
-VECTORS_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "consent" / "jcs_vectors.json"
+VECTORS_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "canonical" / "jcs_vectors.json"
 
 _FIXED_RUNTIME = b"\x00" * 16
 _FIXED_EXPIRY_BASE = 1_800_000_000

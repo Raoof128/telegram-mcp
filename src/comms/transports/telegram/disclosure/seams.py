@@ -42,8 +42,9 @@ from comms.transports.telegram.authority.policy import (
     evaluate,
     readable_members,
 )
+from comms.transports.telegram.canonical import jcs_dumps
 from comms.transports.telegram.consent.broker import ConsentBroker, ConsentError, ConsumedChallenge
-from comms.transports.telegram.consent.challenge import display_digest, jcs_dumps
+from comms.transports.telegram.consent.challenge import display_digest
 from comms.transports.telegram.consent.display import build_display
 from comms.transports.telegram.consent.prompter import PromptDenied, Prompter, PromptUnavailable
 from comms.transports.telegram.disclosure.bounds import NAME_MAX, clamp, worst_case
