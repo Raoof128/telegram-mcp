@@ -23,13 +23,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 from telethon import TelegramClient, errors, utils
 from telethon import password as srp
 from telethon.tl import functions, types
 
 from comms.core.providers.capability import Capability
+from comms.core.providers.protocols import ProviderResult
+from comms.transports.telegram.admin_profiles import MTPROTO_RIGHT, PROFILES
 from comms.transports.telegram.telegram.deadline import (
     Deadline,
     DeadlineExceeded,
@@ -139,7 +141,7 @@ ADMIN_RPCS: Mapping[Capability, frozenset[str]] = MappingProxyType(
             {"messages.AddChatUserRequest", "channels.InviteToChannelRequest"}
         ),
         Capability.MEMBER_REMOVE: frozenset({"messages.DeleteChatUserRequest", *_BAN}),
-        Capability.MEMBER_BAN: _BAN,
+        Capability.MEMBER_BAN: frozenset({"messages.DeleteChatUserRequest", *_BAN}),  # basic: kick
         Capability.MEMBER_UNBAN: _BAN,
         Capability.MEMBER_RESTRICT: _BAN,
         Capability.ADMIN_PROMOTE: _ADMIN_RIGHTS,
@@ -322,6 +324,139 @@ def _chat_rights(result: Any, chat_id: int) -> SelfRights:
     if chat.admin_rights is not None:
         return SelfRights("chat", "admin", _flags(chat.admin_rights))
     return SelfRights("chat", "member", frozenset(), _flags(chat.default_banned_rights))
+
+
+class _PeerMissing(Exception):
+    def __init__(self, code: str) -> None:
+        self.code = code
+
+
+# Named MTProto refusals of administrative RPCs (C18/C19): (outcome, code). "SUCCEEDED" is a
+# set-state call whose exact state already holds.
+_AdminOutcome = Literal["SUCCEEDED", "FAILED"]
+_ADMIN_OUTCOMES: dict[type[BaseException], tuple[_AdminOutcome, str | None]] = {
+    errors.ChatNotModifiedError: ("SUCCEEDED", None),
+    errors.UserAlreadyParticipantError: ("SUCCEEDED", None),
+    errors.ChatAdminRequiredError: ("FAILED", "NOT_AUTHORIZED"),
+    errors.RightForbiddenError: ("FAILED", "NOT_AUTHORIZED"),
+    errors.UserAdminInvalidError: ("FAILED", "NOT_AUTHORIZED"),
+    errors.ChatWriteForbiddenError: ("FAILED", "NOT_AUTHORIZED"),
+    errors.AdminsTooMuchError: ("FAILED", "NOT_AUTHORIZED"),
+    errors.UserKickedError: ("FAILED", "NOT_AUTHORIZED"),
+    errors.UserNotParticipantError: ("FAILED", "TARGET_NOT_FOUND"),
+    errors.UserIdInvalidError: ("FAILED", "TARGET_NOT_FOUND"),
+    errors.ParticipantIdInvalidError: ("FAILED", "TARGET_NOT_FOUND"),
+    errors.HideRequesterMissingError: ("FAILED", "TARGET_NOT_FOUND"),
+    errors.UserPrivacyRestrictedError: ("FAILED", "INVITE_REQUIRED"),
+    errors.UserNotMutualContactError: ("FAILED", "INVITE_REQUIRED"),
+    errors.UserChannelsTooMuchError: ("FAILED", "INVITE_REQUIRED"),
+    errors.UsersTooMuchError: ("FAILED", "UNAVAILABLE"),
+}
+# P §26 permission names → the MTProto ChatBannedRights flags they lift (restrict is exact:
+# a permission not named is allowed).
+_BANNED_FOR_PERMISSION: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "can_send_messages": ("send_messages", "send_plain"),
+        "can_send_audios": ("send_audios",),
+        "can_send_documents": ("send_docs",),
+        "can_send_photos": ("send_photos",),
+        "can_send_videos": ("send_videos",),
+        "can_send_video_notes": ("send_roundvideos",),
+        "can_send_voice_notes": ("send_voices",),
+        "can_send_polls": ("send_polls",),
+        "can_send_other_messages": ("send_stickers", "send_gifs", "send_games", "send_inline"),
+        "can_add_web_page_previews": ("embed_links",),
+        "can_change_info": ("change_info",),
+        "can_invite_users": ("invite_users",),
+        "can_pin_messages": ("pin_messages",),
+        "can_manage_topics": ("manage_topics",),
+    }
+)
+
+
+def _until(spec: Mapping[str, Any]) -> datetime | None:
+    until = spec.get("until_date")
+    return datetime.fromtimestamp(until, UTC) if until else None
+
+
+def _add(session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]) -> Any:
+    if peer_type == "channel":
+        channel = session._admin_channel(peer_id)
+        return functions.channels.InviteToChannelRequest(
+            channel, [session._admin_user(spec["user_id"])]
+        )
+    return functions.messages.AddChatUserRequest(
+        peer_id, session._admin_user(spec["user_id"]), fwd_limit=0
+    )
+
+
+def _ban(session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]) -> Any:
+    if peer_type == "channel":
+        channel = session._admin_channel(peer_id)
+        user = session._admin_user(spec["user_id"])
+        rights = types.ChatBannedRights(until_date=_until(spec), view_messages=True)
+        return functions.channels.EditBannedRequest(channel, user, rights)
+    return functions.messages.DeleteChatUserRequest(peer_id, session._admin_user(spec["user_id"]))
+
+
+def _unban(session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]) -> Any:
+    if peer_type != "channel":
+        session._admin_user(spec["user_id"])
+        return ProviderResult(
+            "SUCCEEDED", None, detail={"no_op": True}
+        )  # basic groups: no ban list
+    channel = session._admin_channel(peer_id)
+    user = session._admin_user(spec["user_id"])
+    return functions.channels.EditBannedRequest(
+        channel, user, types.ChatBannedRights(until_date=None)
+    )
+
+
+def _restrict(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    if peer_type != "channel":
+        return ProviderResult("FAILED", "UNAVAILABLE")  # basic groups have no per-member rights
+    channel = session._admin_channel(peer_id)
+    user = session._admin_user(spec["user_id"])
+    banned = {
+        flag: True
+        for permission, allowed in spec["permissions"].items()
+        if not allowed
+        for flag in _BANNED_FOR_PERMISSION[permission]
+    }
+    rights = types.ChatBannedRights(until_date=_until(spec), **banned)
+    return functions.channels.EditBannedRequest(channel, user, rights)
+
+
+def _admin_rights(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    granted = {MTPROTO_RIGHT[r]: v for r, v in spec["rights"].items()}
+    if peer_type == "channel":
+        channel = session._admin_channel(peer_id)
+        user = session._admin_user(spec["user_id"])
+        return functions.channels.EditAdminRequest(
+            channel, user, types.ChatAdminRights(**granted), ""
+        )
+    user = session._admin_user(spec["user_id"])
+    if not any(granted.values()):
+        return functions.messages.EditChatAdminRequest(peer_id, user, False)
+    if spec["rights"] != PROFILES["full_admin"]:
+        return ProviderResult("FAILED", "RIGHTS_NOT_EXPRESSIBLE")  # basic admins are all-or-nothing
+    return functions.messages.EditChatAdminRequest(peer_id, user, True)
+
+
+_ADMIN_BUILDERS: Mapping[Capability, Callable[..., Any]] = MappingProxyType(
+    {
+        Capability.MEMBER_ADD: _add,
+        Capability.MEMBER_BAN: _ban,
+        Capability.MEMBER_UNBAN: _unban,
+        Capability.MEMBER_RESTRICT: _restrict,
+        Capability.ADMIN_PROMOTE: _admin_rights,
+        Capability.ADMIN_DEMOTE: _admin_rights,
+    }
+)
 
 
 def _sent_message_id(result: Any, random_id: int) -> int | None:
@@ -615,6 +750,58 @@ class TelethonSession:
             )
             return _chat_rights(result, peer_id)
         raise GatewayError("NOT_ACCESSIBLE")
+
+    async def admin_request(
+        self,
+        capability: Capability,
+        peer_type: str,
+        peer_id: int,
+        spec: Mapping[str, Any],
+        *,
+        timeout: float,
+    ) -> ProviderResult:
+        """One administrative RPC for one capability (C18/C19), classified by named cases.
+
+        ``spec`` is already validated by the pure request table. Peers come from the entity
+        cache only; an unknown group or member fails without a call. An operation a basic
+        group cannot express fails without a call; one it has no state for succeeds as a no-op.
+        """
+        try:
+            planned = _ADMIN_BUILDERS[capability](self, peer_type, peer_id, spec)
+        except _PeerMissing as missing:
+            return ProviderResult("FAILED", missing.code)
+        if isinstance(planned, ProviderResult):
+            return planned
+        passthrough = tuple(_ADMIN_OUTCOMES)
+        try:
+            result = await self.call_capability(
+                capability, planned, timeout=timeout, passthrough=passthrough
+            )
+        except passthrough as exc:
+            outcome, code = next(v for k, v in _ADMIN_OUTCOMES.items() if isinstance(exc, k))
+            detail = {"already_set": True} if outcome == "SUCCEEDED" else {}
+            return ProviderResult(outcome, code, detail=detail)
+        except GatewayError as exc:
+            if exc.code == "FLOOD_WAIT" and exc.retry_after:
+                return ProviderResult(
+                    "FAILED", "RATE_LIMITED", detail={"retry_after": exc.retry_after}
+                )
+            return ProviderResult("OUTCOME_UNKNOWN", None)
+        if isinstance(result, types.messages.InvitedUsers) and result.missing_invitees:
+            return ProviderResult("FAILED", "INVITE_REQUIRED")  # never turned into an invite link
+        return ProviderResult("SUCCEEDED", None)
+
+    def _admin_channel(self, peer_id: int) -> Any:
+        try:
+            return utils.get_input_channel(self.input_peer("channel", peer_id))
+        except GatewayError:
+            raise _PeerMissing("DESTINATION_NOT_FOUND") from None
+
+    def _admin_user(self, user_id: int) -> Any:
+        try:
+            return utils.get_input_user(self.input_peer("user", user_id))
+        except GatewayError:
+            raise _PeerMissing("TARGET_NOT_FOUND") from None
 
     # -- login and status (admin plane): raw reviewed requests only -----------
 

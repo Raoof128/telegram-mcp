@@ -19,7 +19,7 @@ from typing import Any
 from comms.core import timeutil
 from comms.core.delivery.transport import ResultKind
 from comms.core.providers.protocols import ContextPage, ContextQuery
-from comms.transports.telegram.bot.args import positive_int, take
+from comms.transports.telegram.args import positive_int, take
 from comms.transports.telegram.bot.classify import LookupFailed, lookup
 from comms.transports.telegram.bot.http import BotApi
 

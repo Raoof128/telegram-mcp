@@ -13,9 +13,11 @@ from comms.core.delivery.transport import (
     ResultKind,
 )
 from comms.core.providers.capability import Capability, CapabilityState
-from comms.core.providers.protocols import ProviderTarget
+from comms.core.providers.protocols import ProviderResult, ProviderTarget, SemanticOperation
+from comms.core.providers.semantics import SEMANTICS
 from comms.transports.telegram.telegram.errors import GatewayError
 from comms.transports.telegram.telegram.rights import SelfRights
+from comms.transports.telegram.user.admin import UserAdmin
 from comms.transports.telegram.user.capability import UserCapability
 from comms.transports.telegram.user.delivery import UserDelivery
 from tests.conformance.registry import REGISTRY
@@ -107,3 +109,40 @@ def capability_failed_lookup_is_never_available_for_the_destination(mode: Mode) 
     assert {s for c, s in states.items() if c is not Capability.GROUP_CREATE} == {
         CapabilityState.UNKNOWN
     }
+
+
+class _AdminSession:
+    def __init__(self, answer: ProviderResult) -> None:
+        self.answer, self.calls = answer, 0
+
+    async def admin_request(self, capability, peer_type, peer_id, spec, *, timeout):
+        self.calls += 1
+        return self.answer
+
+
+def _admin(mode: Mode, answer: ProviderResult) -> tuple[UserAdmin, _AdminSession]:
+    if mode.live:
+        raise Skip("NOT_CONFIGURED")
+    session = _AdminSession(answer)
+    return UserAdmin(session, run=asyncio.run), session
+
+
+@REGISTRY.case("telegram_user", "admin")
+def admin_single_call_operations_make_one_call(mode: Mode) -> None:
+    admin, session = _admin(mode, ProviderResult("SUCCEEDED", None))
+    for cap in UserAdmin.operations:
+        assert not SEMANTICS[(cap, "telegram_user")].steps
+    result = admin.invoke(SemanticOperation(Capability.MEMBER_BAN, {"user_id": 42}), _GROUP, "k")
+    assert result.outcome == "SUCCEEDED" and session.calls == 1
+
+
+@REGISTRY.case("telegram_user", "admin")
+def admin_saga_is_never_one_call(mode: Mode) -> None:
+    admin, session = _admin(mode, ProviderResult("SUCCEEDED", None))
+    try:
+        admin.invoke(SemanticOperation(Capability.MEMBER_REMOVE, {"user_id": 42}), _GROUP, "k")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("member.remove ran as one call")
+    assert session.calls == 0

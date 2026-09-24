@@ -14,7 +14,7 @@ from types import MappingProxyType
 from typing import Any
 
 from comms.core.providers.capability import Capability as C
-from comms.transports.telegram.bot.args import boolean, positive_int, take, text
+from comms.transports.telegram.args import boolean, positive_int, take, text
 
 __all__ = ["INVITE_REQUESTS", "REF_FIELDS"]
 

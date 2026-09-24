@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from comms.core.providers.capability import Capability as C
-from comms.transports.telegram.bot.args import (
+from comms.transports.telegram.args import (
     boolean,
     non_negative_int,
     permissions,

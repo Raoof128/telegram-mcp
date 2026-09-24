@@ -72,6 +72,7 @@ dropped link fails the in-flight call and only the daemon's keeper reconnects.
 | `cap.member.add` | `messages.AddChatUserRequest` | https://core.telegram.org/method/messages.addChatUser | sets a chat or member state | `SET_STATE`, `retry_same_key` |
 | `cap.member.remove` | `channels.EditBannedRequest` | https://core.telegram.org/method/channels.editBanned | sets a chat or member state | `SET_STATE`, `retry_same_key`; a saga of `member.ban`, `member.unban` |
 | `cap.member.remove` | `messages.DeleteChatUserRequest` | https://core.telegram.org/method/messages.deleteChatUser | sets a chat or member state | `SET_STATE`, `retry_same_key`; a saga of `member.ban`, `member.unban` |
+| `cap.member.ban` | `messages.DeleteChatUserRequest` | https://core.telegram.org/method/messages.deleteChatUser | sets a chat or member state | `SET_STATE`, `retry_same_key`; C18: a basic group has no ban list, so its ban is this removal (the saga's unban is then a no-op) |
 | `cap.member.ban` | `channels.EditBannedRequest` | https://core.telegram.org/method/channels.editBanned | sets a chat or member state | `SET_STATE`, `retry_same_key` |
 | `cap.member.unban` | `channels.EditBannedRequest` | https://core.telegram.org/method/channels.editBanned | sets a chat or member state | `SET_STATE`, `retry_same_key` |
 | `cap.member.restrict` | `channels.EditBannedRequest` | https://core.telegram.org/method/channels.editBanned | sets a chat or member state | `SET_STATE`, `retry_same_key` |

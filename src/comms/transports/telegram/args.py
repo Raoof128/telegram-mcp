@@ -1,4 +1,4 @@
-"""Argument checks for Bot API requests: one checker, shared by every request table."""
+"""Argument checks for Telegram requests: one checker, shared by every request table (bot and user)."""
 
 from __future__ import annotations
 
