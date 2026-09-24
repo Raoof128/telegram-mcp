@@ -197,6 +197,55 @@ CREATE TABLE verification_keys (key_id TEXT PRIMARY KEY, purpose TEXT NOT NULL, 
   trust_state TEXT NOT NULL CHECK (trust_state IN ('ACTIVE','TRUSTED_RETIRED','VERIFICATION_ONLY','REVOKED')));
 CREATE TRIGGER verification_keys_public_immutable BEFORE UPDATE OF key_id, purpose, algorithm, public_key
   ON verification_keys BEGIN SELECT RAISE(ABORT, 'verification key is immutable'); END;
+CREATE TABLE audit_events (event_id TEXT PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT NULL, subject_ref TEXT,
+  subject_digest TEXT, payload TEXT NOT NULL,
+  chain_epoch INTEGER NOT NULL CHECK (chain_epoch >= 1), chain_seq INTEGER NOT NULL CHECK (chain_seq >= 1),
+  prev_event_mac TEXT NOT NULL, event_mac TEXT NOT NULL, UNIQUE (chain_epoch, chain_seq));
+CREATE TABLE audit_checkpoints (checkpoint_ref TEXT PRIMARY KEY, chain_epoch INTEGER NOT NULL,
+  chain_seq INTEGER NOT NULL, last_event_id TEXT NOT NULL, last_event_mac TEXT NOT NULL, reason TEXT NOT NULL,
+  created_at TEXT NOT NULL, signing_key_id TEXT NOT NULL, signature TEXT NOT NULL);
+CREATE TRIGGER audit_events_append_only_u BEFORE UPDATE ON audit_events
+  BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
+CREATE TRIGGER audit_events_append_only_d BEFORE DELETE ON audit_events
+  BEGIN SELECT RAISE(ABORT, 'audit is append-only'); END;
+CREATE TRIGGER audit_checkpoints_append_only_u BEFORE UPDATE ON audit_checkpoints
+  BEGIN SELECT RAISE(ABORT, 'checkpoints are append-only'); END;
+CREATE TRIGGER audit_checkpoints_append_only_d BEFORE DELETE ON audit_checkpoints
+  BEGIN SELECT RAISE(ABORT, 'checkpoints are append-only'); END;
+CREATE TABLE audit_integrity (id INTEGER PRIMARY KEY CHECK (id = 1),
+  state TEXT NOT NULL CHECK (state IN ('ok','degraded')), reason TEXT, since TEXT);
+INSERT INTO audit_integrity (id, state) VALUES (1, 'ok');
+CREATE TABLE audit_lineage (cutover_ref TEXT PRIMARY KEY, legacy_chain_domain TEXT NOT NULL,
+  legacy_final_epoch INTEGER NOT NULL, legacy_final_head TEXT NOT NULL, legacy_checkpoint_digest TEXT NOT NULL,
+  legacy_checkpoint_key_id TEXT NOT NULL, comms_chain_domain TEXT NOT NULL, comms_genesis_digest TEXT NOT NULL,
+  comms_first_epoch INTEGER NOT NULL, lineage_digest TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TRIGGER audit_lineage_immutable_u BEFORE UPDATE ON audit_lineage
+  BEGIN SELECT RAISE(ABORT, 'lineage is immutable'); END;
+CREATE TRIGGER audit_lineage_immutable_d BEFORE DELETE ON audit_lineage
+  BEGIN SELECT RAISE(ABORT, 'lineage is immutable'); END;
+CREATE TABLE cutover_state (id INTEGER PRIMARY KEY CHECK (id = 1), cutover_ref TEXT,
+  phase TEXT NOT NULL CHECK (phase IN ('NONE','CUTOVER_ENTERED','LEGACY_DRAINED','LEGACY_VERIFIED','LEGACY_SEALED',
+    'LEGACY_ANCHORED','COMMS_GENESIS','COMMS_ANCHORED','LEGACY_CLIENT_AUTH_REVOKED','COMPLETE')),
+  legacy_checkpoint_digest TEXT, updated_at TEXT NOT NULL);
+INSERT INTO cutover_state (id, phase, updated_at) VALUES (1, 'NONE', '1970-01-01T00:00:00.000000Z');
+CREATE TABLE cutover_transitions (from_phase TEXT NOT NULL, to_phase TEXT NOT NULL, PRIMARY KEY (from_phase, to_phase));
+INSERT INTO cutover_transitions VALUES ('NONE','CUTOVER_ENTERED'), ('CUTOVER_ENTERED','LEGACY_DRAINED'),
+  ('LEGACY_DRAINED','LEGACY_VERIFIED'), ('LEGACY_VERIFIED','LEGACY_SEALED'), ('LEGACY_SEALED','LEGACY_ANCHORED'),
+  ('LEGACY_ANCHORED','COMMS_GENESIS'), ('COMMS_GENESIS','COMMS_ANCHORED'),
+  ('COMMS_ANCHORED','LEGACY_CLIENT_AUTH_REVOKED'), ('LEGACY_CLIENT_AUTH_REVOKED','COMPLETE');
+CREATE TRIGGER cutover_transitions_fixed_u BEFORE UPDATE ON cutover_transitions
+  BEGIN SELECT RAISE(ABORT, 'cutover transitions are fixed'); END;
+CREATE TRIGGER cutover_transitions_fixed_d BEFORE DELETE ON cutover_transitions
+  BEGIN SELECT RAISE(ABORT, 'cutover transitions are fixed'); END;
+CREATE TRIGGER cutover_exact_next_state BEFORE UPDATE OF phase ON cutover_state
+  WHEN NEW.phase IS NOT OLD.phase AND NOT EXISTS (SELECT 1 FROM cutover_transitions
+       WHERE from_phase = OLD.phase AND to_phase = NEW.phase)
+  BEGIN SELECT RAISE(ABORT, 'cutover moves only to its exact next state'); END;
+CREATE TRIGGER cutover_fields_immutable BEFORE UPDATE OF cutover_ref, legacy_checkpoint_digest ON cutover_state
+  WHEN (OLD.cutover_ref IS NOT NULL AND NEW.cutover_ref IS NOT OLD.cutover_ref)
+    OR (OLD.legacy_checkpoint_digest IS NOT NULL AND NEW.legacy_checkpoint_digest IS NOT OLD.legacy_checkpoint_digest)
+  BEGIN SELECT RAISE(ABORT, 'cutover identity is immutable'); END;
+ALTER TABLE campaign_events ADD COLUMN event_digest TEXT;
 """
 SCHEMA_V2: tuple[str, ...] = _statements(_SCHEMA_V2_SQL)
 
