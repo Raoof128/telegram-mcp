@@ -262,7 +262,7 @@ EPOCH_SEAL = "EPOCH_SEAL"
 def _checkpoint_rows(
     conn: Any, profile: ChainProfile, where: str = "", args: tuple[Any, ...] = ()
 ) -> list[dict[str, Any]]:
-    names = (*profile.signed_checkpoint_fields, "signing_key_id", "signature")
+    names = ("checkpoint_ref", *profile.signed_checkpoint_fields, "signing_key_id", "signature")
     rows = conn.execute(
         f"SELECT {', '.join(names)} FROM {profile.checkpoints_table} {where}"
         " ORDER BY chain_epoch, chain_seq",
