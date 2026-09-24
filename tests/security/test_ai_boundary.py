@@ -12,7 +12,10 @@ import ast
 import importlib.metadata
 import importlib.util
 import json
+import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 WHATSAPP = ROOT / "transports" / "whatsapp"
@@ -101,3 +104,34 @@ def test_send_commands_are_always_ask_in_claude_code():
         "Bash(uv run comms campaign retry-failed:*)",
     ):
         assert rule in ask
+
+
+CAMPAIGN_CORE = ("comms.core.campaigns", "comms.core.delivery")
+
+
+def _ai_surfaces() -> list[Path]:
+    """Every module an MCP server or its dispatch can load (5b-4 design §1, R21)."""
+    transports = ROOT / "src" / "comms" / "transports"
+    paths = [
+        p
+        for p in transports.glob("*/*.py")
+        if p.name in {"server.py", "dispatch.py", "sensitive_dispatch.py"}
+    ]
+    paths += [p for p in transports.rglob("*.py") if "mcp" in p.parent.parts]
+    paths += sorted((WHATSAPP / "apps" / "mcp").glob("*.py"))
+    return sorted(set(paths))
+
+
+def test_no_ai_surface_imports_the_campaign_core():
+    surfaces = _ai_surfaces()
+    assert any(p.name == "server.py" for p in surfaces), "an empty scan proves nothing"
+    for path in surfaces:
+        assert not [n for n in _imports(path) if n.startswith(CAMPAIGN_CORE)], path
+
+
+def test_the_campaign_core_guard_catches_a_planted_import(tmp_path, monkeypatch):
+    planted = tmp_path / "server.py"
+    planted.write_text("from comms.core.delivery.freeze import send\n")
+    monkeypatch.setattr(sys.modules[__name__], "_ai_surfaces", lambda: [planted, planted])
+    with pytest.raises(AssertionError):
+        test_no_ai_surface_imports_the_campaign_core()

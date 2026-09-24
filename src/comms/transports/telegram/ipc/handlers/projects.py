@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from comms.core.opaque import mint_opaque_ref
 from comms.transports.telegram.ipc.handlers._wrapper import Handler, TxCommand, tx_handler
-from comms.transports.telegram.opaque import mint_opaque_ref
 from comms.transports.telegram.telegram.discovery import DiscoveryStore
 
 __all__ = ["PROJECT_COMMANDS", "MemberView", "member_commands", "project_handlers"]

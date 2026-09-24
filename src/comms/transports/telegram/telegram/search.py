@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from comms.transports.telegram.canonical import jcs_dumps
+from comms.core.canonical import jcs_dumps
 from comms.transports.telegram.disclosure.coverage import build_coverage
 from comms.transports.telegram.validation import parse_time
 

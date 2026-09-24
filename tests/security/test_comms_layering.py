@@ -26,16 +26,16 @@ def _imports(tree: ast.AST) -> set[str]:
 
 
 def _core_files() -> list[Path]:
-    assert CORE.is_dir(), "comms.core must exist (empty) from 5b-1"
+    assert CORE.is_dir(), "comms.core must exist from 5b-1"
     return sorted(CORE.rglob("*.py"))
 
 
-def test_core_has_no_production_implementation():
-    for path in _core_files():
-        for node in ast.walk(ast.parse(path.read_text())):
-            assert not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)), (
-                f"{path}: core is empty until 5b-2's first seam"
-            )
+def test_core_is_transport_neutral():
+    """5b-4 D2: core holds domain code; the guards below run over every core file."""
+    files = _core_files()
+    assert (CORE / "canonical.py") in files and (CORE / "opaque.py") in files
+    test_core_never_imports_a_transport()
+    test_core_has_no_dynamic_imports_or_transport_strings()
 
 
 def test_core_never_imports_a_transport():

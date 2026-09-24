@@ -19,7 +19,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
-from comms.transports.telegram.canonical import jcs_dumps
+from comms.core.canonical import jcs_dumps
 
 __all__ = [
     "ADMIN_EVENTS",
@@ -291,7 +291,7 @@ def insert_checkpoint(
     require_immediate_transaction(conn)
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    from comms.transports.telegram.opaque import mint_opaque_ref
+    from comms.core.opaque import mint_opaque_ref
 
     current = head(conn)
     if current is None:

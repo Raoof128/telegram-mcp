@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from comms.core.canonical import jcs_dumps
 from comms.transports.telegram.authority.cursors import (
     CursorError,
     CursorPresenter,
@@ -41,7 +42,6 @@ from comms.transports.telegram.authority.policy import (
     evaluate,
     readable_members,
 )
-from comms.transports.telegram.canonical import jcs_dumps
 from comms.transports.telegram.disclosure.bounds import NAME_MAX, clamp, worst_case
 from comms.transports.telegram.disclosure.budget import (
     GLOBAL,

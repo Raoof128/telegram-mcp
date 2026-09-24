@@ -10,6 +10,7 @@ import re
 
 import pytest
 
+from comms.core.opaque import mint_opaque_ref
 from comms.transports.telegram.authority.cursors import (
     CURSOR_TTL_S,
     CursorError,
@@ -31,7 +32,6 @@ from comms.transports.telegram.authority.epochs import (
     set_locked,
 )
 from comms.transports.telegram.authority.refs import REF_PREFIXES, validate_ref_format
-from comms.transports.telegram.opaque import mint_opaque_ref
 
 CURSOR_KEY = b"\x11" * 32
 PRIVACY_KEY = b"\x22" * 32

@@ -7,8 +7,8 @@ import hmac
 import sqlite3
 from datetime import UTC, datetime
 
+from comms.core.opaque import mint_opaque_ref
 from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
-from comms.transports.telegram.opaque import mint_opaque_ref
 
 __all__ = ["OWNER_PRINCIPAL", "ensure_account", "ensure_owner_principal"]
 
