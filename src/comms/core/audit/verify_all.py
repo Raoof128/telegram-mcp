@@ -49,6 +49,7 @@ class VerifyKeys:
     legacy: LegacyVerify
     comms_key_for_epoch: Callable[[int], bytes]
     comms_anchor_path: Path
+    comms_public_for: Callable[[str], bytes | None]  # epoch seals are signed (design §B.1)
 
 
 @dataclass(frozen=True)
@@ -177,7 +178,7 @@ def _lineage(
 def _comms(conn: Any, keys: VerifyKeys, problems: list[str]) -> str:
     before = len(problems)
     try:
-        verify_chain(conn, COMMS, keys.comms_key_for_epoch)
+        verify_chain(conn, COMMS, keys.comms_key_for_epoch, public_for=keys.comms_public_for)
     except ChainError:
         problems.append("COMMS_CHAIN_INVALID")
     current = head(conn, COMMS)

@@ -145,6 +145,8 @@ def derive_integrity(
     anchor_profile: AnchorProfile,
     key_for_epoch: Callable[[int], bytes],
     path: str | Path,
+    *,
+    public_for: Callable[[str], bytes | None] | None = None,
 ) -> str:
     """CLEAN, RECOVERY_REQUIRED (anchor exactly one behind a verified head) or FAIL_CLOSED."""
     current = head(conn, chain_profile)
@@ -161,7 +163,7 @@ def derive_integrity(
     ):
         return FAIL_CLOSED  # the database lost committed history
     try:
-        verify_chain(conn, chain_profile, key_for_epoch)
+        verify_chain(conn, chain_profile, key_for_epoch, public_for=public_for)
     except ChainError:
         return FAIL_CLOSED
     if anchor["chain_epoch"] != current["chain_epoch"]:

@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from comms.core.audit.verify_all import VerifyKeys
 from comms.core.audit.writer import AuditWriter, SlotChainKeys
 from comms.core.keys import ids
-from comms.core.keys.slots import KeySlotStore, bootstrap_comms_audit_keys
+from comms.core.keys.slots import KeySlotStore, bootstrap_comms_audit_keys, registry_public_for
 from comms.core.storage.db import write_tx
 from comms.transports.telegram.disclosure.audit.anchor import write_anchor
 from comms.transports.telegram.disclosure.audit.chain import append_event, head, mint_event_id
@@ -124,4 +124,5 @@ def verify_keys(world: dict) -> VerifyKeys:
         legacy=legacy_verifier(CHAIN_KEY, public_for),
         comms_key_for_epoch=world["keys"].for_epoch,
         comms_anchor_path=world["anchor"],
+        comms_public_for=registry_public_for(world["conn"]),
     )

@@ -17,12 +17,12 @@ from typing import Any
 
 from comms.core import refs, timeutil
 from comms.core.audit.anchor import COMMS_ANCHOR, write_anchor
-from comms.core.audit.chain import COMMS, append_event, append_guard, head
+from comms.core.audit.chain import COMMS, append_event, append_guard, head, seal_and_open_epoch
 from comms.core.audit.integrity import latch_degraded
 from comms.core.audit.specs import validate_audit_event
 from comms.core.campaigns.events import journal_digest
 from comms.core.canonical import jcs_dumps
-from comms.core.keys.slots import KeySlotStore, load_active
+from comms.core.keys.slots import KeySlotStore, load_active, load_version
 from comms.core.storage.db import write_tx
 
 __all__ = [
@@ -55,7 +55,8 @@ class SlotChainKeys:
         return load_active(self._conn, self._store, "audit-chain-key")[1]
 
     def for_epoch(self, epoch: int) -> bytes:
-        return self.current()
+        """Epoch ``n`` is MACed under key version ``n``: each rotation opens exactly one epoch."""
+        return load_version(self._conn, self._store, "audit-chain-key", epoch)
 
 
 class AuditTx:
@@ -65,6 +66,23 @@ class AuditTx:
         self.conn, self._key, self._now = conn, key, now
         self.appended = False
 
+    def _event(
+        self,
+        kind: str,
+        subject_ref: str | None,
+        subject_digest: str | None,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        validate_audit_event(kind, subject_ref, subject_digest, payload)
+        return {
+            "event_id": refs.mint("audit_event"),
+            "ts": timeutil.iso(self._now),
+            "kind": kind,
+            "subject_ref": subject_ref,
+            "subject_digest": subject_digest,
+            "payload": jcs_dumps(dict(payload)).decode(),
+        }
+
     def append(
         self,
         kind: str,
@@ -73,16 +91,33 @@ class AuditTx:
         subject_digest: str | None = None,
         payload: Mapping[str, Any],
     ) -> dict[str, Any]:
-        validate_audit_event(kind, subject_ref, subject_digest, payload)
-        event = {
-            "event_id": refs.mint("audit_event"),
-            "ts": timeutil.iso(self._now),
-            "kind": kind,
-            "subject_ref": subject_ref,
-            "subject_digest": subject_digest,
-            "payload": jcs_dumps(dict(payload)).decode(),
-        }
-        result = append_event(self.conn, COMMS, self._key, event)
+        result = append_event(
+            self.conn, COMMS, self._key, self._event(kind, subject_ref, subject_digest, payload)
+        )
+        self.appended = True
+        return result
+
+    def open_epoch(
+        self,
+        kind: str,
+        *,
+        new_key: bytes,
+        checkpoint_key: bytes,
+        subject_ref: str | None = None,
+        subject_digest: str | None = None,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Seal the current epoch and make this event the next epoch's first (design §B.4)."""
+        result = seal_and_open_epoch(
+            self.conn,
+            COMMS,
+            old_key=self._key,
+            new_key=new_key,
+            checkpoint_key=checkpoint_key,
+            first_event=self._event(kind, subject_ref, subject_digest, payload),
+            now=self._now,
+        )
+        self._key = new_key  # later appends in this transaction continue the new epoch
         self.appended = True
         return result
 

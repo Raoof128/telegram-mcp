@@ -126,7 +126,7 @@ def test_refused_purposes_raise(env, purpose):
 
 
 def test_purposes_with_their_own_protocol_are_not_rotated_here(env):
-    for purpose in ("comms-db-key", "telegram-bot-token", "audit-chain-key"):
+    for purpose in ("comms-db-key", "telegram-bot-token"):  # audit-chain-key: B6 (seal_epoch)
         with pytest.raises(KeySlotError, match="own rotation"):
             _rotate(env, purpose)
 
@@ -173,3 +173,8 @@ def test_signers_keep_their_old_public_half_as_trusted_retired(env):
         .fetchall()
     )
     assert sorted(r[0] for r in rows) == ["ACTIVE", "TRUSTED_RETIRED"]
+
+
+def test_an_epoch_sealing_rotation_takes_no_caller_consequence(env):
+    with pytest.raises(KeySlotError, match="no other consequence"):
+        _rotate(env, "audit-chain-key", consequence=lambda tx, old, new: False)

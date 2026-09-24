@@ -12,6 +12,7 @@ import os
 import re
 import secrets
 import stat
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,9 @@ __all__ = [
     "bootstrap_comms_audit_keys",
     "key_id_for",
     "load_active",
+    "load_version",
     "register_version",
+    "registry_public_for",
 ]
 
 _PURPOSE = re.compile(r"[a-z][a-z0-9-]{1,40}\Z")
@@ -128,12 +131,7 @@ def active_version(conn: Any, purpose: str) -> tuple[int, str] | None:
     return _active_row(conn, purpose)
 
 
-def load_active(conn: Any, store: KeySlotStore, purpose: str) -> tuple[bytes, str]:
-    """The active version's material and its recomputed, checked key ID."""
-    row = _active_row(conn, purpose)
-    if row is None:
-        raise KeySlotError("no active key for purpose")
-    version, stored_id = row
+def _checked(store: KeySlotStore, purpose: str, version: int, stored_id: str) -> bytes:
     material = store.read(purpose, version)
     recomputed = (
         ids.ed25519_key_id(ids.ed25519_public(material))
@@ -142,7 +140,39 @@ def load_active(conn: Any, store: KeySlotStore, purpose: str) -> tuple[bytes, st
     )
     if recomputed != stored_id:
         raise KeySlotError("key id mismatch")
-    return material, stored_id
+    return material
+
+
+def load_active(conn: Any, store: KeySlotStore, purpose: str) -> tuple[bytes, str]:
+    """The active version's material and its recomputed, checked key ID."""
+    row = _active_row(conn, purpose)
+    if row is None:
+        raise KeySlotError("no active key for purpose")
+    version, stored_id = row
+    return _checked(store, purpose, version, stored_id), stored_id
+
+
+def load_version(conn: Any, store: KeySlotStore, purpose: str, version: int) -> bytes:
+    """One registered, undestroyed version's material, its key ID recomputed and checked."""
+    row = conn.execute(
+        "SELECT key_id, state FROM key_slots WHERE purpose = ? AND version = ?",
+        (purpose, int(version)),
+    ).fetchone()
+    if row is None or row[1] == "DESTROYED":
+        raise KeySlotError("no such key version")
+    return _checked(store, purpose, int(version), str(row[0]))
+
+
+def registry_public_for(conn: Any) -> Callable[[str], bytes | None]:
+    """A ``public_for`` over comms ``verification_keys``: raw public bytes by key ID."""
+
+    def public_for(key_id: str) -> bytes | None:
+        row = conn.execute(
+            "SELECT public_key FROM verification_keys WHERE key_id = ?", (key_id,)
+        ).fetchone()
+        return None if row is None else bytes(row[0])
+
+    return public_for
 
 
 def key_id_for(purpose: str, material: bytes) -> str:
