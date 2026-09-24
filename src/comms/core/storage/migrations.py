@@ -441,6 +441,52 @@ CREATE UNIQUE INDEX provider_objects_identity ON provider_objects
 CREATE TRIGGER provider_objects_binding_immutable BEFORE UPDATE OF ref, kind, transport, actor,
   destination_id, provider_identity, created_at ON provider_objects
   BEGIN SELECT RAISE(ABORT, 'a provider object binding is immutable'); END;
+-- D3 (A28, A41, G14–G16): one row per write request, born IN_FLIGHT in the transaction that
+-- validates it (PREPARED is deliberately not a stored state); request ids are opaque req_ refs,
+-- unique per authenticated client; saga steps are persisted one by one.
+CREATE TABLE mutations (id INTEGER PRIMARY KEY, op_ref TEXT NOT NULL UNIQUE,
+  authenticated_client TEXT NOT NULL,
+  request_id TEXT NOT NULL CHECK (length(request_id) = 30 AND substr(request_id, 1, 4) = 'req_'
+    AND substr(request_id, 5) NOT GLOB '*[^a-z2-7]*'),
+  request_digest TEXT NOT NULL CHECK (length(request_digest) = 64), tool TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK (scope IN ('local','provider')), target_refs TEXT NOT NULL, actor TEXT,
+  retry_class TEXT NOT NULL, ambiguity_policy TEXT NOT NULL CHECK (ambiguity_policy IN ('retry_same_key','resolve_only')),
+  state TEXT NOT NULL CHECK (state IN ('IN_FLIGHT','SUCCEEDED','FAILED','OUTCOME_UNKNOWN')),
+  audit_status TEXT NOT NULL DEFAULT 'ANCHORED' CHECK (audit_status IN ('ANCHORED','DEGRADED')),
+  provider_request_key TEXT, provider_code TEXT, result_digest TEXT, created_at TEXT NOT NULL, finished_at TEXT,
+  UNIQUE (authenticated_client, request_id));
+CREATE TABLE mutation_steps (id INTEGER PRIMARY KEY, mutation_id INTEGER NOT NULL REFERENCES mutations(id) ON DELETE RESTRICT,
+  step_no INTEGER NOT NULL CHECK (step_no >= 1), capability TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('PENDING','IN_FLIGHT','SUCCEEDED','FAILED','OUTCOME_UNKNOWN')),
+  provider_request_key TEXT, provider_code TEXT, UNIQUE (mutation_id, step_no));
+CREATE TRIGGER mutations_born_in_flight BEFORE INSERT ON mutations WHEN NEW.state <> 'IN_FLIGHT'
+  BEGIN SELECT RAISE(ABORT, 'a mutation is born IN_FLIGHT'); END;
+CREATE TRIGGER mutations_binding_immutable BEFORE UPDATE OF op_ref, authenticated_client, request_id,
+  request_digest, tool, scope, target_refs, actor, retry_class, ambiguity_policy, created_at ON mutations
+  BEGIN SELECT RAISE(ABORT, 'a mutation binding is immutable'); END;
+CREATE TRIGGER mutations_state_forward BEFORE UPDATE OF state ON mutations
+  WHEN NEW.state <> OLD.state AND NOT (
+    (OLD.state = 'IN_FLIGHT' AND NEW.state IN ('SUCCEEDED','FAILED','OUTCOME_UNKNOWN'))
+    OR (OLD.state = 'OUTCOME_UNKNOWN' AND NEW.state IN ('SUCCEEDED','FAILED')))
+  BEGIN SELECT RAISE(ABORT, 'a mutation state only moves forward'); END;
+CREATE TRIGGER mutations_request_key_set_once BEFORE UPDATE OF provider_request_key ON mutations
+  WHEN OLD.provider_request_key IS NOT NULL AND NEW.provider_request_key IS NOT OLD.provider_request_key
+  BEGIN SELECT RAISE(ABORT, 'the provider request key is set once'); END;
+CREATE TRIGGER mutations_never_deleted BEFORE DELETE ON mutations
+  BEGIN SELECT RAISE(ABORT, 'mutations are kept'); END;
+CREATE TRIGGER mutation_steps_binding_immutable BEFORE UPDATE OF mutation_id, step_no, capability ON mutation_steps
+  BEGIN SELECT RAISE(ABORT, 'a step binding is immutable'); END;
+CREATE TRIGGER mutation_steps_state_forward BEFORE UPDATE OF state ON mutation_steps
+  WHEN NEW.state <> OLD.state AND NOT (
+    (OLD.state = 'PENDING' AND NEW.state IN ('IN_FLIGHT','FAILED'))
+    OR (OLD.state = 'IN_FLIGHT' AND NEW.state IN ('SUCCEEDED','FAILED','OUTCOME_UNKNOWN'))
+    OR (OLD.state = 'OUTCOME_UNKNOWN' AND NEW.state IN ('SUCCEEDED','FAILED')))
+  BEGIN SELECT RAISE(ABORT, 'a step state only moves forward'); END;
+CREATE TRIGGER mutation_steps_request_key_set_once BEFORE UPDATE OF provider_request_key ON mutation_steps
+  WHEN OLD.provider_request_key IS NOT NULL AND NEW.provider_request_key IS NOT OLD.provider_request_key
+  BEGIN SELECT RAISE(ABORT, 'the provider request key is set once'); END;
+CREATE TRIGGER mutation_steps_never_deleted BEFORE DELETE ON mutation_steps
+  BEGIN SELECT RAISE(ABORT, 'mutation steps are kept'); END;
 """
 SCHEMA_V4: tuple[str, ...] = _statements(_SCHEMA_V4_SQL)
 
