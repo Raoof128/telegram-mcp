@@ -34,6 +34,9 @@ def test_every_project_command_is_a_tx_command():
         "project grant-client",
         "project set-egress",
         "project revoke-client",
+        "project rename",
+        "project grant-cross-search",
+        "project revoke-cross-search",
         "scope mode",
     }
 

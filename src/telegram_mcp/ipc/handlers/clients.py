@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from telegram_mcp.ipc.handlers._wrapper import Handler, TxCommand, run_tx
+from telegram_mcp.ipc.handlers._wrapper import Handler, TxCommand, run_tx, tx_handler
 from telegram_mcp.opaque import mint_opaque_ref
 
 __all__ = ["CLIENT_COMMANDS", "client_handlers"]
@@ -56,6 +56,27 @@ def _activate_seed(key_dir: Path, client_ref: str, pending: Path) -> None:
 
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_disable(args: dict[str, Any]) -> dict[str, Any]:
+    body = {k: v for k, v in args.items() if k != "presence"}
+    if set(body) - {"client"}:
+        raise ValueError("unknown argument")
+    if body.get("client") not in _KINDS:
+        raise ValueError("client must be codex_local or claude_code_local")
+    return body
+
+
+def _apply_disable(conn: sqlite3.Connection, plan: dict[str, Any]) -> dict[str, Any]:
+    changed = conn.execute(
+        "UPDATE mcp_clients SET enabled = 0 WHERE client_kind = ?", (plan["client"],)
+    ).rowcount
+    if changed != 1:
+        raise ValueError("no such client")
+    return {"disabled": True}
+
+
+CLIENT_COMMANDS["client disable"] = TxCommand(_parse_disable, lambda c, p: p, _apply_disable)
 
 
 def client_handlers(conn: sqlite3.Connection, *, key_dir: Path) -> dict[str, Handler]:
@@ -129,4 +150,8 @@ def client_handlers(conn: sqlite3.Connection, *, key_dir: Path) -> dict[str, Han
             ]
         }
 
-    return {"client rotate": rotate, "client list": list_}
+    return {
+        "client rotate": rotate,
+        "client list": list_,
+        "client disable": tx_handler(conn, CLIENT_COMMANDS["client disable"]),
+    }

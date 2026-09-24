@@ -11,13 +11,15 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from telegram_mcp.ipc.handlers._wrapper import Handler, TxCommand, tx_handler
 from telegram_mcp.opaque import mint_opaque_ref
+from telegram_mcp.telegram.discovery import DiscoveryStore
 
-__all__ = ["PROJECT_COMMANDS", "project_handlers"]
+__all__ = ["PROJECT_COMMANDS", "MemberView", "member_commands", "project_handlers"]
 
 _SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,31}\Z")
 _EGRESS = ("metadata_only", "excerpt", "full_text")
@@ -215,6 +217,38 @@ def _apply_mode(conn: sqlite3.Connection, plan: dict[str, Any]) -> dict[str, Any
     return {"mode": plan["mode"]}
 
 
+def _parse_rename(args: dict[str, Any]) -> dict[str, Any]:
+    body = _args(args, {"project_ref", "display_name"})
+    return {**body, "name": _display_name(body.get("display_name"))}
+
+
+def _plan_project(conn: sqlite3.Connection, parsed: dict[str, Any]) -> dict[str, Any]:
+    return {**parsed, "project_id": _id(conn, "projects", "project_ref", parsed.get("project_ref"))}
+
+
+def _apply_rename(conn: sqlite3.Connection, plan: dict[str, Any]) -> dict[str, Any]:
+    conn.execute(
+        "UPDATE projects SET display_name = ?, project_epoch = project_epoch + 1, updated_at = ?"
+        " WHERE id = ?",
+        (plan["name"], _now(), plan["project_id"]),
+    )
+    return {"display_name": plan["name"]}
+
+
+def _cross(value: int) -> TxCommand[Any, Any]:
+    def apply(conn: sqlite3.Connection, plan: dict[str, Any]) -> dict[str, Any]:
+        changed = conn.execute(
+            "UPDATE client_projects SET can_cross_search = ?, updated_at = ?"
+            " WHERE client_id = ? AND project_id = ?",
+            (value, _now(), plan["client_id"], plan["project_id"]),
+        ).rowcount
+        if changed != 1:
+            raise ValueError("no such grant")
+        return {"can_cross_search": bool(value)}
+
+    return TxCommand(lambda args: _args(args, {"project_ref", "client_ref"}), _pair, apply)
+
+
 PROJECT_COMMANDS: dict[str, TxCommand[Any, Any]] = {
     "project create": TxCommand(_parse_create, _plan_create, _apply_create),
     "project enable": _enabled(1),
@@ -225,10 +259,77 @@ PROJECT_COMMANDS: dict[str, TxCommand[Any, Any]] = {
         lambda args: _args(args, {"project_ref", "client_ref"}), _pair, _apply_revoke
     ),
     "scope mode": TxCommand(_parse_mode, _plan_owner, _apply_mode),
+    "project rename": TxCommand(_parse_rename, _plan_project, _apply_rename),
+    "project grant-cross-search": _cross(1),
+    "project revoke-cross-search": _cross(0),
 }
 
 
-def project_handlers(conn: sqlite3.Connection) -> dict[str, Handler]:
+@dataclass(frozen=True)
+class MemberView:
+    """What a ``project members`` handle resolves to. No reversible Telegram id."""
+
+    project_ref: str
+    peer_row_id: int
+    peer_ref: str
+    display_name: str | None
+    chat_type: str
+    username: str | None
+
+
+_TARGETS = {
+    "chatgpt": "ChatGPT project",
+    "codex": "Codex workspace",
+    "claude": "Claude Code workspace",
+}
+
+
+def member_commands(store: DiscoveryStore) -> dict[str, TxCommand[Any, Any]]:
+    """``project remove-peer`` as a TxCommand, so ``policy simulate`` covers it (review #3).
+
+    ``store.take`` is non-consuming on success (``discovery.py:46-51``), so a
+    simulated plan leaves the handle usable for the real command.
+    """
+
+    def parse_remove(args: dict[str, Any]) -> dict[str, Any]:
+        body = _args(args, {"project_ref", "handle"})
+        if not isinstance(body.get("handle"), str) or not body["handle"].startswith("tgl_"):
+            raise ValueError("handle must be a tgl_ selection from project members")
+        return body
+
+    def plan_remove(conn: sqlite3.Connection, parsed: dict[str, Any]) -> dict[str, Any]:
+        row = conn.execute(
+            "SELECT id, project_epoch FROM projects WHERE project_ref = ?",
+            (parsed.get("project_ref"),),
+        ).fetchone()
+        if row is None:
+            raise ValueError("unknown project_ref")
+        view = store.take(parsed["handle"], policy_epoch=int(row[1]))
+        if view.project_ref != parsed["project_ref"]:
+            raise ValueError("unknown or expired selection")
+        return {"project_id": int(row[0]), "peer_row_id": view.peer_row_id}
+
+    def apply_remove(conn: sqlite3.Connection, plan: dict[str, Any]) -> dict[str, Any]:
+        removed = conn.execute(
+            "DELETE FROM project_peers WHERE project_id = ? AND peer_id = ?",
+            (plan["project_id"], plan["peer_row_id"]),
+        ).rowcount
+        if removed != 1:
+            raise ValueError("not a member")
+        conn.execute(
+            "UPDATE projects SET project_epoch = project_epoch + 1, updated_at = ? WHERE id = ?",
+            (_now(), plan["project_id"]),
+        )
+        return {"removed": True}
+
+    return {"project remove-peer": TxCommand(parse_remove, plan_remove, apply_remove)}
+
+
+def project_handlers(
+    conn: sqlite3.Connection, *, members: DiscoveryStore | None = None
+) -> dict[str, Handler]:
+    store = members if members is not None else DiscoveryStore()
+
     def list_(args: dict[str, Any]) -> dict[str, Any]:
         _args(args, set())
         rows = conn.execute(
@@ -248,7 +349,82 @@ def project_handlers(conn: sqlite3.Connection) -> dict[str, Handler]:
             ]
         }
 
+    def members_(args: dict[str, Any]) -> dict[str, Any]:
+        body = _args(args, {"project_ref"})
+        row = conn.execute(
+            "SELECT id, project_epoch FROM projects WHERE project_ref = ?",
+            (body.get("project_ref"),),
+        ).fetchone()
+        if row is None:
+            raise ValueError("unknown project_ref")
+        views = [
+            MemberView(body["project_ref"], int(r[0]), r[1], r[2], r[3], r[4])
+            for r in conn.execute(
+                "SELECT pe.id, pe.peer_ref, pe.display_name_cache, pe.telegram_peer_type,"
+                " pe.username_cache FROM project_peers pp JOIN peers pe ON pe.id = pp.peer_id"
+                " WHERE pp.project_id = ? ORDER BY pe.peer_ref",
+                (row[0],),
+            )
+        ]
+        listed = store.new_snapshot(views, policy_epoch=int(row[1]))
+        for entry, view in zip(listed, views, strict=True):
+            entry["peer_ref"] = view.peer_ref
+        return {"members": listed}
+
+    def overlap(args: dict[str, Any]) -> dict[str, Any]:
+        body = _args(args, {"project_a", "project_b"})
+        given = [body.get("project_a"), body.get("project_b")]
+        if sum(v is not None for v in given) == 1:
+            raise ValueError("give both project_a and project_b, or neither")
+        pair = {v for v in given if v is not None}
+        for ref in pair:
+            _id(conn, "projects", "project_ref", ref)  # unknown refs refuse
+        if len(pair) == 1:
+            raise ValueError("project_a and project_b must differ")
+        grouped: dict[str, list[dict[str, str]]] = {}
+        for peer_ref, project_ref, kind in conn.execute(
+            "SELECT pe.peer_ref, p.project_ref, pp.membership_kind FROM project_peers pp"
+            " JOIN projects p ON p.id = pp.project_id JOIN peers pe ON pe.id = pp.peer_id"
+            " WHERE pp.peer_id IN (SELECT peer_id FROM project_peers GROUP BY peer_id"
+            " HAVING COUNT(*) > 1) ORDER BY pe.peer_ref, p.project_ref"
+        ):
+            grouped.setdefault(peer_ref, []).append(
+                {"project_ref": project_ref, "membership_kind": kind}
+            )
+        overlaps = [
+            {
+                "peer_ref": peer_ref,
+                "projects": projects,
+                "explicitly_shared": any(p["membership_kind"] == "shared" for p in projects),
+            }
+            for peer_ref, projects in sorted(grouped.items())
+            if not pair or pair <= {p["project_ref"] for p in projects}
+        ]
+        return {"overlaps": overlaps}
+
+    def instruction(args: dict[str, Any]) -> dict[str, Any]:
+        body = _args(args, {"project_ref", "target"})
+        target = body.get("target")
+        if target not in _TARGETS:
+            raise ValueError("target must be chatgpt, codex or claude")
+        row = conn.execute(
+            "SELECT display_name FROM projects WHERE project_ref = ?", (body.get("project_ref"),)
+        ).fetchone()
+        if row is None:
+            raise ValueError("unknown project_ref")
+        snippet = (
+            f"Telegram gateway project: {row[0]}\n"
+            f"project_ref: {body['project_ref']}\n"
+            f"Pass this project_ref to every Telegram tool call in this {_TARGETS[target]}.\n"
+            "This note routes calls; it grants no access."
+        )
+        return {"snippet": snippet}
+
     return {
         **{name: tx_handler(conn, command) for name, command in PROJECT_COMMANDS.items()},
         "project list": list_,
+        "project members": members_,
+        "project remove-peer": tx_handler(conn, member_commands(store)["project remove-peer"]),
+        "project overlap": overlap,
+        "project instruction": instruction,
     }

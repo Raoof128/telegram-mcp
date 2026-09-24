@@ -87,3 +87,16 @@ async def test_a_raw_row_number_or_name_is_never_a_selector(world):
     for bogus in ("1", "U0", "user:100"):
         with pytest.raises(ValueError):
             h["scope allow"]({"handle": bogus})
+
+
+async def test_scope_remove_deletes_the_rule_and_bumps_the_epoch(world):
+    conn, h = world
+    found = await h["scope discover"]({})
+    handle = next(s["handle"] for s in found["selections"] if s["display_name"] == "U0")
+    h["scope allow"]({"handle": handle})
+    found = await h["scope discover"]({})  # the allow moved the epoch
+    handle = next(s["handle"] for s in found["selections"] if s["display_name"] == "U0")
+    before = _epoch(conn)
+    h["scope remove"]({"handle": handle})
+    assert conn.execute("SELECT COUNT(*) FROM peer_policy").fetchone()[0] == 0
+    assert _epoch(conn) == before + 1

@@ -126,10 +126,32 @@ def scope_commands(discovery: DiscoveryStore) -> dict[str, TxCommand[Any, Any]]:
             ) from None
         return {"added": True}
 
+    def apply_remove(conn: sqlite3.Connection, plan: dict[str, Any]) -> dict[str, Any]:
+        view = plan["view"]
+        removed = conn.execute(
+            "DELETE FROM peer_policy WHERE principal_id = ? AND account_id = ?"
+            " AND telegram_peer_type = ? AND telegram_peer_id = ?",
+            (plan["principal"], plan["account"], view.peer_type, view.peer_id),
+        ).rowcount
+        if removed != 1:
+            raise ValueError("no rule for that chat")
+        conn.execute(
+            "UPDATE policy_state SET policy_epoch = policy_epoch + 1, updated_at = ?"
+            " WHERE principal_id = ? AND account_id = ?",
+            (_now(), plan["principal"], plan["account"]),
+        )
+        return {"removed": True}
+
     return {
         "scope allow": decide("allow"),
         "scope deny": decide("deny"),
         "project add-peer": TxCommand(parse_add, plan_add, apply_add),
+        "scope remove": TxCommand(
+            _parse_handle,
+            plan_selection,
+            apply_remove,
+            post_commit=lambda _r: discovery.invalidate_all(),
+        ),
     }
 
 
