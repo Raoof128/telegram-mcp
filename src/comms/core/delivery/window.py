@@ -13,7 +13,7 @@ from typing import Any
 from comms.core import timeutil
 from comms.core.storage.db import write_tx
 
-__all__ = ["mirror_window", "window_fact"]
+__all__ = ["mirror_window", "mirror_window_in_tx", "window_fact"]
 
 
 def mirror_window(
@@ -25,20 +25,36 @@ def mirror_window(
     now: datetime,
 ) -> bool:
     """Record a customer message time; returns whether the mirror moved forward."""
+    with write_tx(conn):
+        return mirror_window_in_tx(
+            conn, identity_id, last_customer_message_at, source_event_ref, now=now
+        )
+
+
+def mirror_window_in_tx(
+    conn: Any,
+    identity_id: int,
+    last_customer_message_at: str,
+    source_event_ref: str,
+    *,
+    now: datetime,
+) -> bool:
+    """``mirror_window`` inside the caller's transaction (the webhook worker, C29)."""
+    if not conn.in_transaction:
+        raise RuntimeError("mirror_window_in_tx needs an open transaction")
     at = timeutil.instant(last_customer_message_at)  # refuses anything but a stored time
     if not isinstance(source_event_ref, str) or not source_event_ref:
         raise ValueError("a window fact names its source event")
-    with write_tx(conn):
-        current = window_fact(conn, identity_id)
-        if current is not None and timeutil.instant(current["last_customer_message_at"]) >= at:
-            return False
-        conn.execute(
-            "INSERT INTO endpoint_window (identity_id, last_customer_message_at, observed_at, source_event_ref)"
-            " VALUES (?, ?, ?, ?) ON CONFLICT (identity_id) DO UPDATE SET"
-            " last_customer_message_at = excluded.last_customer_message_at,"
-            " observed_at = excluded.observed_at, source_event_ref = excluded.source_event_ref",
-            (identity_id, last_customer_message_at, timeutil.iso(now), source_event_ref),
-        )
+    current = window_fact(conn, identity_id)
+    if current is not None and timeutil.instant(current["last_customer_message_at"]) >= at:
+        return False
+    conn.execute(
+        "INSERT INTO endpoint_window (identity_id, last_customer_message_at, observed_at, source_event_ref)"
+        " VALUES (?, ?, ?, ?) ON CONFLICT (identity_id) DO UPDATE SET"
+        " last_customer_message_at = excluded.last_customer_message_at,"
+        " observed_at = excluded.observed_at, source_event_ref = excluded.source_event_ref",
+        (identity_id, last_customer_message_at, timeutil.iso(now), source_event_ref),
+    )
     return True
 
 

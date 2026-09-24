@@ -179,99 +179,117 @@ def record_provider_update(
     now: datetime,
 ) -> ProviderDisposition:
     """Apply one provider status report, idempotently on (transport, provider_event_ref) (§7.3)."""
+    with write_tx(conn):
+        return apply_provider_update(
+            conn, transport, provider_event_ref, provider_message_ref, status, now=now
+        )
+
+
+def apply_provider_update(
+    conn: Any,
+    transport: str,
+    provider_event_ref: str,
+    provider_message_ref: str,
+    status: str,
+    *,
+    now: datetime,
+) -> ProviderDisposition:
+    """``record_provider_update`` inside the caller's transaction (the webhook worker commits
+    the status effect with its flag, C29)."""
+    if not conn.in_transaction:
+        raise RuntimeError("apply_provider_update needs an open transaction")
     if transport not in _TRANSPORTS or status not in PROVIDER_STATUSES:
         raise ValueError("provider update refused")
     for value in (provider_event_ref, provider_message_ref):
         if not isinstance(value, str) or not 0 < len(value) <= 256:
             raise ValueError("provider update refused")
     stamp = timeutil.iso(now)
-    with write_tx(conn):
-        existing = conn.execute(
-            "SELECT provider_message_ref, reported_status, job_id FROM provider_events"
-            " WHERE transport = ? AND provider_event_ref = ?",
-            (transport, provider_event_ref),
-        ).fetchone()
-        if existing is not None:
-            if (existing[0], existing[1]) == (provider_message_ref, status):
-                return "duplicate"
-            cmp = _campaign_of_job(conn, existing[2]) if existing[2] is not None else None
-            append_event(
-                conn,
-                "delivery.provider_update_refused",
-                cmp,
-                {
-                    "transport": transport,
-                    "reason": ReasonCode.DUPLICATE_CONFLICT.value,
-                    "status": status,
-                },
-                now=now,
-            )
-            return "duplicate_conflict"
-        matches = conn.execute(
-            "SELECT a.id, a.job_id FROM delivery_attempts a JOIN delivery_jobs j ON j.id = a.job_id"
-            " WHERE j.transport = ? AND a.provider_message_ref = ?",
-            (transport, provider_message_ref),
-        ).fetchall()
-        insert = (
-            "INSERT INTO provider_events (transport, provider_event_ref, provider_message_ref,"
-            " job_id, attempt_id, reported_status, disposition, received_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    existing = conn.execute(
+        "SELECT provider_message_ref, reported_status, job_id FROM provider_events"
+        " WHERE transport = ? AND provider_event_ref = ?",
+        (transport, provider_event_ref),
+    ).fetchone()
+    if existing is not None:
+        if (existing[0], existing[1]) == (provider_message_ref, status):
+            return "duplicate"
+        cmp = _campaign_of_job(conn, existing[2]) if existing[2] is not None else None
+        append_event(
+            conn,
+            "delivery.provider_update_refused",
+            cmp,
+            {
+                "transport": transport,
+                "reason": ReasonCode.DUPLICATE_CONFLICT.value,
+                "status": status,
+            },
+            now=now,
         )
-        if not matches:
-            conn.execute(
-                insert,
-                (
-                    transport,
-                    provider_event_ref,
-                    provider_message_ref,
-                    None,
-                    None,
-                    status,
-                    "pending_match",
-                    stamp,
-                ),
-            )
-            return "pending_match"
-        if len(matches) > 1:
-            conn.execute(
-                insert,
-                (
-                    transport,
-                    provider_event_ref,
-                    provider_message_ref,
-                    None,
-                    None,
-                    status,
-                    "refused",
-                    stamp,
-                ),
-            )
-            append_event(
-                conn,
-                "delivery.provider_update_refused",
-                None,
-                {
-                    "transport": transport,
-                    "reason": ReasonCode.AMBIGUOUS_MATCH.value,
-                    "status": status,
-                },
-                now=now,
-            )
-            return "refused"
-        attempt_id, job_id = matches[0]
-        t = reduce(conn, job_id, attempt_id, Evidence.PROVIDER, status, now=now)
-        disposition = t.disposition
+        return "duplicate_conflict"
+    matches = conn.execute(
+        "SELECT a.id, a.job_id FROM delivery_attempts a JOIN delivery_jobs j ON j.id = a.job_id"
+        " WHERE j.transport = ? AND a.provider_message_ref = ?",
+        (transport, provider_message_ref),
+    ).fetchall()
+    insert = (
+        "INSERT INTO provider_events (transport, provider_event_ref, provider_message_ref,"
+        " job_id, attempt_id, reported_status, disposition, received_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    if not matches:
         conn.execute(
             insert,
             (
                 transport,
                 provider_event_ref,
                 provider_message_ref,
-                job_id,
-                attempt_id,
+                None,
+                None,
                 status,
-                disposition,
+                "pending_match",
                 stamp,
             ),
         )
+        return "pending_match"
+    if len(matches) > 1:
+        conn.execute(
+            insert,
+            (
+                transport,
+                provider_event_ref,
+                provider_message_ref,
+                None,
+                None,
+                status,
+                "refused",
+                stamp,
+            ),
+        )
+        append_event(
+            conn,
+            "delivery.provider_update_refused",
+            None,
+            {
+                "transport": transport,
+                "reason": ReasonCode.AMBIGUOUS_MATCH.value,
+                "status": status,
+            },
+            now=now,
+        )
+        return "refused"
+    attempt_id, job_id = matches[0]
+    t = reduce(conn, job_id, attempt_id, Evidence.PROVIDER, status, now=now)
+    disposition = t.disposition
+    conn.execute(
+        insert,
+        (
+            transport,
+            provider_event_ref,
+            provider_message_ref,
+            job_id,
+            attempt_id,
+            status,
+            disposition,
+            stamp,
+        ),
+    )
     return cast(ProviderDisposition, disposition)

@@ -389,6 +389,21 @@ CREATE TABLE endpoint_window (identity_id INTEGER PRIMARY KEY REFERENCES deliver
 CREATE TABLE template_bindings (campaign_id INTEGER PRIMARY KEY REFERENCES campaigns(id) ON DELETE RESTRICT,
   name TEXT NOT NULL, language TEXT NOT NULL, schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
   parameters TEXT NOT NULL, bound_at TEXT NOT NULL);
+-- A43 (Task C29): the durable webhook inbox. Verified raw bodies (inside SQLCipher), one row per
+-- body digest; each fan-out effect has its own flag, set once, and completed_at closes the row.
+CREATE TABLE webhook_inbox (id INTEGER PRIMARY KEY, provider_event_ref TEXT NOT NULL UNIQUE, received_at TEXT NOT NULL,
+  body BLOB NOT NULL,
+  archive_done INTEGER NOT NULL DEFAULT 0 CHECK (archive_done IN (0,1)),
+  window_done INTEGER NOT NULL DEFAULT 0 CHECK (window_done IN (0,1)),
+  status_done INTEGER NOT NULL DEFAULT 0 CHECK (status_done IN (0,1)),
+  completed_at TEXT,
+  CHECK (completed_at IS NULL OR (archive_done = 1 AND window_done = 1 AND status_done = 1)));
+CREATE INDEX webhook_inbox_open ON webhook_inbox (id) WHERE completed_at IS NULL;
+CREATE TRIGGER webhook_inbox_flags_forward BEFORE UPDATE ON webhook_inbox
+  WHEN NEW.archive_done < OLD.archive_done OR NEW.window_done < OLD.window_done OR NEW.status_done < OLD.status_done
+    OR (OLD.completed_at IS NOT NULL AND NEW.completed_at IS NOT OLD.completed_at)
+    OR NEW.body IS NOT OLD.body OR NEW.provider_event_ref IS NOT OLD.provider_event_ref
+  BEGIN SELECT RAISE(ABORT, 'webhook inbox rows only move forward'); END;
 CREATE TRIGGER attempts_outcome_code_set_once BEFORE UPDATE OF outcome_code ON delivery_attempts
   WHEN OLD.outcome_code IS NOT NULL BEGIN SELECT RAISE(ABORT, 'outcome code is frozen'); END;
 """
