@@ -18,7 +18,7 @@ from comms.core import refs, timeutil
 from comms.core.errors import CommsError
 from comms.core.storage.db import write_tx
 
-__all__ = ["KIND_PREFIX", "ProviderObject", "object_ref", "resolve_object"]
+__all__ = ["KIND_PREFIX", "ProviderObject", "latest_object", "object_ref", "resolve_object"]
 
 KIND_PREFIX = MappingProxyType(
     {kind: refs.CORE_PREFIXES[kind] for kind in ("message", "invite", "template", "topic", "media")}
@@ -101,3 +101,15 @@ def resolve_object(conn: Any, ref: str, expected_kind: str) -> ProviderObject:
     if row is None:
         raise CommsError("NOT_FOUND")
     return ProviderObject(ref, row[0], row[1], row[2], row[3], row[4])
+
+
+def latest_object(conn: Any, kind: str, transport: str, destination_id: int | None) -> str | None:
+    """The most recently created object of ``kind`` at one destination, or None (read-only)."""
+    if destination_id is None:
+        return None
+    row = conn.execute(
+        "SELECT ref FROM provider_objects WHERE kind = ? AND transport = ? AND destination_id = ?"
+        " ORDER BY id DESC LIMIT 1",
+        (kind, transport, destination_id),
+    ).fetchone()
+    return None if row is None else str(row[0])

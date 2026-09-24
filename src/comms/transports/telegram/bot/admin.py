@@ -48,7 +48,7 @@ class BotAdmin:
             raise ValueError("not a telegram_bot destination")
         build = _REQUESTS.get(op.capability)
         if build is None:
-            raise ValueError("the bot does not perform this operation as one call")
+            raise NotImplementedError("the bot does not perform this operation as one call")
         return build(int(target.identity), op.args)
 
     def invoke(self, op: SemanticOperation, target: ProviderTarget, op_key: str) -> ProviderResult:

@@ -354,3 +354,9 @@ def member_identity(conn: Any, recipient_ref: str, transport: str) -> str | None
         (recipient_ref, transport),
     ).fetchone()
     return None if row is None else str(row[0])
+
+
+def has_recipient(conn: Any, recipient_ref: str) -> bool:
+    """Whether the recipient ref names a recipient (read-only)."""
+    row = conn.execute("SELECT 1 FROM recipients WHERE ref = ?", (recipient_ref,)).fetchone()
+    return row is not None

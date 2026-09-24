@@ -146,7 +146,7 @@ class WhatsAppAdmin:
     def _request(self, op: SemanticOperation, target: ProviderTarget) -> tuple[Call, str]:
         operation = _OPERATIONS.get(op.capability)
         if operation is None:
-            raise ValueError("whatsapp_cloud does not perform this operation")
+            raise NotImplementedError("whatsapp_cloud does not perform this operation")
         group_id = group_id_of(target)
         check, call = operation
         check(op.args)

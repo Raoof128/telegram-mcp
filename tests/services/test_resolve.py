@@ -70,10 +70,11 @@ def test_candidates_carry_refs_not_identities(conn):
     candidates = resolve_person(conn, "Ali", refuse=False).candidates
     assert all(c.ref.startswith("rcp_") for c in candidates)
     assert "61400000001" not in repr(candidates)
-    _group(conn, "MQ", "MQ One", "group:55")
-    _group(conn, "MQ", "MQ Two", "group:56")
+    _group(conn, "MQ", "MQ One", "group:5550001")
+    _group(conn, "MQ", "MQ Two", "group:5550002")
     groups = resolve_group(conn, "mq", now=NOW, refuse=False).candidates
-    assert all(c.ref.startswith("grp_") for c in groups) and "55" not in repr(groups)
+    # a random base32 ref never holds the digits 0, 1 or 8, so this cannot match by chance
+    assert all(c.ref.startswith("grp_") for c in groups) and "555000" not in repr(groups)
     assert {c.label for c in groups} == {"MQ One · MQ", "MQ Two · MQ"}
 
 

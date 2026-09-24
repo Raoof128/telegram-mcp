@@ -1,89 +1,23 @@
 """comms v0.3 Task D12: group membership and admin services (P §25, §26, §73, §74)."""
 
-from datetime import timedelta
-
 import pytest
 
 from comms.core.campaigns import directory as d
 from comms.core.errors import CommsError
-from comms.core.groups import group_ref
 from comms.core.providers.capability import Capability as C
 from comms.core.providers.capability import CapabilityState as S
-from comms.core.providers.protocols import CapabilitySnapshot, ProviderResult, ProviderTarget
-from comms.services.capability import CapabilityService
-from comms.services.groups import MEMBERSHIP, GroupService
-from comms.services.mutations import CallContext, MutationExecutor
-from comms.transports.telegram.bot.admin import BotAdmin
-from comms.transports.whatsapp.cloud.groups import WhatsAppAdmin
-from tests.core import schema_fixtures as fx
-from tests.core.audit.legacy_fixtures import comms_world
+from comms.services.groups import MEMBERSHIP
 from tests.core.campaign_helpers import NOW
-
-CTX = CallContext(client_ref="cli_" + "c" * 26)
-TG_USER, WA_PHONE = "4242", "+61400000001"
-
-
-class Tripwire:
-    def __getattr__(self, name):
-        raise AssertionError(name)
-
-
-class Admin:
-    """Real adapter validation, scripted provider outcomes."""
-
-    def __init__(self, validator, outcome="ok"):
-        self.validator, self.outcome, self.calls = validator, outcome, []
-
-    def validate(self, op, target):
-        self.validator.validate(op, target)
-
-    def invoke(self, op, target, key):
-        self.calls.append((op.capability, dict(op.args)))
-        if self.outcome == "unknown":
-            return ProviderResult("OUTCOME_UNKNOWN", None)
-        if self.outcome == "refused":
-            return ProviderResult("FAILED", "NOT_AUTHORIZED")
-        return ProviderResult("SUCCEEDED", None)
-
-
-class Provider:
-    def __init__(self, state):
-        self.state = state
-
-    def snapshot(self, actor, target):
-        return CapabilitySnapshot(actor, target.destination_ref, dict.fromkeys(C, self.state), "t")
+from tests.services.group_fixtures import CTX, TG_USER, group_service, group_world
 
 
 @pytest.fixture
 def world(tmp_path):
-    w = comms_world(tmp_path)
-    conn = w["conn"]
-    loc = d.add_location(conn, "L", now=NOW)
-    dst = d.add_destination(conn, loc, "telegram", "group:77", "G", normalize=fx.tg, now=NOW)
-    rcp = d.add_recipient(conn, now=NOW, display_name="Ali")
-    d.add_contact_point(conn, rcp, "telegram", f"user:{TG_USER}", normalize=fx.tg, now=NOW)
-    d.add_contact_point(conn, rcp, "whatsapp", WA_PHONE, normalize=fx.wa, now=NOW)
-    w.update(
-        grp=group_ref(conn, dst, now=NOW),
-        rcp=rcp,
-        bot=ProviderTarget("telegram", "telegram_bot", dst, "-77"),
-        wa=ProviderTarget("whatsapp", "whatsapp_cloud", "dst_w", "group:120363049891234567"),
-    )
-    return w
+    return group_world(tmp_path)
 
 
 def _service(world, *, state=S.AVAILABLE, outcome="ok"):
-    admins = {
-        "telegram_bot": Admin(BotAdmin(Tripwire()), outcome),
-        "whatsapp_cloud": Admin(WhatsAppAdmin(Tripwire(), Tripwire()), outcome),
-    }
-    capability = CapabilityService(
-        {actor: Provider(state) for actor in admins},
-        clock=lambda: NOW,
-        max_age=timedelta(minutes=5),
-    )
-    executor = MutationExecutor(world["writer"], admins)
-    return GroupService(world["conn"], capability, executor), admins
+    return group_service(world, state=state, outcome=outcome)
 
 
 ARGS = {
@@ -231,9 +165,10 @@ def test_unknown_tool_is_refused(world):
     assert refused.value.code == "INVALID_ARGUMENT"
 
 
-def test_membership_table_names_the_p25_p26_operations():
+def test_membership_table_names_the_p25_p27_member_operations():
     assert set(MEMBERSHIP) == {
         "group.member.add",
+        "group.member.invite",
         "group.member.remove",
         "group.member.ban",
         "group.member.unban",
@@ -242,4 +177,6 @@ def test_membership_table_names_the_p25_p26_operations():
         "group.admin.promote",
         "group.admin.demote",
         "group.admin.update_rights",
+        "group.join_requests.approve",
+        "group.join_requests.reject",
     }

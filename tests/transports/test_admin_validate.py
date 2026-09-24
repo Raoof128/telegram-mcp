@@ -45,7 +45,6 @@ BAD = {
         SemanticOperation(C.MEMBER_BAN, {"user_id": -1}),
         SemanticOperation(C.MEMBER_BAN, {"user_id": 42, "extra": 1}),
         SemanticOperation(C.ADMIN_PROMOTE, {"user_id": 42, "profile": "everything"}),
-        SemanticOperation(C.GROUP_DELETE, {}),
     ],
     "telegram_user": [
         SemanticOperation(C.MEMBER_BAN, {"user_id": "42"}),
@@ -54,8 +53,12 @@ BAD = {
     "whatsapp_cloud": [
         SemanticOperation(C.GROUP_MEMBER_REMOVE, {"wa_id": "+61 400"}),
         SemanticOperation(C.GROUP_SETTINGS_UPDATE, {}),
-        SemanticOperation(C.MEMBER_BAN, {"user_id": 42}),
     ],
+}
+UNPERFORMED = {
+    "telegram_bot": SemanticOperation(C.GROUP_DELETE, {}),
+    "telegram_user": SemanticOperation(C.CHAT_SET_PHOTO, {}),
+    "whatsapp_cloud": SemanticOperation(C.MEMBER_BAN, {"user_id": 42}),
 }
 
 
@@ -97,3 +100,10 @@ def test_a_lifted_restriction_grants_every_permission_again():
                 SemanticOperation(C.MEMBER_RESTRICT, {"user_id": 42, "permissions": "some"}),
                 target,
             )
+
+
+@pytest.mark.parametrize("actor", sorted(ADAPTERS))
+def test_an_operation_the_actor_does_not_perform_is_not_implemented(actor):
+    adapter, target = ADAPTERS[actor]
+    with pytest.raises(NotImplementedError):
+        adapter.validate(UNPERFORMED[actor], target)

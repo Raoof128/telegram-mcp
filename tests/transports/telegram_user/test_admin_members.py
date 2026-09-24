@@ -217,7 +217,7 @@ def test_unknown_peers_fail_without_a_call(tmp_path):
 def test_member_remove_is_never_one_call(tmp_path):
     assert C.MEMBER_REMOVE not in UserAdmin.operations
     assert SEMANTICS[(C.MEMBER_REMOVE, "telegram_user")].steps == (C.MEMBER_BAN, C.MEMBER_UNBAN)
-    with pytest.raises(ValueError):
+    with pytest.raises(NotImplementedError):
         _invoke(tmp_path, {}, C.MEMBER_REMOVE, {"user_id": 42})
 
 

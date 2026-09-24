@@ -42,6 +42,8 @@ class FakeAdmin:
     def validate(self, op, target):
         if "bad" in op.args:
             raise ValueError("operation arguments are malformed")
+        if "unperformed" in op.args:
+            raise NotImplementedError("this actor does not perform the operation")
 
     def invoke(self, op, target, op_key_):
         keys = [
@@ -62,6 +64,8 @@ class FakeAdmin:
             return ProviderResult("OUTCOME_UNKNOWN", None)
         if outcome == "refused":
             return ProviderResult("FAILED", "NOT_AUTHORIZED")
+        if outcome == "created":
+            return ProviderResult("SUCCEEDED", None, provider_ref="https://t.me/+AbCdEf123")
         return ProviderResult("SUCCEEDED", None)
 
 
@@ -385,3 +389,44 @@ def test_malformed_arguments_are_refused_before_anything_is_recorded(world, capa
         _executor(world, admin).provider(CTX, "comms_group_member_x", BOT, op, REQ)
     assert refused.value.code == "INVALID_ARGUMENT"
     assert admin.calls == [] and _mutation(world["conn"]) is None  # no row, no call, no event
+
+
+def test_a_created_object_gets_a_durable_ref_that_replays(world):
+    admin = FakeAdmin(world["conn"], {C.INVITE_CREATE: ["created"]})
+    executor = _executor(world, admin)
+    op = SemanticOperation(C.INVITE_CREATE, {})
+    first = executor.provider(CTX, "comms_group_invite_create", BOT, op, REQ, object_kind="invite")
+    assert first.state == "SUCCEEDED" and first.result["object_ref"].startswith("inv_")
+    again = executor.provider(CTX, "comms_group_invite_create", BOT, op, REQ, object_kind="invite")
+    assert again.replayed and again.result["object_ref"] == first.result["object_ref"]
+    assert "t.me" not in repr(first) and len(admin.calls) == 1
+
+
+def test_a_created_object_without_a_ref_is_outcome_unknown(world):
+    admin = FakeAdmin(world["conn"])  # SUCCEEDED, but no provider ref to name the object by
+    op = SemanticOperation(C.INVITE_CREATE, {})
+    outcome = _executor(world, admin).provider(
+        CTX, "comms_group_invite_create", BOT, op, REQ, object_kind="invite"
+    )
+    assert outcome.state == "OUTCOME_UNKNOWN" and "object_ref" not in outcome.result
+
+
+def test_an_operation_the_adapter_does_not_perform_is_unsupported(world):
+    admin = FakeAdmin(world["conn"])
+    op = SemanticOperation(C.MEMBER_BAN, {"user_id": 42, "unperformed": True})
+    with pytest.raises(CommsError) as refused:
+        _executor(world, admin).provider(CTX, "comms_group_member_ban", BOT, op, REQ)
+    assert refused.value.code == "PROVIDER_UNSUPPORTED"
+    assert admin.calls == [] and _mutation(world["conn"]) is None
+
+
+@pytest.mark.parametrize("request_id", ["req_1", "req_" + "A" * 26, "op_" + "a" * 27, 42, None])
+def test_a_malformed_request_id_is_refused(world, request_id):
+    admin = FakeAdmin(world["conn"])
+    op = SemanticOperation(C.MEMBER_BAN, {"user_id": 42})
+    executor = _executor(world, admin)
+    with pytest.raises(CommsError) as refused:
+        executor.provider(CTX, "comms_group_member_ban", BOT, op, request_id)
+    assert refused.value.code == "INVALID_ARGUMENT" and admin.calls == []
+    with pytest.raises(CommsError):
+        executor.local(CTX, "comms_x", {}, {}, request_id, lambda tx: {})

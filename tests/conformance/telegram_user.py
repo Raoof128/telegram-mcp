@@ -148,7 +148,7 @@ def admin_saga_is_never_one_call(mode: Mode) -> None:
     admin, session = _admin(mode, ProviderResult("SUCCEEDED", None))
     try:
         admin.invoke(SemanticOperation(Capability.MEMBER_REMOVE, {"user_id": 42}), _GROUP, "k")
-    except ValueError:
+    except NotImplementedError:
         pass
     else:
         raise AssertionError("member.remove ran as one call")

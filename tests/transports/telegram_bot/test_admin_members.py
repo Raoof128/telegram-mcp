@@ -99,7 +99,7 @@ def test_bot_adapter_exposes_no_compound_member_remove_call():
     admin = _admin("admin_true", seen)
     assert C.MEMBER_REMOVE not in admin.operations
     assert SEMANTICS[(C.MEMBER_REMOVE, "telegram_bot")].steps == (C.MEMBER_BAN, C.MEMBER_UNBAN)
-    with pytest.raises(ValueError):
+    with pytest.raises(NotImplementedError):
         admin.invoke(SemanticOperation(C.MEMBER_REMOVE, {"user_id": 42}), GROUP, "k")
     assert seen == []
 
@@ -121,7 +121,7 @@ def test_bot_adapter_exposes_no_compound_member_remove_call():
 )
 def test_malformed_arguments_are_refused_before_any_call(cap, args):
     seen = []
-    with pytest.raises(ValueError):
+    with pytest.raises((ValueError, NotImplementedError)):  # unperformed: NotImplementedError
         _admin("admin_true", seen).invoke(SemanticOperation(cap, args), GROUP, "k")
     assert seen == []
 

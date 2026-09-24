@@ -30,8 +30,10 @@ from comms.core import domains, refs
 from comms.core import mutations as records
 from comms.core.audit.integrity import AuditIntegrityDegraded, require_not_degraded
 from comms.core.audit.writer import AnchorFailed, AuditTx, AuditWriter
+from comms.core.campaigns.directory import destination_id
 from comms.core.canonical import jcs_dumps
 from comms.core.errors import CommsError
+from comms.core.objects import KIND_PREFIX, object_ref
 from comms.core.providers.capability import Capability
 from comms.core.providers.protocols import (
     AdminOperations,
@@ -82,6 +84,14 @@ def op_key(client_ref: str, request_id: str) -> str:
     return hashlib.sha256(domains.ADMIN_OP + body).hexdigest()
 
 
+def _check_request(request_id: object) -> None:
+    """A caller's request id is a well-formed ``req_`` ref, refused before any storage."""
+    try:
+        refs.check(request_id, "request")
+    except ValueError:
+        raise CommsError("INVALID_ARGUMENT") from None
+
+
 def _outcome(row: records.MutationRow, *, replayed: bool) -> MutationOutcome:
     return MutationOutcome(row.op_ref, row.state, row.provider_code, row.result or {}, replayed)
 
@@ -113,6 +123,7 @@ class MutationExecutor:
         request_id: str,
         apply: Callable[[AuditTx], Mapping[str, Any]],
     ) -> MutationOutcome:
+        _check_request(request_id)
         digest = request_digest(tool, args, targets)
         with self._writer.transaction() as tx:
             existing = records.find(tx.conn, ctx.client_ref, request_id)
@@ -163,7 +174,14 @@ class MutationExecutor:
         target: ProviderTarget,
         op: SemanticOperation,
         request_id: str,
+        *,
+        object_kind: str | None = None,
     ) -> MutationOutcome:
+        """``object_kind`` names what a CREATE makes: its provider ref becomes a durable object
+        ref in the result, and a success without one is ``OUTCOME_UNKNOWN`` (A19)."""
+        _check_request(request_id)
+        if object_kind is not None and object_kind not in KIND_PREFIX:
+            raise CommsError("INVALID_ARGUMENT")
         semantics = SEMANTICS.get((op.capability, target.actor))
         adapter = self._admin.get(target.actor)
         if semantics is None or adapter is None or semantics.retry_class == "READ":
@@ -172,6 +190,8 @@ class MutationExecutor:
             extra = semantics.step_args[index] if semantics.step_args else {}
             try:  # malformed arguments are refused before anything is recorded
                 adapter.validate(SemanticOperation(capability, {**op.args, **extra}), target)
+            except NotImplementedError:
+                raise CommsError("PROVIDER_UNSUPPORTED") from None
             except ValueError:
                 raise CommsError("INVALID_ARGUMENT") from None
         targets = {
@@ -234,6 +254,7 @@ class MutationExecutor:
                 request_id,
                 adapter,
                 replayed=True,
+                object_kind=object_kind,
             )
         return self._run(
             mutation_id,
@@ -245,6 +266,7 @@ class MutationExecutor:
             request_id,
             adapter,
             replayed=False,
+            object_kind=object_kind,
         )
 
     def _run(
@@ -259,10 +281,13 @@ class MutationExecutor:
         adapter: AdminOperations,
         *,
         replayed: bool,
+        object_kind: str | None = None,
     ) -> MutationOutcome:
         key = op_key(ctx.client_ref, request_id)
         conn = self._writer.conn
-        for index, step in enumerate(records.steps(conn, mutation_id)):
+        created: dict[str, Any] = {}
+        steps = records.steps(conn, mutation_id)
+        for index, step in enumerate(steps):
             if step.state == "SUCCEEDED":
                 continue
             capability = Capability(step.capability)
@@ -302,6 +327,19 @@ class MutationExecutor:
                 result = ProviderResult("OUTCOME_UNKNOWN", None)
             self._crash("after_call")
             state = result.outcome
+            if object_kind is not None and index == len(steps) - 1 and state == "SUCCEEDED":
+                if not result.provider_ref:
+                    state = "OUTCOME_UNKNOWN"  # created, but nothing to name it by
+                else:
+                    created["object_ref"] = object_ref(
+                        conn,
+                        object_kind,
+                        target.transport,
+                        target.actor,
+                        destination_id(conn, target.destination_ref),
+                        result.provider_ref,
+                        now=self._writer.now(),
+                    )
             try:
                 self._record_step(
                     mutation_id, op_ref, step.step_no, capability, "IN_FLIGHT", state, result.code
@@ -311,7 +349,7 @@ class MutationExecutor:
             self._crash("after_record")
             if state != "SUCCEEDED":
                 return self._finish(mutation_id, op_ref, state, result.code, replayed)
-        return self._finish(mutation_id, op_ref, "SUCCEEDED", None, replayed)
+        return self._finish(mutation_id, op_ref, "SUCCEEDED", None, replayed, created)
 
     def _record_step(
         self,
@@ -338,9 +376,15 @@ class MutationExecutor:
             )
 
     def _finish(
-        self, mutation_id: int, op_ref: str, state: str, code: str | None, replayed: bool
+        self,
+        mutation_id: int,
+        op_ref: str,
+        state: str,
+        code: str | None,
+        replayed: bool,
+        extra: Mapping[str, Any] | None = None,
     ) -> MutationOutcome:
-        result = {"state": state, "code": code}
+        result = {"state": state, "code": code, **(extra or {})}
         try:
             with self._writer.transaction() as tx:
                 digest = records.finish(tx.conn, mutation_id, state, code, result, tx.stamp)

@@ -76,7 +76,7 @@ class UserAdmin:
             raise ValueError("not a telegram_user destination")
         build = _SPECS.get(op.capability)
         if build is None:
-            raise ValueError("the user actor does not perform this operation as one call")
+            raise NotImplementedError("the user actor does not perform this operation as one call")
         spec = build(op.args)
         peer_type, peer_id = unmark_chat_id(target.identity)
         if peer_type == "user":
