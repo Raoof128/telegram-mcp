@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 __all__ = [
     "LINEAGE_COLUMNS",
     "PHASES",
+    "SEAL_CHECKPOINT_FIELDS",
     "CutoverCrash",
     "CutoverError",
     "LegacyPort",
@@ -33,9 +34,12 @@ __all__ = [
     "advance_comms",
     "advance_legacy",
     "current_phase",
+    "expected_lineage",
+    "genesis_payload",
     "lineage_digest",
     "record_seal",
     "run_cutover",
+    "seal_of",
 ]
 
 PHASES = (
@@ -82,6 +86,30 @@ class LegacySeal:
     final_head: str  # the sealing checkpoint's last_event_mac
     checkpoint_digest: str
     checkpoint_key_id: str
+
+
+# The sealing checkpoint's row, in this order, is what checkpoint_digest commits to.
+SEAL_CHECKPOINT_FIELDS = (
+    "checkpoint_ref",
+    "chain_epoch",
+    "chain_seq",
+    "last_event_id",
+    "last_event_mac",
+    "created_at",
+    "signing_key_id",
+    "signature",
+)
+
+
+def seal_of(checkpoint: Mapping[str, Any]) -> LegacySeal:
+    """The seal a sealing checkpoint row stands for: one copy of the digest rule."""
+    record = {k: checkpoint[k] for k in SEAL_CHECKPOINT_FIELDS}
+    return LegacySeal(
+        final_epoch=int(record["chain_epoch"]),
+        final_head=str(record["last_event_mac"]),
+        checkpoint_digest=hashlib.sha256(jcs_dumps(record)).hexdigest(),
+        checkpoint_key_id=str(record["signing_key_id"]),
+    )
 
 
 class LegacyPort(Protocol):
@@ -193,10 +221,11 @@ def _comms_domain() -> str:
     return COMMS.event_domain.rstrip(b"\0").decode()
 
 
-def _expected_lineage(cut: str, seal: LegacySeal, legacy: LegacyPort) -> dict[str, Any]:
+def expected_lineage(cut: str, seal: LegacySeal, legacy_chain_domain: str) -> dict[str, Any]:
+    """Every lineage column but ``created_at`` and the digest, as this seal determines it."""
     return {
         "cutover_ref": cut,
-        "legacy_chain_domain": legacy.chain_domain,
+        "legacy_chain_domain": legacy_chain_domain,
         "legacy_final_epoch": seal.final_epoch,
         "legacy_final_head": seal.final_head,
         "legacy_checkpoint_digest": seal.checkpoint_digest,
@@ -204,6 +233,19 @@ def _expected_lineage(cut: str, seal: LegacySeal, legacy: LegacyPort) -> dict[st
         "comms_chain_domain": _comms_domain(),
         "comms_genesis_digest": genesis_mac(COMMS, COMMS_FIRST_EPOCH),
         "comms_first_epoch": COMMS_FIRST_EPOCH,
+    }
+
+
+def genesis_payload(lineage: Mapping[str, Any], comms_audit_key_id: str) -> dict[str, Any]:
+    """The ``system.audit_cutover`` payload a lineage row determines."""
+    return {
+        "legacy_checkpoint_digest": lineage["legacy_checkpoint_digest"],
+        "legacy_final_epoch": lineage["legacy_final_epoch"],
+        "legacy_final_head": lineage["legacy_final_head"],
+        "legacy_checkpoint_key_id": lineage["legacy_checkpoint_key_id"],
+        "comms_chain_domain": lineage["comms_chain_domain"],
+        "comms_epoch": lineage["comms_first_epoch"],
+        "comms_audit_key_id": comms_audit_key_id,
     }
 
 
@@ -217,7 +259,7 @@ def _current_seal(conn: Any, legacy: LegacyPort) -> LegacySeal:
 
 def _check_lineage(conn: Any, cut: str, legacy: LegacyPort) -> dict[str, Any]:
     """The one lineage row, equal field by field to this seal, with a digest that recomputes."""
-    expected = _expected_lineage(cut, _current_seal(conn, legacy), legacy)
+    expected = expected_lineage(cut, _current_seal(conn, legacy), legacy.chain_domain)
     cur = conn.execute(f"SELECT {', '.join(LINEAGE_COLUMNS)}, lineage_digest FROM audit_lineage")
     rows = [dict(zip((*LINEAGE_COLUMNS, "lineage_digest"), r, strict=True)) for r in cur.fetchall()]
     if len(rows) != 1:
@@ -259,7 +301,7 @@ def advance_comms(
             or conn.execute("SELECT count(*) FROM audit_lineage").fetchone()[0]
         ):
             raise CutoverError("comms chain is not empty")
-        row = {**_expected_lineage(cut, seal, legacy), "created_at": timeutil.iso(now)}
+        row = {**expected_lineage(cut, seal, legacy.chain_domain), "created_at": timeutil.iso(now)}
         digest = lineage_digest(row)
         with writer.transaction() as tx:
             names = (*LINEAGE_COLUMNS, "lineage_digest")
@@ -272,15 +314,7 @@ def advance_comms(
                 "system.audit_cutover",
                 subject_ref=cut,
                 subject_digest=digest,
-                payload={
-                    "legacy_checkpoint_digest": seal.checkpoint_digest,
-                    "legacy_final_epoch": seal.final_epoch,
-                    "legacy_final_head": seal.final_head,
-                    "legacy_checkpoint_key_id": seal.checkpoint_key_id,
-                    "comms_chain_domain": _comms_domain(),
-                    "comms_epoch": COMMS_FIRST_EPOCH,
-                    "comms_audit_key_id": writer.key_id(),
-                },
+                payload=genesis_payload(row, writer.key_id()),
             )
             _phase_in_tx(tx.conn, "COMMS_GENESIS", now=now)
         crash("after_COMMS_GENESIS")  # the writer has already anchored this head

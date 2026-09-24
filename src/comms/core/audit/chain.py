@@ -172,16 +172,38 @@ def append_event(
     }
 
 
-def verify_chain(conn: Any, profile: ChainProfile, key_for_epoch: Callable[[int], bytes]) -> None:
-    """Recompute every retained link from the first retained event (epochs: Part B)."""
+def verify_chain(
+    conn: Any,
+    profile: ChainProfile,
+    key_for_epoch: Callable[[int], bytes],
+    *,
+    root: Mapping[str, Any] | None = None,
+) -> None:
+    """Recompute every retained link (epochs: Part B).
+
+    Without ``root`` the chain must start at its genesis. With ``root`` (a checkpoint row
+    whose signature the caller has verified) the first retained event must be exactly the
+    root's last event: its MAC recomputes and equals the signed ``last_event_mac``, and its
+    link backwards is vouched for by the signature instead of by deleted rows.
+    """
     names = (*profile.event_columns, *CHAIN_COLUMNS)
     rows = conn.execute(
         f"SELECT {', '.join(names)} FROM {profile.events_table} ORDER BY chain_epoch, chain_seq"
     ).fetchall()
+    if root is not None and not rows:
+        raise ChainError("the root's event row is missing")
     expected_prev: str | None = None
     expected_seq: int | None = None
     for row in rows:
         record = dict(zip(names, row, strict=True))
+        if expected_seq is None and root is not None:
+            if (record["chain_epoch"], record["chain_seq"], record["event_id"]) != (
+                root["chain_epoch"],
+                root["chain_seq"],
+                root["last_event_id"],
+            ) or not hmac.compare_digest(record["event_mac"], root["last_event_mac"]):
+                raise ChainError("the first retained event is not the root's event")
+            expected_prev, expected_seq = record["prev_event_mac"], record["chain_seq"]
         if expected_seq is None:
             expected_prev, expected_seq = genesis_mac(profile, record["chain_epoch"]), 1
         if record["chain_seq"] != expected_seq:
