@@ -51,6 +51,14 @@ verified by `proof_version`); admin authority is peer credentials; retired
 identifiers are tombstoned. Evidence: `docs/verification/comms-5b3.md`. The
 history above describes each phase as it shipped; where it mentions consent,
 prompts or Touch ID, v0.2 has since retired them.
+**Comms 5b-4** (branch `comms-5b4`): the campaign core in `src/comms/core/`, on
+fake transports only. It has an encrypted `comms.db` (SQLCipher, fail-closed), a
+directory with shared delivery identities, campaigns frozen into immutable
+generations of deduplicated jobs, one reducer, an engine whose only exception
+boundary is `deliver`, cancel/retry/resolution/provider updates, a scheduling time
+gate, and recovery that never resends. It is proved by a bounded model
+(`formal/campaign_model.py`) and a differential walk. No CLI or real adapter yet
+(5d/5e). Evidence: `docs/verification/comms-5b4.md`.
 Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 
 ## Non-negotiables
@@ -78,9 +86,9 @@ Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 1427 passed, 4 skipped
+uv run pytest -q                                  # 2214 passed, 4 skipped
 uv run python scripts/e2e_smoke.py                # 52 checks, end to end
-uv run pytest tests/formal -q -s                  # 544 states, 22 assertions
+uv run pytest tests/formal -q -s                  # 544 states/22 assertions; campaign model 96,528/11
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
 uv run mypy src/comms src/telegram_mcp
@@ -103,8 +111,9 @@ coordinator — and prints one ledger. Both must pass before any claim of done.
 ## Map
 
 Telegram code lives in `src/comms/transports/telegram/` (paths below are relative
-to it unless they start at the repo root). `src/comms/core/` is empty and guarded
-until 5b-2; `src/telegram_mcp/` is only the legacy CLI forwarder.
+to it unless they start at the repo root). `src/comms/core/` is the transport-neutral
+campaign core, which never imports a transport; `src/telegram_mcp/` is only the legacy
+CLI forwarder.
 
 | Area | Where |
 |---|---|
@@ -120,18 +129,23 @@ until 5b-2; `src/telegram_mcp/` is only the legacy CLI forwarder.
 | Telegram adapter (only Telethon importer), reads, daemon | `telegram/`, `runtime/daemon.py` |
 | Health checks | `doctor.py` |
 | Plans and design | `docs/superpowers/` |
+| Campaign core: `comms.db`, directory, freeze, reducer, engine, recovery (repo root) | `src/comms/core/`, `formal/campaign_model.py` |
 | Evidence, gates, deviations | `docs/verification/` |
 
 ## Frozen wires — changing these breaks both halves
 
 - **TG-JCS-v1**: sorted ASCII keys, `,`/`:` separators, literal UTF-8, escape
   only `"`/`\`/U+0000–U+001F. Floats, lone surrogates and non-ASCII keys are
-  fatal. One copy: `canonical.py`. Byte-equality vectors:
+  fatal. One copy: `src/comms/core/canonical.py`. Byte-equality vectors:
   `tests/fixtures/canonical/jcs_vectors.json`.
 - **Receipt proofs** `tg-mcp-disclosure/v1` (historical, consent fields) and
   `tg-mcp-disclosure/v2` (owner-direct, `soft_threshold_exceeded`), selected by
   the stored `proof_version` — `docs/comms-spec-v0.2.md`.
 - **Call binding**: `SHA256("comms-call-binding/v1\0" || JCS({args, nonce, tool}))`.
+- **Campaign-core domains** (`src/comms/core/domains.py`, the only home):
+  `comms-delivery-idem/v1`, `comms-campaign-snapshot/v1`, `comms-campaign-target/v1`,
+  `comms-campaign-recipients/v1`. Every `comms-*` literal is pinned by
+  `tests/security/test_comms_wire_frozen.py`.
 - **`tgml1` bearer leases** — spec §9.7.1, exactly.
 - **Key ids** are `<kind>:sha256:<64 hex>`, recomputed on load, never stored.
 

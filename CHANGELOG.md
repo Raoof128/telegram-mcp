@@ -438,3 +438,20 @@
 - **Files changed:** see AGENT.md entry of the same date.
 - **Verification:** Telegram 1427/4 skipped + smoke 52 + formal 544/22; WhatsVault 539 passed; unexpectedly missing tests = 0.
 - **Follow-ups:** merge decision; runbook key/bundle removal; 5b-4.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms 5b-4: the campaign core (fake transports only).
+- **Summary:** A new encrypted `comms.db` and `comms.core` campaign core:
+  - the directory, with shared delivery identities;
+  - campaigns frozen into immutable generations of deduplicated, idempotent jobs;
+  - one reducer and a derived summary;
+  - an engine whose only exception boundary is `deliver`;
+  - cancel, retry, resolution and provider updates, including updates that arrive before the result;
+  - scheduling with a time gate;
+  - recovery that never resends blindly.
+
+  It is proved by a bounded model with mutation tests and by a differential walk against the library.
+- **Files changed:** see the `AGENT.md` entry of the same date.
+- **Verification:** Telegram 2214 passed, 4 skipped; smoke 52; formal 544/22 plus the campaign model at 96,528 states and 11 properties; WhatsVault 539 passed.
+- **Follow-ups:** the owner's ruling on the snapshot-digest contradiction; the merge decision; 5c/5d/5e.
