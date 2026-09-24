@@ -59,8 +59,9 @@ def _retired_names():
     return names
 
 
-def test_part_a_catalog_is_exactly_the_seed_tool():
-    assert [spec.name for spec in TOOL_CATALOG] == ["comms_capability_list"]
+def test_the_part_a_seed_tool_leads_the_catalog():
+    """Part A shipped only the seed tool; Part D's families follow it, in P order."""
+    assert TOOL_CATALOG[0].name == "comms_capability_list"
     assert all(isinstance(spec, ToolSpec) for spec in TOOL_CATALOG)
 
 

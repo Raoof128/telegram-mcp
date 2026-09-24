@@ -11,12 +11,13 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
 from comms.core.canonical import jcs_dumps
+from comms.mcp.spec import ToolSpec
+from comms.mcp.tools import FAMILIES
 
 __all__ = ["TOOL_CATALOG", "ToolSpec", "catalog_digest", "tool_schema_digest", "tools_list_payload"]
 
@@ -26,66 +27,50 @@ _SERVICE = re.compile(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\Z")
 _RAW_PROPERTIES = frozenset({"method", "path", "endpoint", "rpc", "raw"})
 
 
-@dataclass(frozen=True)
-class ToolSpec:
-    name: str
-    title: str
-    description: str
-    input_schema: Mapping[str, Any]
-    output_schema: Mapping[str, Any]
-    read_only: bool
-    destructive: bool
-    idempotent: bool
-    open_world: bool
-    requires_request_id: bool
-    failure_modes: tuple[str, ...]
-    service: str  # "<service>.<method>" in the ServiceRegistry
-
-
 _TRANSPORT = {"type": "string", "enum": ["telegram", "whatsapp"]}
 
-TOOL_CATALOG: tuple[ToolSpec, ...] = (
-    ToolSpec(
-        name="comms_capability_list",
-        title="List capabilities",
-        description=(
-            "List the semantic capabilities Comms supports, optionally for one transport, "
-            "with their current state. Advisory: the provider's answer to a mutation is final."
-        ),
-        input_schema={
-            "type": "object",
-            "properties": {"transport": _TRANSPORT},
-            "additionalProperties": False,
-        },
-        output_schema={
-            "type": "object",
-            "properties": {
-                "capabilities": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "capability": {"type": "string"},
-                            "transport": _TRANSPORT,
-                            "state": {"type": "string"},
-                        },
-                        "required": ["capability", "transport", "state"],
-                        "additionalProperties": False,
-                    },
-                }
-            },
-            "required": ["capabilities"],
-            "additionalProperties": False,
-        },
-        read_only=True,
-        destructive=False,
-        idempotent=True,
-        open_world=False,
-        requires_request_id=False,
-        failure_modes=("INVALID_ARGUMENT", "AUDIT_INTEGRITY_DEGRADED"),
-        service="capability.list",
+_SEED = ToolSpec(
+    name="comms_capability_list",
+    title="List capabilities",
+    description=(
+        "List the semantic capabilities Comms supports, optionally for one transport, "
+        "with their current state. Advisory: the provider's answer to a mutation is final."
     ),
+    input_schema={
+        "type": "object",
+        "properties": {"transport": _TRANSPORT},
+        "additionalProperties": False,
+    },
+    output_schema={
+        "type": "object",
+        "properties": {
+            "capabilities": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "capability": {"type": "string"},
+                        "transport": _TRANSPORT,
+                        "state": {"type": "string"},
+                    },
+                    "required": ["capability", "transport", "state"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["capabilities"],
+        "additionalProperties": False,
+    },
+    read_only=True,
+    destructive=False,
+    idempotent=True,
+    open_world=False,
+    requires_request_id=False,
+    failure_modes=("INVALID_ARGUMENT", "AUDIT_INTEGRITY_DEGRADED"),
+    service="capability.list",
 )
+# The seed tool first, then each family in P order (D18–D24).
+TOOL_CATALOG: tuple[ToolSpec, ...] = (_SEED, *(spec for family in FAMILIES for spec in family))
 
 
 def _properties(schema: Any) -> set[str]:

@@ -94,6 +94,36 @@ class ContextEngine:
         ]
         return self.search(chosen, query, limit=limit)
 
+    def summarize_source(
+        self, subject: str, targets: Mapping[str, ProviderTarget]
+    ) -> dict[str, Any]:
+        """Which sources can serve this subject's context, and why not (P §20)."""
+        sources = []
+        user = targets.get("telegram_user")
+        if user is not None:
+            reason = None
+            if "telegram_user" not in self._sources or self._capability is None:
+                reason = "NOT_CONFIGURED"
+            else:
+                state = self._capability.state("telegram_user", user, Capability.HISTORY_READ)
+                if state is not CapabilityState.AVAILABLE:
+                    reason = STATE_CODE.get(state, "CAPABILITY_UNAVAILABLE")
+            sources.append(("telegram_live", reason))
+        if "telegram_bot" in targets:
+            configured = "telegram_bot" in self._sources
+            sources.append(("telegram_local", None if configured else "NOT_CONFIGURED"))
+        if "whatsapp_cloud" in targets:
+            configured = "whatsapp_cloud" in self._sources
+            sources.append(("whatsapp_webhook_archive", None if configured else "NOT_CONFIGURED"))
+        sources.append(("campaign_store", None))
+        return {
+            "group_ref": subject,
+            "sources": [
+                {"source": name, "available": reason is None, "reason": reason}
+                for name, reason in sources
+            ],
+        }
+
     def _reader(
         self, targets: Mapping[str, ProviderTarget], capability: Capability, *, fallback: bool
     ) -> ProviderTarget:
