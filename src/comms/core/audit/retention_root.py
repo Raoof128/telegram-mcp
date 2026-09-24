@@ -9,24 +9,13 @@ fails is skipped and reported; one whose event is gone or differs is skipped.
 from __future__ import annotations
 
 import hmac
-import re
 from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Any
 
 from comms.core import timeutil
 from comms.core.audit.chain import ChainError, ChainProfile, _checkpoint_rows, _verify_signature
 
 __all__ = ["choose_root"]
-
-# The comms stored form (timeutil) and the legacy Telegram checkpoint form, exactly.
-_LEGACY = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
-
-
-def _instant(text: object) -> datetime:
-    if isinstance(text, str) and _LEGACY.fullmatch(text):
-        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-    return timeutil.parse(text)
 
 
 def choose_root(
@@ -42,11 +31,13 @@ def choose_root(
     ``skipped`` (if given) receives the ``checkpoint_ref`` of each candidate at or before
     the cutoff whose signature did not verify, newest first.
     """
-    limit = _instant(cutoff)
-    candidates = [c for c in _checkpoint_rows(conn, profile) if _instant(c["created_at"]) <= limit]
+    limit = timeutil.instant(cutoff)
+    candidates = [
+        c for c in _checkpoint_rows(conn, profile) if timeutil.instant(c["created_at"]) <= limit
+    ]
     for checkpoint in sorted(
         candidates,
-        key=lambda c: (c["chain_epoch"], c["chain_seq"], _instant(c["created_at"])),
+        key=lambda c: (c["chain_epoch"], c["chain_seq"], timeutil.instant(c["created_at"])),
         reverse=True,
     ):
         try:

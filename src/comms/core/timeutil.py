@@ -9,9 +9,11 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 
-__all__ = ["iso", "parse", "utc"]
+__all__ = ["instant", "iso", "parse", "utc"]
 
 _ISO = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z")
+# The legacy Telegram rows' second-precision spelling (read-only: comms never writes it).
+_LEGACY = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 
 
 def utc(dt: datetime) -> datetime:
@@ -31,3 +33,10 @@ def parse(text: object) -> datetime:
     if not isinstance(text, str) or _ISO.fullmatch(text) is None:
         raise ValueError("not a canonical UTC time")
     return datetime.strptime(text, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
+
+
+def instant(text: object) -> datetime:
+    """A stored comms time, or a legacy Telegram second-precision time; nothing else."""
+    if isinstance(text, str) and _LEGACY.fullmatch(text):
+        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    return parse(text)
