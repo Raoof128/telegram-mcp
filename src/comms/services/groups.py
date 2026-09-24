@@ -23,10 +23,12 @@ from typing import Any
 
 from comms.core.campaigns.directory import destination_id, has_recipient, member_identity
 from comms.core.errors import CommsError
+from comms.core.groups import GroupError, group_view, list_groups
 from comms.core.objects import latest_object
 from comms.core.providers.capability import Capability as C
 from comms.core.providers.protocols import ProviderTarget
 from comms.services.capability import CapabilityService
+from comms.services.local import next_cursor, page_args
 from comms.services.mutations import CallContext, MutationExecutor
 from comms.services.writes import ProviderWrites, summary, transport_of
 
@@ -112,6 +114,19 @@ class GroupService:
         self, conn: Any, capability: CapabilityService, executor: MutationExecutor
     ) -> None:
         self._conn, self._writes = conn, ProviderWrites(conn, capability, executor)
+
+    def list(self, *, limit: int = 50, cursor: str | None = None) -> dict[str, Any]:
+        """``group.list``: the directory's groups, newest first, by ref and name."""
+        size, before = page_args(limit, cursor)
+        items, more = list_groups(self._conn, limit=size, before=before)
+        return {"items": items, "next_cursor": next_cursor(more)}
+
+    def get(self, group: str) -> dict[str, Any]:
+        """``group.get``: one group's directory record."""
+        try:
+            return group_view(self._conn, group)
+        except GroupError:
+            raise CommsError("NOT_FOUND") from None
 
     def member(
         self,

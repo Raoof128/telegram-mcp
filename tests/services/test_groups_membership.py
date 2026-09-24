@@ -180,3 +180,13 @@ def test_membership_table_names_the_p25_p27_member_operations():
         "group.join_requests.approve",
         "group.join_requests.reject",
     }
+
+
+def test_an_actor_that_can_never_perform_the_operation_is_never_chosen(world):
+    """Even if a snapshot says AVAILABLE, the bot has no member.add: the user actor is chosen."""
+    service, admins = _service(world)
+    targets = {"telegram_bot": world["bot"], "telegram_user": world["user"]}
+    result = service.member(
+        CTX, "group.member.add", world["grp"], targets, world["rcp"], {}, "req_" + "x" * 26
+    )
+    assert result["actor"] == "telegram_user" and admins["telegram_bot"].calls == []

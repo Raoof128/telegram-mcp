@@ -16,6 +16,7 @@ from comms.core.errors import CommsError
 from comms.core.objects import resolve_object
 from comms.core.providers.capability import Capability
 from comms.core.providers.protocols import ProviderResult, ProviderTarget, SemanticOperation
+from comms.core.providers.semantics import SEMANTICS
 from comms.services.capability import CapabilityService
 from comms.services.mutations import CallContext, MutationExecutor, MutationOutcome
 
@@ -62,7 +63,12 @@ class ProviderWrites:
         objects: Mapping[ObjectArg, object] | None = None,
         object_kind: str | None = None,
     ) -> tuple[str, ProviderTarget, MutationOutcome]:
-        chosen = self._capability.choose_actor(targets, capability, preferred=actor)
+        able = {a: t for a, t in targets.items() if (capability, a) in SEMANTICS}
+        if not able:  # no named actor can ever perform it, whatever a snapshot says
+            raise CommsError("PROVIDER_UNSUPPORTED")
+        if actor is not None and actor != "auto" and actor not in able:
+            raise CommsError("PROVIDER_UNSUPPORTED")
+        chosen = self._capability.choose_actor(able, capability, preferred=actor)
         target = targets[chosen]
         call = dict(args)
         for (kind, field), ref in (objects or {}).items():
