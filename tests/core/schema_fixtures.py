@@ -9,6 +9,7 @@ from typing import Any
 from comms.core import refs
 from comms.core.storage.db import open_comms_db
 from comms.core.storage.migrations import MIGRATIONS, migrate
+from comms.transports.telegram.peers import marked_chat_id
 
 KEY = bytes(range(32))
 T0 = "2026-09-24T00:00:00.000000Z"
@@ -194,12 +195,8 @@ def world(conn: Any) -> dict[str, Any]:
 
 
 def tg(raw: str) -> str:
-    """Marked Telegram identity (S2): user and private chat N → N, group → -N, channel → -100N."""
-    kind, sep, number = raw.partition(":")
-    marks = {"user": "", "private": "", "group": "-", "channel": "-100"}
-    if not sep or kind not in marks or not number.isdigit():
-        raise ValueError("unrecognised telegram peer")
-    return marks[kind] + number
+    """Marked Telegram identity (S2): the production rule, one copy (comms v0.3 C16)."""
+    return marked_chat_id(raw)
 
 
 def wa(raw: str) -> str:

@@ -376,6 +376,11 @@ CREATE TRIGGER attempts_request_key_scoped_unique BEFORE UPDATE OF provider_requ
   WHEN EXISTS (SELECT 1 FROM delivery_attempts a WHERE a.transport_actor = NEW.transport_actor
     AND a.provider_request_key = NEW.provider_request_key AND a.job_id <> NEW.job_id)
   BEGIN SELECT RAISE(ABORT, 'provider request key collision'); END;
+-- A24 (Task C21): MTProto messages received on the session's update stream, retained once
+-- each (event_ref = "<marked chat>:<message id>").
+CREATE TABLE user_updates (event_ref TEXT PRIMARY KEY, chat_id TEXT NOT NULL, message_id INTEGER NOT NULL,
+  kind TEXT NOT NULL, payload TEXT NOT NULL, received_at TEXT NOT NULL);
+CREATE INDEX user_updates_chat ON user_updates (chat_id, message_id);
 CREATE TRIGGER attempts_outcome_code_set_once BEFORE UPDATE OF outcome_code ON delivery_attempts
   WHEN OLD.outcome_code IS NOT NULL BEGIN SELECT RAISE(ABORT, 'outcome code is frozen'); END;
 """

@@ -37,7 +37,7 @@ def test_all_locations_resolves_only_configured_enabled_locations(conn):
     locs = [d.add_location(conn, n, now=NOW) for n in ("MQ", "UNSW", "USYD")]
     groups = [
         d.add_destination(conn, loc, "telegram", f"group:{i}", "g", normalize=fx.tg, now=NOW)
-        for i, loc in enumerate(locs)
+        for i, loc in enumerate(locs, start=1)  # Telegram ids start at 1
     ]
     d.add_location(conn, "unconfigured", now=NOW)  # never added to the audience
     everyone = d.add_audience(conn, "all-locations", now=NOW)

@@ -42,6 +42,7 @@ from comms.transports.telegram.telegram.deadline import (
 from comms.transports.telegram.telegram.errors import GatewayError
 from comms.transports.telegram.telegram.rights import SelfRights
 from comms.transports.telegram.telegram.send_attempt import SendAttempt
+from comms.transports.telegram.telegram.updates_view import NeutralUpdate
 
 __all__ = [
     "ADMIN_RPCS",
@@ -56,7 +57,9 @@ __all__ = [
     "SendAttempt",
     "TelegramConfig",
     "TelethonSession",
+    "UpdateStreamTaken",
     "capability_operation",
+    "neutral_updates",
     "qualified",
     "translate",
 ]
@@ -324,6 +327,45 @@ def _chat_rights(result: Any, chat_id: int) -> SelfRights:
     if chat.admin_rights is not None:
         return SelfRights("chat", "admin", _flags(chat.admin_rights))
     return SelfRights("chat", "member", frozenset(), _flags(chat.default_banned_rights))
+
+
+class UpdateStreamTaken(Exception):
+    """Another consumer already owns this session's update stream (A24). Fixed message."""
+
+    def __init__(self) -> None:
+        super().__init__("the update stream already has a consumer")
+
+
+def _marked(peer: Any) -> str | None:
+    try:
+        return str(utils.get_peer_id(peer))
+    except (TypeError, ValueError):
+        return None
+
+
+def neutral_updates(raw: Any) -> list[NeutralUpdate]:
+    """The updates a consumer acts on (C21): ``updateMessageID`` and new messages, in order.
+    Everything else (typing, read receipts, a send's own short result) is not an event."""
+    found = []
+    for update in getattr(raw, "updates", None) or ():
+        if isinstance(update, types.UpdateMessageID):
+            found.append(
+                NeutralUpdate("message_id", message_id=update.id, random_id=update.random_id)
+            )
+        elif isinstance(update, types.UpdateNewMessage | types.UpdateNewChannelMessage):
+            message = update.message
+            if not isinstance(message, types.Message) or message.peer_id is None:
+                continue
+            sender = getattr(message, "from_id", None)
+            payload = {
+                "text": message.message,
+                "sender_id": _marked(sender) if sender is not None else None,
+                "sent_at": _iso(message.date),
+            }
+            found.append(
+                NeutralUpdate("message", _marked(message.peer_id), message.id, None, payload)
+            )
+    return found
 
 
 class _PeerMissing(Exception):
@@ -716,6 +758,7 @@ class TelethonSession:
         self.connected = False
         self.authorized = False
         self.logged_out = False  # the operator ran auth logout-local
+        self._update_owner: str | None = None  # A24: one consumer of the update stream
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -872,6 +915,16 @@ class TelethonSession:
                 elif gateway.code == "ACCOUNT_UNAVAILABLE":
                     self.account_unavailable = True
             raise gateway from None
+
+    def claim_updates(self, owner: str) -> None:
+        """A24: the session's update stream has one consumer; a second is refused."""
+        if self._update_owner not in (None, owner):
+            raise UpdateStreamTaken
+        self._update_owner = owner
+
+    def release_updates(self, owner: str) -> None:
+        if self._update_owner == owner:
+            self._update_owner = None
 
     async def call_capability(
         self,
