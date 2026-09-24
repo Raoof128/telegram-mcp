@@ -650,6 +650,19 @@ _V03_SEAL = (
       WHEN OLD.key = 'auth.tgml1_state' AND OLD.value_json = '"revoked"'
       BEGIN SELECT RAISE(ABORT, 'tgml1 revocation is one-way'); END
     """,
+    # comms v0.3 B17 (G6, N8): legacy audit rows leave only by truncation behind a root.
+    "CREATE TABLE maintenance_flags (name TEXT PRIMARY KEY, value INTEGER NOT NULL CHECK (value IN (0, 1)))",
+    "INSERT INTO maintenance_flags (name, value) VALUES ('truncating', 0)",
+    """
+    CREATE TRIGGER legacy_audit_events_truncation_only BEFORE DELETE ON audit_events
+      WHEN (SELECT value FROM maintenance_flags WHERE name = 'truncating') IS NOT 1
+      BEGIN SELECT RAISE(ABORT, 'legacy audit deletes only by truncation'); END
+    """,
+    """
+    CREATE TRIGGER legacy_audit_checkpoints_never_deleted BEFORE DELETE ON audit_checkpoints
+      WHEN (SELECT value FROM maintenance_flags WHERE name = 'truncating') IS NOT 1
+      BEGIN SELECT RAISE(ABORT, 'legacy audit deletes only by truncation'); END
+    """,
 )
 
 MIGRATIONS: tuple[Migration, ...] = (

@@ -9,6 +9,7 @@ from comms.core.audit.verify_all import verify_all
 from comms.core.storage.db import write_tx
 from comms.transports.telegram.disclosure.audit import chain as legacy_chain
 from comms.transports.telegram.storage.settings import set_setting
+from tests.authority_fixtures import drop_legacy_audit_guards
 from tests.core.audit.legacy_fixtures import CHECKPOINT_SEED, comms_world, legacy_port, verify_keys
 from tests.core.campaign_helpers import NOW
 
@@ -109,7 +110,9 @@ def test_rolled_back_legacy_db_fails(world):
 
 
 def _truncate_legacy_before(conn, seq):
+    conn.execute("UPDATE maintenance_flags SET value = 1 WHERE name = 'truncating'")  # as B17 does
     conn.execute("DELETE FROM audit_events WHERE chain_epoch = 1 AND chain_seq < ?", (seq,))
+    conn.execute("UPDATE maintenance_flags SET value = 0 WHERE name = 'truncating'")
     conn.commit()
 
 
@@ -133,6 +136,7 @@ def test_legacy_truncation_without_a_root_fails(world):
 def test_legacy_truncation_that_removed_the_final_checkpoint_fails(world):
     port = world["port"]
     co.run_cutover(world["conn"], port, world["writer"], now=NOW)
+    drop_legacy_audit_guards(port.conn)  # an attacker: retention never deletes a checkpoint
     port.conn.execute(
         "DELETE FROM audit_checkpoints WHERE chain_seq = (SELECT max(chain_seq) FROM audit_checkpoints)"
     )

@@ -52,9 +52,14 @@ def legacy_event(tool: str = "admin.lock") -> dict:
     }
 
 
-def legacy_port(tmp_path: Path, *, events: int = 3, name: str = "legacy.db") -> TelegramLegacyPort:
+def legacy_port(
+    tmp_path: Path, *, events: int = 3, name: str = "legacy.db", build=None
+) -> TelegramLegacyPort:
+    """A legacy DB with ``events`` plain events, or whatever ``build(conn)`` writes, anchored."""
     conn = open_db(tmp_path / name)
     migrate(conn)
+    if build is not None:
+        build(conn)
     for _ in range(events):
         with write_tx(conn):
             append_event(conn, CHAIN_KEY, legacy_event())

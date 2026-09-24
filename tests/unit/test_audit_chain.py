@@ -13,6 +13,7 @@ from comms.transports.telegram.disclosure.audit.chain import (
 )
 from comms.transports.telegram.storage.db import open_db
 from comms.transports.telegram.storage.migrations import migrate
+from tests.authority_fixtures import drop_legacy_audit_guards
 
 _KEY = bytes(range(32))
 
@@ -114,6 +115,7 @@ def test_editing_a_row_breaks_verification(conn):
 def test_deleting_the_tail_breaks_verification(conn):
     _append(conn, _event())
     _append(conn, _event())
+    drop_legacy_audit_guards(conn)  # an attacker with raw DB access
     conn.execute("DELETE FROM audit_events WHERE chain_seq = 2")
     conn.commit()
     # Sequence continuity holds, but the head no longer matches what the

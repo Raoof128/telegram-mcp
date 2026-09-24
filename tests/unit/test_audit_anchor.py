@@ -18,6 +18,7 @@ from comms.transports.telegram.disclosure.audit.anchor import (
 from comms.transports.telegram.disclosure.audit.chain import append_event, mint_event_id
 from comms.transports.telegram.storage.db import open_db
 from comms.transports.telegram.storage.migrations import migrate
+from tests.authority_fixtures import drop_legacy_audit_guards
 
 _KEY = bytes(range(32))
 
@@ -177,6 +178,7 @@ def test_anchor_ahead_of_the_head_fails_closed(tmp_path, anchor_dir):
     appended = _append(conn, _event())
     path = anchor_dir / "anchor.json"
     _write(path, **{k: appended[k] for k in ("chain_epoch", "chain_seq", "event_id", "event_mac")})
+    drop_legacy_audit_guards(conn)  # an attacker with raw DB access
     conn.execute("DELETE FROM audit_events")  # DB-only truncation
     conn.commit()
     assert derive_integrity(conn, _KEY, path) == FAIL_CLOSED
