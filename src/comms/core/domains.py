@@ -24,3 +24,4 @@ AUDIT_CHAIN = b"comms-audit-chain/v1\0"  # comms v0.3 A7
 AUDIT_GENESIS = b"comms-audit-genesis/v1\0"  # comms v0.3 A7
 AUDIT_CHECKPOINT = b"comms-audit-checkpoint/v1\0"  # comms v0.3 A7
 AUDIT_HEAD_ANCHOR = b"comms/audit-head-anchor/v1\0"  # comms v0.3 A8
+CAMPAIGN_EVENT = b"comms-campaign-event/v1\0"  # comms v0.3 A16/G4

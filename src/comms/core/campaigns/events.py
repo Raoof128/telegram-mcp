@@ -8,16 +8,25 @@ validator over a finite domain, and nothing else is accepted.
 
 from __future__ import annotations
 
-import re
-from collections.abc import Callable, Mapping
+import hashlib
+from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from comms.core import refs, timeutil
+from comms.core import domains, refs, timeutil
 from comms.core.canonical import jcs_dumps
+from comms.core.validators import Validator, count, digest, one_of, ref, time
 
-__all__ = ["EVENT_FIELDS", "EVENT_TYPES", "LIFECYCLES", "SUMMARIES", "ReasonCode", "append_event"]
+__all__ = [
+    "EVENT_FIELDS",
+    "EVENT_TYPES",
+    "LIFECYCLES",
+    "SUMMARIES",
+    "ReasonCode",
+    "append_event",
+    "journal_digest",
+]
 
 EVENT_TYPES = frozenset(
     {
@@ -51,41 +60,6 @@ class ReasonCode(StrEnum):
     RETRY_EXHAUSTED = "RETRY_EXHAUSTED"
 
 
-_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
-Validator = Callable[[Any], bool]
-
-
-def _ref(kind: str) -> Validator:
-    def check(value: Any) -> bool:
-        try:
-            refs.check(value, kind)
-        except ValueError:
-            return False
-        return True
-
-    return check
-
-
-def _one_of(values: frozenset[str] | set[str]) -> Validator:
-    return lambda value: isinstance(value, str) and value in values
-
-
-def _count(minimum: int) -> Validator:
-    return lambda value: type(value) is int and value >= minimum
-
-
-def _digest(value: Any) -> bool:
-    return isinstance(value, str) and _HEX64.fullmatch(value) is not None
-
-
-def _time(value: Any) -> bool:
-    try:
-        timeutil.parse(value)
-    except ValueError:
-        return False
-    return True
-
-
 _COUNTS = (
     "job_count",
     "pending_count",
@@ -100,22 +74,28 @@ _COUNTS = (
     "exhausted_count",
 )
 EVENT_FIELDS: Mapping[str, Validator] = {
-    "generation": _ref("generation"),
-    "job": _ref("job"),
-    "attempt": _ref("attempt"),
-    "transport": _one_of({"telegram", "whatsapp"}),
-    "target_digest": _digest,
-    "recipient_digest": _digest,
-    "snapshot_digest": _digest,
-    **{name: _count(0) for name in _COUNTS},
-    "attempt_no": _count(1),
-    "summary": _one_of(SUMMARIES),
-    "lifecycle": _one_of(LIFECYCLES),
-    "reason": _one_of({r.value for r in ReasonCode}),
-    "send_at": _time,
-    "verdict": _one_of({"sent", "not_sent"}),
-    "status": _one_of({"ACCEPTED", "DELIVERED", "FAILED_PERMANENT"}),
+    "generation": ref("generation"),
+    "job": ref("job"),
+    "attempt": ref("attempt"),
+    "transport": one_of({"telegram", "whatsapp"}),
+    "target_digest": digest,
+    "recipient_digest": digest,
+    "snapshot_digest": digest,
+    **{name: count(0) for name in _COUNTS},
+    "attempt_no": count(1),
+    "summary": one_of(SUMMARIES),
+    "lifecycle": one_of(LIFECYCLES),
+    "reason": one_of({r.value for r in ReasonCode}),
+    "send_at": time,
+    "verdict": one_of({"sent", "not_sent"}),
+    "status": one_of({"ACCEPTED", "DELIVERED", "FAILED_PERMANENT"}),
 }
+
+
+def journal_digest(row: Mapping[str, Any]) -> str:
+    """The digest of a complete journal row (comms v0.3 G4): every committed field but itself."""
+    body = {k: row[k] for k in ("campaign_ref", "event_ref", "event_type", "payload", "ts")}
+    return hashlib.sha256(domains.CAMPAIGN_EVENT + jcs_dumps(body)).hexdigest()
 
 
 def append_event(
@@ -125,8 +105,13 @@ def append_event(
     payload: Mapping[str, Any],
     *,
     now: datetime,
+    audit: Any = None,
 ) -> str:
-    """Append one event inside the caller's open transaction; return its ``cev_`` ref."""
+    """Append one event inside the caller's open transaction; return its ``cev_`` ref.
+
+    With ``audit`` (an ``AuditTx``), the same transaction appends the bound chain event
+    ``campaign_event`` whose subject is this row's ref and complete-row digest.
+    """
     if not conn.in_transaction:
         raise RuntimeError("events are appended inside the state change's transaction")
     if event_type not in EVENT_TYPES:
@@ -137,10 +122,31 @@ def append_event(
         validator = EVENT_FIELDS.get(key)
         if validator is None or not validator(value):
             raise ValueError("event payload field refused")
-    ref = refs.mint("event")
+    row = {
+        "event_ref": refs.mint("event"),
+        "campaign_ref": campaign_ref,
+        "event_type": event_type,
+        "ts": timeutil.iso(now),
+        "payload": dict(payload),
+    }
+    event_digest = journal_digest(row)
     conn.execute(
-        "INSERT INTO campaign_events (event_ref, campaign_ref, event_type, ts, payload)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (ref, campaign_ref, event_type, timeutil.iso(now), jcs_dumps(dict(payload)).decode()),
+        "INSERT INTO campaign_events (event_ref, campaign_ref, event_type, ts, payload, event_digest)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            row["event_ref"],
+            campaign_ref,
+            event_type,
+            row["ts"],
+            jcs_dumps(row["payload"]).decode(),
+            event_digest,
+        ),
     )
-    return ref
+    if audit is not None:
+        audit.append(
+            "campaign_event",
+            subject_ref=row["event_ref"],
+            subject_digest=event_digest,
+            payload={"event_type": event_type},
+        )
+    return str(row["event_ref"])
