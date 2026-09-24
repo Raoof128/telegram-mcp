@@ -50,7 +50,7 @@ __all__ = [
     "migrate",
 ]
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # 2: versioned receipts, owner-direct v2 (comms 5b-3 design §2.2)
 
 # Spec §12.2 table order.
 SCHEMA_TABLES: tuple[str, ...] = (
@@ -428,6 +428,15 @@ def _guard(name: str, event: str, table: str, when: str, message: str) -> str:
     )
 
 
+# One definition, used by migration 1 and re-created by the v2 rebuild.
+_RECEIPTS_TRIGGER = _guard(
+    "disclosure_receipts_tuple_consistency_insert",
+    "INSERT",
+    "disclosure_receipts",
+    _TUPLE_WHEN,
+    "disclosure_receipts: principal, client and account must be consistent",
+)
+
 _TRIGGERS = (
     _guard(
         "project_peers_same_account_insert",
@@ -510,13 +519,7 @@ _TRIGGERS = (
         _TUPLE_WHEN,
         "cursors: principal, client and account must be consistent",
     ),
-    _guard(
-        "disclosure_receipts_tuple_consistency_insert",
-        "INSERT",
-        "disclosure_receipts",
-        _TUPLE_WHEN,
-        "disclosure_receipts: principal, client and account must be consistent",
-    ),
+    _RECEIPTS_TRIGGER,
 )
 
 # Spec §12.2: the security_state singleton is created transactionally at
@@ -531,14 +534,84 @@ _SEEDS = (
 
 @dataclass(frozen=True)
 class Migration:
-    """One schema version and the statements that build it."""
+    """One schema version and the statements that build it.
+
+    ``rebuild`` marks SQLite's documented 12-step table rebuild: foreign keys
+    are switched off *outside* the transaction (a pragma inside one is a
+    no-op), and ``PRAGMA foreign_key_check`` must be empty before commit.
+    """
 
     version: int
     statements: tuple[str, ...]
+    rebuild: bool = False
+
+
+_V1_RECEIPT_COLUMNS = (
+    "id, disclosure_ref, committed_at, principal_id, client_id, account_id, tool_name,"
+    " security_epoch, policy_epoch, project_scope_digest, project_count, effective_egress_level,"
+    " records_disclosed, bytes_disclosed, partial, commit_status, consent_key_id,"
+    " consent_challenge_digest, canonical_result_provenance_digest, canonical_coverage_digest,"
+    " proof_payload_sha256, proof_key_id, proof_signature"
+)
+
+# Comms 5b-3 design §2.1-§2.2: versioned receipts. v1 rows keep their consent
+# values byte-identical (proof_version defaults to 1); v2 (owner_direct) rows
+# carry no consent and a soft-threshold flag. The table CHECK makes a
+# version/shape disagreement unrepresentable.
+_RECEIPTS_V2: tuple[str, ...] = (
+    """
+    CREATE TABLE disclosure_receipts_v2 (
+        id INTEGER PRIMARY KEY,
+        disclosure_ref TEXT NOT NULL UNIQUE,
+        committed_at TEXT NOT NULL,
+        principal_id INTEGER NOT NULL,
+        client_id INTEGER NOT NULL,
+        account_id INTEGER NOT NULL,
+        tool_name TEXT NOT NULL,
+        security_epoch INTEGER NOT NULL,
+        policy_epoch INTEGER NOT NULL,
+        project_scope_digest TEXT NOT NULL,
+        project_count INTEGER NOT NULL CHECK(project_count >= 0 AND project_count <= 8),
+        effective_egress_level TEXT NOT NULL
+            CHECK(effective_egress_level IN ('metadata_only','excerpt','full_text')),
+        records_disclosed INTEGER NOT NULL CHECK(records_disclosed >= 0),
+        bytes_disclosed INTEGER NOT NULL CHECK(bytes_disclosed >= 0),
+        partial INTEGER NOT NULL CHECK(partial IN (0,1)),
+        commit_status TEXT NOT NULL CHECK(commit_status = 'committed'),
+        consent_key_id TEXT,
+        consent_challenge_digest TEXT,
+        canonical_result_provenance_digest TEXT NOT NULL,
+        canonical_coverage_digest TEXT,
+        proof_payload_sha256 TEXT NOT NULL,
+        proof_key_id TEXT NOT NULL,
+        proof_signature TEXT NOT NULL,
+        proof_version INTEGER NOT NULL DEFAULT 1 CHECK(proof_version IN (1,2)),
+        soft_threshold_exceeded INTEGER
+            CHECK(soft_threshold_exceeded IS NULL OR soft_threshold_exceeded IN (0,1)),
+        CHECK(
+          (proof_version = 1 AND consent_key_id IS NOT NULL
+             AND consent_challenge_digest IS NOT NULL AND soft_threshold_exceeded IS NULL) OR
+          (proof_version = 2 AND consent_key_id IS NULL
+             AND consent_challenge_digest IS NULL AND soft_threshold_exceeded IS NOT NULL)
+        ),
+        FOREIGN KEY(principal_id) REFERENCES principals(id),
+        FOREIGN KEY(client_id) REFERENCES mcp_clients(id),
+        FOREIGN KEY(account_id) REFERENCES accounts(id)
+    )
+    """,
+    (
+        f"INSERT INTO disclosure_receipts_v2 ({_V1_RECEIPT_COLUMNS}, proof_version)"
+        f" SELECT {_V1_RECEIPT_COLUMNS}, 1 FROM disclosure_receipts"
+    ),
+    "DROP TABLE disclosure_receipts",
+    "ALTER TABLE disclosure_receipts_v2 RENAME TO disclosure_receipts",
+    _RECEIPTS_TRIGGER,
+)
 
 
 MIGRATIONS: tuple[Migration, ...] = (
-    Migration(SCHEMA_VERSION, _TABLES + _INDEXES + _TRIGGERS + _SEEDS),
+    Migration(1, _TABLES + _INDEXES + _TRIGGERS + _SEEDS),
+    Migration(2, _RECEIPTS_V2, rebuild=True),
 )
 
 
@@ -556,28 +629,41 @@ def current_version(conn: sqlite3.Connection) -> int:
 
 
 def migrate(conn: sqlite3.Connection, *, migrations: tuple[Migration, ...] = MIGRATIONS) -> int:
-    """Apply pending migrations in one transaction; return the new version.
+    """Apply pending migrations, each in its own transaction; return the new version.
 
     Rerunnable: already-applied versions are skipped. A failing statement
-    rolls the whole migration back, so ``schema_version`` never advances past
-    a partially built schema.
+    rolls that migration back, so ``schema_version`` never advances past a
+    partially built schema; earlier versions stay applied and consistent.
+    A ``rebuild`` migration runs with foreign keys off (set outside the
+    transaction) and must leave ``PRAGMA foreign_key_check`` empty.
     """
     pending = [m for m in migrations if m.version > current_version(conn)]
     if not pending:
         return current_version(conn)
     conn.commit()  # close any implicit transaction before an explicit one
     now = _now_iso()
-    try:
-        conn.execute("BEGIN")
-        for migration in sorted(pending, key=lambda m: m.version):
+    prior_fk = int(conn.execute("PRAGMA foreign_keys").fetchone()[0])
+    for migration in sorted(pending, key=lambda m: m.version):
+        if migration.rebuild:
+            conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            conn.execute("BEGIN")
             for statement in migration.statements:
                 conn.execute(statement, {"now": now} if ":now" in statement else ())
+            if migration.rebuild and conn.execute("PRAGMA foreign_key_check").fetchall():
+                raise sqlite3.IntegrityError("foreign key check failed after rebuild")
             conn.execute(
                 "INSERT INTO schema_version(version, applied_at) VALUES (?, ?)",
                 (migration.version, now),
             )
-        conn.execute("COMMIT")
-    except sqlite3.Error:
-        conn.execute("ROLLBACK")
-        raise
+            conn.execute("COMMIT")
+        except sqlite3.Error:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            if migration.rebuild:
+                # Restore the caller's setting; migrate() never changes it.
+                conn.execute(f"PRAGMA foreign_keys = {'ON' if prior_fk else 'OFF'}")
+                if int(conn.execute("PRAGMA foreign_keys").fetchone()[0]) != prior_fk:
+                    raise sqlite3.IntegrityError("foreign-key setting was not restored")
     return current_version(conn)
