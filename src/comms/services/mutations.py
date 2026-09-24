@@ -51,7 +51,7 @@ __all__ = [
     "request_digest",
 ]
 
-CRASH_POINTS = ("after_call", "between_steps")
+CRASH_POINTS = ("before_call", "after_call", "after_record", "between_steps")
 
 
 class MutationCrash(BaseException):
@@ -174,36 +174,40 @@ class MutationExecutor:
             "destination": target.destination_ref,
         }
         digest = request_digest(tool, op.args, targets)
-        with self._writer.transaction() as tx:
-            row = records.find(tx.conn, ctx.client_ref, request_id)
-            if row is not None and row.request_digest != digest:
-                raise CommsError("REQUEST_ID_REUSE")
-            if row is None:
-                self._require_healthy(tx.conn)
-                op_ref = refs.mint("operation")
-                mutation_id = records.insert(
-                    tx.conn,
-                    op_ref=op_ref,
-                    client=ctx.client_ref,
-                    request_id=request_id,
-                    request_digest=digest,
-                    tool=tool,
-                    scope="provider",
-                    target_refs=[target.destination_ref],
-                    actor=target.actor,
-                    retry_class=semantics.retry_class,
-                    ambiguity_policy=semantics.ambiguity_policy,
-                    stamp=tx.stamp,
-                )
-                records.add_steps(
-                    tx.conn, mutation_id, [c.value for c in semantics.steps or (op.capability,)]
-                )
-                tx.append(
-                    "admin.mutation_started",
-                    subject_ref=op_ref,
-                    subject_digest=digest,
-                    payload={"tool": tool, "scope": "provider", "actor": target.actor},
-                )
+        mutation_id, op_ref = 0, ""
+        try:
+            with self._writer.transaction() as tx:
+                row = records.find(tx.conn, ctx.client_ref, request_id)
+                if row is not None and row.request_digest != digest:
+                    raise CommsError("REQUEST_ID_REUSE")
+                if row is None:
+                    self._require_healthy(tx.conn)
+                    op_ref = refs.mint("operation")
+                    mutation_id = records.insert(
+                        tx.conn,
+                        op_ref=op_ref,
+                        client=ctx.client_ref,
+                        request_id=request_id,
+                        request_digest=digest,
+                        tool=tool,
+                        scope="provider",
+                        target_refs=[target.destination_ref],
+                        actor=target.actor,
+                        retry_class=semantics.retry_class,
+                        ambiguity_policy=semantics.ambiguity_policy,
+                        stamp=tx.stamp,
+                    )
+                    records.add_steps(
+                        tx.conn, mutation_id, [c.value for c in semantics.steps or (op.capability,)]
+                    )
+                    tx.append(
+                        "admin.mutation_started",
+                        subject_ref=op_ref,
+                        subject_digest=digest,
+                        payload={"tool": tool, "scope": "provider", "actor": target.actor},
+                    )
+        except AnchorFailed:
+            return self._degraded(mutation_id, op_ref, "IN_FLIGHT", False)
         if row is not None:
             if row.state in ("SUCCEEDED", "FAILED"):
                 return _outcome(row, replayed=True)
@@ -278,8 +282,12 @@ class MutationExecutor:
                 return MutationOutcome(
                     op_ref, "IN_FLIGHT", "AUDIT_INTEGRITY_DEGRADED", {}, replayed
                 )
-            with self._writer.transaction() as tx:
-                records.start_step(tx.conn, mutation_id, step.step_no, f"{key}:{step.step_no}")
+            self._crash("before_call")
+            try:
+                with self._writer.transaction() as tx:
+                    records.start_step(tx.conn, mutation_id, step.step_no, f"{key}:{step.step_no}")
+            except AnchorFailed:
+                return self._degraded(mutation_id, op_ref, "IN_FLIGHT", replayed)
             args = {**op.args, **(step_args[index] if step_args else {})}
             records.before_call(conn)
             try:
@@ -293,7 +301,8 @@ class MutationExecutor:
                     mutation_id, op_ref, step.step_no, capability, "IN_FLIGHT", state, result.code
                 )
             except AnchorFailed:
-                return MutationOutcome(op_ref, state, "AUDIT_INTEGRITY_DEGRADED", {}, replayed)
+                return self._degraded(mutation_id, op_ref, state, replayed)
+            self._crash("after_record")
             if state != "SUCCEEDED":
                 return self._finish(mutation_id, op_ref, state, result.code, replayed)
         return self._finish(mutation_id, op_ref, "SUCCEEDED", None, replayed)
@@ -336,8 +345,17 @@ class MutationExecutor:
                     payload={"state": state, "provider_code": code},
                 )
         except AnchorFailed:
-            return MutationOutcome(op_ref, state, "AUDIT_INTEGRITY_DEGRADED", result, replayed)
+            return self._degraded(mutation_id, op_ref, state, replayed)
         return MutationOutcome(op_ref, state, code, result, replayed)
+
+    def _degraded(
+        self, mutation_id: int, op_ref: str, state: str, replayed: bool
+    ) -> MutationOutcome:
+        """The record committed but its anchor failed (the latch is set): mark the mutation and
+        return the known state with AUDIT_INTEGRITY_DEGRADED; recovery settles it (A8)."""
+        with self._writer.transaction() as tx:  # no event appended, so no anchor refresh
+            records.mark_degraded(tx.conn, mutation_id)
+        return MutationOutcome(op_ref, state, "AUDIT_INTEGRITY_DEGRADED", {}, replayed)
 
     @staticmethod
     def _require_healthy(conn: Any) -> None:

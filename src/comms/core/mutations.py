@@ -24,6 +24,7 @@ __all__ = [
     "finish",
     "finish_step",
     "insert",
+    "interrupted",
     "mark_degraded",
     "mark_retried",
     "start_step",
@@ -49,6 +50,7 @@ class StepRow:
     step_no: int
     capability: str
     state: str
+    provider_code: str | None = None
 
 
 def _need_tx(conn: Any) -> None:
@@ -117,9 +119,10 @@ def add_steps(conn: Any, mutation_id: int, capabilities: Sequence[str]) -> None:
 
 def steps(conn: Any, mutation_id: int) -> list[StepRow]:
     return [
-        StepRow(r[0], r[1], r[2])
+        StepRow(r[0], r[1], r[2], r[3])
         for r in conn.execute(
-            "SELECT step_no, capability, state FROM mutation_steps WHERE mutation_id = ? ORDER BY step_no",
+            "SELECT step_no, capability, state, provider_code FROM mutation_steps"
+            " WHERE mutation_id = ? ORDER BY step_no",
             (mutation_id,),
         )
     ]
@@ -171,3 +174,13 @@ def mark_degraded(conn: Any, mutation_id: int) -> None:
 def before_call(conn: Any) -> None:
     """No provider call is ever made with a comms.db transaction open (R18)."""
     io_guard(conn)
+
+
+def interrupted(conn: Any) -> list[tuple[int, str]]:
+    """Mutations still IN_FLIGHT: after a crash, before recovery (startup only)."""
+    return [
+        (int(r[0]), str(r[1]))
+        for r in conn.execute(
+            "SELECT id, op_ref FROM mutations WHERE state = 'IN_FLIGHT' ORDER BY id"
+        )
+    ]
