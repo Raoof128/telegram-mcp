@@ -32,6 +32,13 @@ __all__ = ["CRASH_POINTS", "Archive", "WebhookWorker", "WorkerCrash", "WorkerRep
 CRASH_POINTS = ("after_archive_before_flag", "after_window_before_flag", "after_status_before_flag")
 
 
+_SET_FLAG = {  # fixed statements: a flag name never becomes SQL text
+    "archive_done": "UPDATE webhook_inbox SET archive_done = 1 WHERE id = ?",
+    "window_done": "UPDATE webhook_inbox SET window_done = 1 WHERE id = ?",
+    "status_done": "UPDATE webhook_inbox SET status_done = 1 WHERE id = ?",
+}
+
+
 class WorkerCrash(BaseException):
     """Raised only by the ``crash_at`` seam; BaseException so no handler swallows it."""
 
@@ -127,8 +134,7 @@ class WebhookWorker:
             self._set(row_id, column)
 
     def _set(self, row_id: int, column: str) -> None:
-        assert column in ("archive_done", "window_done", "status_done")
-        self._conn.execute(f"UPDATE webhook_inbox SET {column} = 1 WHERE id = ?", (row_id,))
+        self._conn.execute(_SET_FLAG[column], (row_id,))
 
     def _identity(self, number: str) -> int | None:
         try:
