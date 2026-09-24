@@ -18,6 +18,9 @@ __all__ = ["MIGRATIONS", "SCHEMA_V1", "SCHEMA_V2", "SCHEMA_V3", "Migration", "mi
 class Migration:
     version: int
     statements: tuple[str, ...]
+    # Runs with foreign keys off (set outside the transaction) and must leave
+    # ``PRAGMA foreign_key_check`` empty: the 5b-3 table-rebuild method.
+    rebuild: bool = False
 
 
 _SCHEMA_V1_SQL = """
@@ -270,13 +273,62 @@ DROP TRIGGER audit_events_append_only_d;
 CREATE TRIGGER audit_events_delete_only_behind_root BEFORE DELETE ON audit_events
   WHEN (SELECT value FROM maintenance_flags WHERE name = 'truncating') IS NOT 1
   BEGIN SELECT RAISE(ABORT, 'audit is append-only: deletes only by truncation behind a root'); END;
+-- A15 (Task B19): campaign-body redaction. The only edit a frozen generation or job ever
+-- accepts is its body going (content -> '{}', payload -> NULL) with redacted_at set once;
+-- every digest stays. delivery_jobs is rebuilt to relax its payload CHECKs for that case.
+ALTER TABLE generations ADD COLUMN redacted_at TEXT;
+DROP TRIGGER generations_frozen;
+CREATE TRIGGER generations_frozen BEFORE UPDATE OF ref, campaign_id, created_at, send_at, content,
+  snapshot_digest, redacted_at ON generations
+  WHEN NOT (NEW.ref IS OLD.ref AND NEW.campaign_id IS OLD.campaign_id AND NEW.created_at IS OLD.created_at
+    AND NEW.send_at IS OLD.send_at AND NEW.snapshot_digest IS OLD.snapshot_digest
+    AND OLD.redacted_at IS NULL AND NEW.redacted_at IS NOT NULL AND NEW.content = '{}')
+  BEGIN SELECT RAISE(ABORT, 'generation is frozen'); END;
+CREATE TABLE delivery_jobs_v3 (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE,
+  generation_id INTEGER NOT NULL REFERENCES generations(id) ON DELETE RESTRICT,
+  transport TEXT NOT NULL CHECK (transport IN ('telegram','whatsapp')),
+  identity_id INTEGER NOT NULL REFERENCES delivery_identities(id) ON DELETE RESTRICT,
+  idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) = 64),
+  payload BLOB, payload_digest TEXT, skip_reason TEXT,
+  state TEXT NOT NULL CHECK (state IN ('PENDING','IN_FLIGHT','ACCEPTED','DELIVERED','FAILED_TRANSIENT',
+    'FAILED_PERMANENT','OUTCOME_UNKNOWN','CANCELLED','SKIPPED_PLATFORM_POLICY','SKIPPED_REVALIDATION')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  redacted_at TEXT,
+  UNIQUE (generation_id, transport, identity_id),
+  CHECK ((payload IS NULL) = (payload_digest IS NULL) OR redacted_at IS NOT NULL),
+  CHECK ((payload IS NULL) = (skip_reason IS NOT NULL) OR redacted_at IS NOT NULL),
+  CHECK ((state = 'SKIPPED_PLATFORM_POLICY') = (payload IS NULL) OR redacted_at IS NOT NULL),
+  CHECK (redacted_at IS NULL OR payload IS NULL),
+  CHECK (payload_digest IS NULL OR (length(payload_digest) = 64 AND payload_digest NOT GLOB '*[^0-9a-f]*')));
+INSERT INTO delivery_jobs_v3 (id, ref, generation_id, transport, identity_id, idempotency_key, payload,
+  payload_digest, skip_reason, state, attempt_count)
+  SELECT id, ref, generation_id, transport, identity_id, idempotency_key, payload, payload_digest,
+    skip_reason, state, attempt_count FROM delivery_jobs;
+DROP TRIGGER job_origins_endpoint_matches_job;
+DROP TABLE delivery_jobs;
+ALTER TABLE delivery_jobs_v3 RENAME TO delivery_jobs;
+CREATE TRIGGER job_origins_endpoint_matches_job BEFORE INSERT ON job_origins
+  WHEN NOT EXISTS (SELECT 1 FROM delivery_jobs j WHERE j.id = NEW.job_id AND (
+    EXISTS (SELECT 1 FROM destinations d WHERE d.ref = NEW.endpoint_ref AND d.identity_id = j.identity_id AND d.transport = j.transport)
+    OR EXISTS (SELECT 1 FROM contact_points c WHERE c.ref = NEW.endpoint_ref AND c.identity_id = j.identity_id AND c.transport = j.transport)))
+  BEGIN SELECT RAISE(ABORT, 'origin endpoint does not match its job'); END;
+CREATE TRIGGER delivery_jobs_transport_matches_identity BEFORE INSERT ON delivery_jobs
+  WHEN (SELECT transport FROM delivery_identities WHERE id = NEW.identity_id) IS NOT NEW.transport
+  BEGIN SELECT RAISE(ABORT, 'job transport mismatch'); END;
+CREATE TRIGGER jobs_binding_frozen BEFORE UPDATE OF ref, generation_id, transport, identity_id,
+  idempotency_key, payload, payload_digest, skip_reason, redacted_at ON delivery_jobs
+  WHEN NOT (NEW.ref IS OLD.ref AND NEW.generation_id IS OLD.generation_id AND NEW.transport IS OLD.transport
+    AND NEW.identity_id IS OLD.identity_id AND NEW.idempotency_key IS OLD.idempotency_key
+    AND NEW.payload_digest IS OLD.payload_digest AND NEW.skip_reason IS OLD.skip_reason
+    AND OLD.redacted_at IS NULL AND NEW.redacted_at IS NOT NULL AND NEW.payload IS NULL)
+  BEGIN SELECT RAISE(ABORT, 'job binding is frozen'); END;
 """
 SCHEMA_V3: tuple[str, ...] = _statements(_SCHEMA_V3_SQL)
 
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, SCHEMA_V1),
     Migration(2, SCHEMA_V2),
-    Migration(3, SCHEMA_V3),
+    Migration(3, SCHEMA_V3, rebuild=True),
 )
 
 
@@ -286,12 +338,23 @@ def migrate(conn: Any, migrations: tuple[Migration, ...] = MIGRATIONS) -> int:
         raise ValueError("migrations must be numbered 1..n in order")
     conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
     done = {row[0] for row in conn.execute("SELECT version FROM schema_version")}
+    prior_fk = int(conn.execute("PRAGMA foreign_keys").fetchone()[0])
     for migration in migrations:
         if migration.version in done:
             continue
-        with write_tx(conn):
-            for statement in migration.statements:
-                conn.execute(statement)
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (migration.version,))
+        if migration.rebuild:
+            conn.execute("PRAGMA foreign_keys = OFF")  # outside the transaction, or it is ignored
+        try:
+            with write_tx(conn):
+                for statement in migration.statements:
+                    conn.execute(statement)
+                if migration.rebuild and conn.execute("PRAGMA foreign_key_check").fetchall():
+                    raise RuntimeError("foreign key check failed after rebuild")
+                conn.execute(
+                    "INSERT INTO schema_version (version) VALUES (?)", (migration.version,)
+                )
+        finally:
+            if migration.rebuild:
+                conn.execute(f"PRAGMA foreign_keys = {'ON' if prior_fk else 'OFF'}")
     row = conn.execute("SELECT max(version) FROM schema_version").fetchone()
     return int(row[0] or 0)

@@ -11,7 +11,8 @@ The legacy phases (Task B17), in the order the legacy foreign keys force (N8):
 4. ``message_refs`` older than ``message_ref_days`` that no live cursor names.
 
 Then the comms chain prefix (Task B18): events strictly before the latest verified comms
-checkpoint at or before ``audit_events_days``.
+checkpoint at or before ``audit_events_days``; then campaign bodies (Task B19) of COMPLETE
+or CANCELLED campaigns frozen before ``campaign_body_days``.
 
 Core never reads the Telegram schema: the transport supplies a ``LegacyRetention``.
 Retention refuses while the audit integrity latch is set.
@@ -31,6 +32,7 @@ from comms.core.audit.retention_root import choose_root
 from comms.core.audit.verify_all import LegacyVerify
 from comms.core.audit.writer import AuditWriter
 from comms.core.keys.slots import registry_public_for
+from comms.core.maintenance.redaction import redact_campaign_bodies
 from comms.core.storage.db import write_tx
 
 __all__ = ["LegacyRetention", "RetentionPolicy", "RetentionReport", "run_retention"]
@@ -96,6 +98,10 @@ def run_retention(
     comms_root, phases["comms_chain"] = _truncate_comms(
         comms_conn, before(policy.audit_events_days)
     )
+    with write_tx(comms_conn):
+        phases["campaign_bodies"] = redact_campaign_bodies(
+            comms_conn, cutoff=before(policy.campaign_body_days), now=now
+        )
     return RetentionReport(
         phases=phases,
         roots={

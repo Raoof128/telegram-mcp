@@ -59,6 +59,7 @@ def open_comms_db(path: Path, key: bytes) -> Any:
             raise CommsDbKeyError(_KEY_ERROR) from None
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA secure_delete = ON")  # freed pages are zeroed (A15, B19)
         if fresh:
             conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
             if path.read_bytes()[:16] == _PLAINTEXT_HEADER:
