@@ -27,6 +27,15 @@ ADDED_IN_5B4 = Counter(  # comms/core/domains.py
 )
 
 
+ADDED_IN_V03 = Counter(  # comms/core/domains.py, comms v0.3 Part A
+    {
+        "b'comms-audit-chain/v1\\x00'": 1,
+        "b'comms-audit-genesis/v1\\x00'": 1,
+        "b'comms-audit-checkpoint/v1\\x00'": 1,
+    }
+)
+
+
 def _constants(path: Path) -> list[str]:
     found = []
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -43,7 +52,7 @@ def _files(root: Path) -> list[Path]:
 
 def test_comms_wire_domains_are_exactly_the_pinned_multiset():
     found = Counter(c for p in _files(SRC) for c in _constants(p))
-    assert found == PINNED + ADDED_IN_5B4
+    assert found == PINNED + ADDED_IN_5B4 + ADDED_IN_V03
 
 
 def test_core_wire_domains_live_only_in_domains_py():

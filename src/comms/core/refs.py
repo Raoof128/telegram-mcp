@@ -34,6 +34,8 @@ CORE_PREFIXES: dict[str, str] = {
     "request": "req_",
     "cutover": "cut_",
     "client": "cli_",
+    "audit_event": "aev_",
+    "audit_checkpoint": "ack_",
 }
 _KIND_BY_PREFIX = {prefix: kind for kind, prefix in CORE_PREFIXES.items()}
 
