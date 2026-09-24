@@ -62,6 +62,7 @@ The campaign core turns "send this campaign" into durable, deduplicated, idempot
 ## 1. Placement and the first shared-core extraction
 
 - **`comms.core` gains domain code.** The empty-core guard (`test_core_has_no_production_implementation`) is replaced by the rule that matters: core never imports `comms.transports.*`, `telegram_mcp` or `whatsvault`, statically or dynamically, and holds no transport path strings. The transitive-closure and planted-violation guards stay.
+- **No AI surface can reach the send library (G10).** No module under `comms/transports/*/{server,dispatch,sensitive_dispatch}.py`, any `mcp` package, or WhatsVault's `apps/mcp` may import `comms.core.campaigns` or `comms.core.delivery`, statically or dynamically. The operator plane (5e) is the only caller of `send`, `schedule`, `retry_failed`, `resolve_outcome` and `cancel`.
 - **Two single-copy moves, before any campaign code** (same method as 5b-3 Task 1: AST equality plus byte vectors):
   - `transports/telegram/canonical.py` → `comms/core/canonical.py`. It still implements **TG-JCS-v1** byte for byte; moving the package does not rename the wire identifier.
   - `transports/telegram/opaque.py` → `comms/core/opaque.py`. Telegram imports both from core.
