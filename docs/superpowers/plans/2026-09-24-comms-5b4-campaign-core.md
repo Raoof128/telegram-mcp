@@ -20,7 +20,30 @@
 | **M2 — cost** | Opening with a raw 32-byte hex key (no KDF): 28 ms. Inserting 5,000 jobs plus 5,000 origin rows with payloads in one `BEGIN IMMEDIATE`: 88 ms. The freeze budget in Task 14 is therefore **3 s for 5,000 endpoints** — about 30× headroom for resolution, `prepare` and hashing, while a pathological regression still fails it. |
 | **M3 — the core guards** | `test_comms_layering.py` forbids, inside `src/comms/core`, imports of `comms.transports`, `telegram_mcp` and `whatsvault`, the strings containing them, and `import_module`/`__import__`/`importlib.util`. Transport names `"telegram"` and `"whatsapp"` are permitted strings. |
 | **M4 — prefix collisions** | WhatsVault `ids.PREFIXES` includes `aud` and `job`; Telegram `REF_PREFIXES` has nine live prefixes plus tombstoned `tgu_`. Core prefixes (§1) collide with neither. |
-| **M5 — the moves** | 32 files import `transports.telegram.opaque` or `.canonical`; both modules are self-contained (stdlib only). |
+| **M5 — the moves** | 32 files import `transports.telegram.opaque` or `.canonical`; both modules are self-contained (stdlib only) and hold no `telegram_mcp` literal, so `KEEP_LITERALS` and the frozen-protocol multiset are unaffected by the move. |
+| **M6 — schema mechanics** (measured) | The `campaigns ⇄ generations` circular foreign keys work and `foreign_key_check` is empty; the `IFNULL` expression unique index and the partial `WHERE enabled = 1` unique index both enforce; `RAISE(ABORT)` in a trigger and every constraint raise **`sqlcipher3.dbapi2.IntegrityError`, which is not `sqlite3.IntegrityError`**. |
+| **M7 — locking** (measured) | A second `BEGIN IMMEDIATE` on another connection waits the default 5 s, then raises `OperationalError: database is locked`. sqlcipher3 connections are thread-bound (`check_same_thread`), so races are tested as interleaved transactions on two connections in one thread. |
+| **M8 — tooling** (measured) | `mypy` fails on `import sqlcipher3` (`import-untyped`: no stubs, no `py.typed`). The frozen-protocol collector matches only `^(telegram-mcp-\|tg-mcp-\|tgml1)`, so `comms-*` wire domains — including 5b-3's `comms-call-binding/v1\0` — are **unguarded today**. |
+
+## Gauntlet of this plan (rev 2 of the plan; all folded in below)
+
+| # | Sev | Finding | Receipt | Fix |
+|---|---|---|---|---|
+| P1 | 🔴 | mypy would fail the gate at Task 2 on `sqlcipher3`. | M8 | Task 2 adds `[[tool.mypy.overrides]] module = "sqlcipher3.*" ignore_missing_imports = true` to `pyproject.toml`. |
+| P2 | 🔴 | `comms-*` domain strings are outside the frozen-protocol guard; 5b-3's call binding already escaped it, and 5b-4 adds two more. | M8 | Task 1 adds `tests/security/test_comms_wire_frozen.py`: the exact multiset of `^comms-` string/bytes constants under `src/comms`, pinned by name (`comms-call-binding/v1\0` today); Task 8 adds `comms-delivery-idem/v1\0` and `comms-campaign-snapshot/v1\0` as named additions. |
+| P3 | 🔴 | Task 10's claim wrote `state='IN_FLIGHT'` with its own `UPDATE`, contradicting "`reduce` is the only writer of job state". | Task 9 vs Task 10 text | The claim is `reduce(..., Evidence.CLAIM)`, which performs the compare-and-set itself and returns `refused` when `rowcount == 0`. |
+| P4 | 🔴 | The engine's "any exception → `OUTCOME_UNKNOWN`" would swallow the crash seam's `SimulatedCrash`, so every crash-table test would test the exception path, not a crash. | Task 10 text | `SimulatedCrash(BaseException)` (in `tests/core/fakes.py` for the fakes; the engine's seam raises its own `EngineCrash(BaseException)` from `crash_at`); the engine catches `Exception` only. A test proves a `SimulatedCrash` escapes `execute`. |
+| P5 | 🟠 | Schema tests "expecting `IntegrityError`" would never catch sqlcipher3's. | M6 | Tests catch `sqlcipher3.dbapi2.IntegrityError`; the circular-FK contingency text is removed (measured fine). |
+| P6 | 🟠 | Lock contention behaviour and thread-binding unstated. | M7 | `open_comms_db` passes `timeout=5.0` explicitly; the claim race test interleaves two connections in one thread. |
+| P7 | 🟠 | "Snapshot digest stable across runs" was ill-posed: `cmp_`/`gen_` refs are random. | §5.4 | The stability test calls `snapshot_digest(...)` on fixed inputs in-process and in a subprocess; freeze determinism is tested separately (same DB state + fixed refs via the crash-free path yields the same digest). |
+| P8 | 🟠 | Event payload "fixed code" undefined. | Task 7 | Allowed string values: refs (`^[a-z]+_[a-z2-7]{26}$`), digests (`^[0-9a-f]{64}$`), transports (`telegram`/`whatsapp`), ISO-Z times, and codes (`^[A-Z][A-Z_]{0,39}$` or `^[a-z][a-z_]{0,39}$`). Everything else is refused. |
+| P9 | 🟠 | Two garbled sentences (Task 10 `ExecutorLease`, Task 14 imports). | — | Rewritten. |
+| P10 | 🟠 | Task 1's `KEEP_LITERALS` hedge was a guess. | M5 | Removed. |
+| P11 | 🟠 | A nested `write_tx` would hit SQLite's "cannot start a transaction within a transaction" at runtime, and `reduce` outside a transaction would autocommit silently. | — | `write_tx` refuses when `conn.in_transaction` (`RuntimeError`); `reduce`, `append_event` and the freeze body assert `conn.in_transaction`. |
+| P12 | 🟡 | Bounded model and differential walk runtimes unknown. | — | Task 14 measures both; ceilings: model ≤ 60 s and ≤ 2,000,000 states, walk ≤ 45 s; exceeding either reduces the bound (jobs 3→2, or sequences 300→150) under a recorded ruling, never silently. |
+| P13 | 🟡 | The 3 s freeze budget could flake under a loaded suite. | M2 | The budget test measures the freeze call alone (setup excluded) and prints the time; the constant is documented as ~30× the measured floor. |
+| P14 | 🟡 | The core string guard reads docstrings too: a lowercase `whatsvault` in a core docstring fails it. | M3 | Global constraint added. |
+
 
 ## Global Constraints
 
@@ -29,6 +52,8 @@
 - **One copy of each shared rule.** `canonical` and `opaque` move into core; nothing duplicates them. One reducer writes job state.
 - **Opaque refs outside the database.** No return value, exception message, event or log record contains a platform identity, message body or credential.
 - **UTC only.** Naive datetimes are refused with `ValueError`; stored times are ISO-8601 `Z`.
+- **Core text never names a transport package** (P14): no `comms.transports`, `telegram_mcp` or lowercase `whatsvault` in any core string, docstring included.
+- **sqlcipher3 errors are not sqlite3 errors** (P5): tests catch `sqlcipher3.dbapi2.*`.
 - **Fail closed; commit only on a green gate** (fail-fast gate script). No test-only branch in `src`: crash injection is a constructor argument that production never supplies (the coordinator's `crash_at` pattern).
 - **The Telegram and WhatsVault behaviour does not change.** The WhatsVault subtree stays byte-identical; Telegram gains only two import-path changes.
 - **Full gate:** `uv sync --locked`, contracts check, `pytest`, smoke, formal, ruff, format, `mypy src/comms src/telegram_mcp`, build, plus the WhatsVault gate (539 passed).
@@ -71,16 +96,17 @@ def parse(text: str) -> datetime      # inverse of iso; refuses anything else
   - `test_core_canonical_is_byte_identical_to_the_pinned_base`: reuse `tests/unit/test_canonical.py`'s BASE oracle against the new path for every vector in `tests/fixtures/canonical/jcs_vectors.json`.
   - `tests/core/test_refs_and_time.py`: `test_core_prefixes_are_disjoint_from_telegram_and_whatsvault` (against `comms.transports.telegram.authority.refs.REF_PREFIXES ∪ {"tgu_"}` and `{p + "_" for p in whatsvault.ids.PREFIXES}`); `test_core_prefixes_are_unique`; `test_mint_and_check_round_trip_and_refuse_wrong_kind`; `test_naive_datetimes_are_refused`; `test_offsets_normalize_to_utc` (`2026-10-01T18:00:00+10:00` → `2026-10-01T08:00:00.000000Z`); `test_iso_parse_round_trip`.
   - `tests/security/test_comms_layering.py`: replace `test_core_has_no_production_implementation` with `test_core_is_transport_neutral` (core may define functions and classes; the import, string and dynamic-import guards keep running over every core file — they already do).
+  - `tests/security/test_comms_wire_frozen.py` (P2): collects every `str`/`bytes` constant under `src/comms` matching `^comms-` (AST, as the frozen-protocol collector does) and asserts the multiset equals `PINNED = Counter({"b'comms-call-binding/v1\\x00'": 1})` exactly; later additions are named in `ADDED_IN_5B4`; plus a planted-violation test.
   - `tests/security/test_ai_boundary.py::test_no_ai_surface_imports_the_campaign_core` (R21): AST imports of every module matching `src/comms/transports/*/server.py`, `dispatch.py`, `sensitive_dispatch.py`, any `mcp/` package, and `transports/whatsapp/apps/mcp/*.py` contain nothing starting with `comms.core.campaigns` or `comms.core.delivery`; plus a planted-violation test proving the guard is not vacuous.
 - [ ] **Step 2: Run** `uv run pytest -q -p no:randomly tests/unit/test_core_moves.py tests/core tests/security/test_comms_layering.py tests/security/test_ai_boundary.py`. Expected: the move tests and refs/time tests fail (modules absent); the import guard passes vacuously until campaigns exist (its planted test proves teeth).
-- [ ] **Step 3: Implement.** `git mv` both files; AST-repoint imports; write `refs.py` and `timeutil.py`. The `test_comms_protocol_frozen` multiset is unchanged (the literals moved within `src/comms`); if a KEEP_LITERALS path entry names the old file, add the move to `RETIRED_KEEP_LITERALS`-style named mapping, not a loosening.
+- [ ] **Step 3: Implement.** `git mv` both files; AST-repoint imports; write `refs.py` and `timeutil.py`. The frozen-protocol multiset is unchanged (M5).
 - [ ] **Step 4:** The targeted tests pass; full gate green. Commit: `refactor: TG-JCS-v1 and the opaque-ref minter move into comms.core (single copies); core prefix registry and time rules`.
 
 ---
 
 ### Task 2: `comms.db` — SQLCipher open and the migration runner
 
-**Files:** Create `src/comms/core/storage/__init__.py`, `src/comms/core/storage/db.py`, `src/comms/core/storage/migrations.py`; Test `tests/core/test_comms_db.py`.
+**Files:** Create `src/comms/core/storage/__init__.py`, `src/comms/core/storage/db.py`, `src/comms/core/storage/migrations.py`; Modify `pyproject.toml` (the `sqlcipher3.*` mypy override, P1); Test `tests/core/test_comms_db.py`.
 
 **Interfaces:**
 ```python
@@ -88,7 +114,7 @@ class CommsDbKeyError(Exception)          # fixed message: "comms database key i
 class TransactionIOError(RuntimeError)    # raised by io_guard when a side effect is attempted inside a transaction
 def open_comms_db(path: Path, key: bytes) -> sqlcipher3.Connection
 @contextmanager
-def write_tx(conn) -> Iterator[sqlcipher3.Connection]   # BEGIN IMMEDIATE ... COMMIT / ROLLBACK
+def write_tx(conn) -> Iterator[sqlcipher3.Connection]   # BEGIN IMMEDIATE ... COMMIT / ROLLBACK; refuses nesting (P11)
 def io_guard(conn) -> None                # raise TransactionIOError if conn.in_transaction
 @dataclass(frozen=True) class Migration: version: int; statements: tuple[str, ...]
 def migrate(conn, migrations: tuple[Migration, ...] = MIGRATIONS) -> int
@@ -98,7 +124,7 @@ def migrate(conn, migrations: tuple[Migration, ...] = MIGRATIONS) -> int
 ```python
 if not isinstance(key, bytes) or len(key) != 32: raise CommsDbKeyError("comms database key is invalid")
 fresh = not path.exists()
-conn = sqlcipher3.connect(str(path), isolation_level=None)   # autocommit; write_tx owns BEGIN/COMMIT
+conn = sqlcipher3.connect(str(path), isolation_level=None, timeout=5.0)   # autocommit; write_tx owns BEGIN/COMMIT (P6)
 conn.execute(f"PRAGMA key = \"x'{key.hex()}'\"")
 if not conn.execute("PRAGMA cipher_version").fetchone()[0]: raise CommsDbKeyError(...)
 try: conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
@@ -116,7 +142,7 @@ The key never appears in an exception, `repr` or log.
   - `test_a_wrong_key_fails_closed_at_open` (not at first use).
   - `test_a_keyless_sqlite_open_of_the_file_fails` (plain `sqlite3.connect` read raises).
   - `test_the_key_never_appears_in_errors` (the hex key absent from `str(exc)` and `repr(exc)`).
-  - `test_write_tx_commits_and_rolls_back`, `test_io_guard_refuses_inside_a_transaction`, `test_migrate_is_rerunnable_and_versioned`.
+  - `test_write_tx_commits_and_rolls_back`, `test_write_tx_refuses_nesting`, `test_io_guard_refuses_inside_a_transaction`, `test_migrate_is_rerunnable_and_versioned`, `test_lock_contention_raises_after_the_timeout` (two connections, one thread, `timeout` shortened via a parameter of the test's own `connect`, not of `open_comms_db`).
 - [ ] **Step 2: Run; expected: all fail (module absent).**
 - [ ] **Step 3: Implement** as specified.
 - [ ] **Step 4:** Pass; gate green. Commit: `feat: comms.db on SQLCipher, fail-closed open (wrong key, keyless create, short key), write_tx and io_guard`.
@@ -214,9 +240,9 @@ CREATE TRIGGER campaign_events_append_only_u BEFORE UPDATE ON campaign_events
 CREATE TRIGGER campaign_events_append_only_d BEFORE DELETE ON campaign_events
   BEGIN SELECT RAISE(ABORT, 'event log is append-only'); END;
 ```
-(`campaigns` references `generations` before it is declared; SQLite resolves foreign keys at use time, which Task 3's tests confirm. If the migration runner rejects the order, move `current_generation_id` into a follow-up `ALTER TABLE ... ADD COLUMN` inside the same migration and record a ruling.)
+(`campaigns` references `generations` before it is declared; measured to work, M6.)
 
-- [ ] **Step 1: Failing tests** (`tests/core/test_schema.py`), each violating one constraint once and expecting `IntegrityError` (or `DatabaseError` for `RAISE(ABORT)`): every `CHECK` on state/lifecycle/summary/transport/enabled; the audience-member exactly-one `CHECK` (zero and two members); self-membership; `UNIQUE(transport, identity)`; two enabled WhatsApp points for one recipient (and that a disabled second point is allowed); `UNIQUE(generation_id, transport, identity_id)`; `UNIQUE(job_id, attempt_no)`; `UNIQUE(transport, provider_event_ref)` with the same ref under two transports allowed; `ON DELETE RESTRICT` on a destination referenced by a job; every immutability trigger; event update and delete; the skip/payload `CHECK`. Plus `test_foreign_key_check_is_empty_after_migrate`.
+- [ ] **Step 1: Failing tests** (`tests/core/test_schema.py`), each violating one constraint once and expecting `sqlcipher3.dbapi2.IntegrityError` (M6: triggers' `RAISE(ABORT)` raises it too): every `CHECK` on state/lifecycle/summary/transport/enabled; the audience-member exactly-one `CHECK` (zero and two members); self-membership; `UNIQUE(transport, identity)`; two enabled WhatsApp points for one recipient (and that a disabled second point is allowed); `UNIQUE(generation_id, transport, identity_id)`; `UNIQUE(job_id, attempt_no)`; `UNIQUE(transport, provider_event_ref)` with the same ref under two transports allowed; `ON DELETE RESTRICT` on a destination referenced by a job; every immutability trigger; event update and delete; the skip/payload `CHECK`. Plus `test_foreign_key_check_is_empty_after_migrate`.
 - [ ] **Step 2: Run; expected: fail (no schema).**
 - [ ] **Step 3: Implement `SCHEMA_V1`.**
 - [ ] **Step 4:** Pass; gate green. Commit: `feat: comms.db schema v1 — constraints, immutability triggers, append-only event log`.
@@ -320,8 +346,9 @@ class DeliveryTransport(Protocol):
 ```python
 EVENT_TYPES: frozenset[str]   # exactly the §9 list
 def append_event(conn, event_type: str, campaign_ref: str | None, payload: Mapping[str, Any], *, now) -> str
-    # must be called inside write_tx; refuses a payload key outside SAFE_KEYS and any str value
-    # that is not a ref, digest, transport name, count, ISO time or fixed code (ValueError)
+    # asserts conn.in_transaction (P11); refuses a payload key outside SAFE_KEYS, and any str value that is
+    # not a ref ^[a-z]+_[a-z2-7]{26}$, a digest ^[0-9a-f]{64}$, "telegram"/"whatsapp", an ISO-Z time, or a
+    # code ^[A-Z][A-Z_]{0,39}$ | ^[a-z][a-z_]{0,39}$ (P8); ints must be >= 0; anything else ValueError
 SAFE_KEYS = frozenset({"generation", "job", "transport", "audience_digest", "recipient_digest",
     "snapshot_digest", "recipient_count", "destination_count", "success_count", "failure_count",
     "skipped_count", "cancelled_count", "unknown_count", "summary", "lifecycle", "reason", "send_at", "attempt_no"})
@@ -358,9 +385,9 @@ def cancel(conn, cmp, *, now) -> CancelReport  # DRAFT/READY → CANCELLED; SCHE
 ```
 Freeze body, inside one `write_tx` (§5.1): resolve → candidates → `prepare(intent, send_at)` for each → `PENDING` job with payload, or `SKIPPED_PLATFORM_POLICY` job with `skip_reason` → if none `PENDING`, raise `NoEligibleEndpoints` (rolls back) → insert generation, jobs, `job_origins`, snapshot digest → lifecycle → `SENDING`/`SCHEDULED` → summary `IN_PROGRESS` → event `campaign.send_started` / `campaign.scheduled` with counts and digests (`audience_digest` and `recipient_digest` are `sha256` over TG-JCS-v1 of the **sorted endpoint refs**, never identities). `prepare` is called inside the transaction and is pure; the fakes assert no `deliver` happens here.
 
-- [ ] **Step 1: Failing tests:** `test_one_send_creates_one_immutable_generation` (source §31); `test_same_identity_via_destination_and_contact_point_gets_one_job` (R3); `test_duplicate_whatsapp_recipient_gets_one_job` (source §31); `test_same_person_gets_one_job_per_selected_transport` (source §31); `test_zero_eligible_endpoints_refuses_and_leaves_ready` (R8, including all-skipped); `test_platform_ineligible_becomes_a_skipped_job_not_a_failure` (source §13); `test_no_deliver_happens_during_freeze` (R18); `test_snapshot_digest_is_stable_under_a_fixed_clock` (twice in-process and once in a subprocess, byte-identical) and `test_snapshot_digest_moves_with_every_field` (R14); `test_idempotency_key_binds_generation`; `test_edit_and_reschedule_mints_new_keys` (R6: schedule → unschedule → edit → validate → schedule; disjoint keys; the first generation `discarded` and its jobs `CANCELLED`, still present); `test_scheduled_content_is_frozen` (source §31: `set_content` refused while `SCHEDULED`); `test_cancel_before_send_from_each_pre_send_state`; `test_every_freeze_path_is_one_transaction` (crash seam raising after job inserts: no generation, no jobs, lifecycle unchanged).
+- [ ] **Step 1: Failing tests:** `test_one_send_creates_one_immutable_generation` (source §31); `test_same_identity_via_destination_and_contact_point_gets_one_job` (R3); `test_duplicate_whatsapp_recipient_gets_one_job` (source §31); `test_same_person_gets_one_job_per_selected_transport` (source §31); `test_zero_eligible_endpoints_refuses_and_leaves_ready` (R8, including all-skipped); `test_platform_ineligible_becomes_a_skipped_job_not_a_failure` (source §13); `test_no_deliver_happens_during_freeze` (R18); `test_snapshot_digest_is_stable` (`snapshot_digest(...)` on fixed inputs, twice in-process and once in a subprocess, byte-identical — P7), `test_snapshot_digest_moves_with_every_field` (R14) and `test_the_freeze_commits_the_digest_of_what_it_wrote` (recompute from the stored generation and jobs; equal); `test_idempotency_key_binds_generation`; `test_edit_and_reschedule_mints_new_keys` (R6: schedule → unschedule → edit → validate → schedule; disjoint keys; the first generation `discarded` and its jobs `CANCELLED`, still present); `test_scheduled_content_is_frozen` (source §31: `set_content` refused while `SCHEDULED`); `test_cancel_before_send_from_each_pre_send_state`; `test_every_freeze_path_is_one_transaction` (crash seam raising after job inserts: no generation, no jobs, lifecycle unchanged).
 - [ ] **Step 2: Run; expected: fail.**
-- [ ] **Step 3: Implement.**
+- [ ] **Step 3: Implement.** Add `comms-delivery-idem/v1\0` and `comms-campaign-snapshot/v1\0` to `ADDED_IN_5B4` in `test_comms_wire_frozen.py` (P2).
 - [ ] **Step 4:** Pass; gate green. Commit: `feat: freeze — generations, deduplicated jobs with origin paths, idempotency keys and the snapshot digest`.
 
 ---
@@ -375,7 +402,9 @@ class Evidence(StrEnum): CLAIM; RESULT; PROVIDER; RESOLVE_SENT; RESOLVE_NOT_SENT
 @dataclass(frozen=True) class Transition: new_state: str | None; attempt_outcome: str | None; disposition: str  # applied/recorded/refused
 def decide(job_state: str, *, evidence: Evidence, value: str | None, is_current_attempt: bool) -> Transition   # PURE
 def reduce(conn, job_id: int, attempt_id: int | None, evidence: Evidence, value: str | None, *, now) -> Transition
-    # the only writer of delivery_jobs.state; must be called inside write_tx; also recomputes the summary
+    # the only writer of delivery_jobs.state; asserts conn.in_transaction; also recomputes the summary.
+    # Every write is a compare-and-set on the state `decide` saw (UPDATE ... WHERE id=? AND state=?); for CLAIM
+    # the WHERE also requires the campaign lifecycle 'SENDING' (P3). rowcount 0 → Transition(disposition="refused").
 def summarize(states: Sequence[str], any_attempt_ever: bool) -> str   # PURE, §6.3; raises on an empty sequence
 def complete_if_idle(conn, campaign_id, *, now) -> None   # SENDING → COMPLETE + campaign.completed / summary_changed events
 ```
@@ -394,8 +423,9 @@ def complete_if_idle(conn, campaign_id, *, now) -> None   # SENDING → COMPLETE
 
 **Interfaces:**
 ```python
-class ExecutorLease: ...          # an opaque token; 5e mints it from the runtime lock. Tests mint via ExecutorLease.for_tests()? NO —
-                                  # the constructor is public and takes the lock object; tests pass a real in-memory lock object.
+class ExecutorLease:               # ExecutorLease(lock) where lock exposes held() -> bool; 5e passes the runtime lock
+    def __init__(self, lock: SupportsHeld) -> None
+class EngineCrash(BaseException)    # raised by the crash_at seam; BaseException so no handler can swallow it (P4)
 CRASH_POINTS = ("after_claim", "during_deliver", "after_deliver_before_record")
 class Engine:
     def __init__(self, conn, transports: Mapping[str, DeliveryTransport], *, clock: Callable[[], datetime],
@@ -404,12 +434,12 @@ class Engine:
 ```
 `ExecutorLease(lock)` requires a lock object exposing `held() -> bool`; `execute`, `recover` and `run_due` raise `PermissionError("executor lease required")` unless `lease.held()`. Tests use a small real lock class in `tests/core/fakes.py` (no test-only branch in `src`).
 
-`execute`: for each transport in sorted order, independently (a failure or exception in one transport's loop is caught at the loop boundary, recorded as the job outcome per §7.2, and never stops the other transports): for each `PENDING` job of the campaign's current generation in `id` order:
-1. `write_tx`: claim by compare-and-set (`UPDATE delivery_jobs SET state='IN_FLIGHT', attempt_count=attempt_count+1 WHERE id=? AND state='PENDING' AND (SELECT lifecycle FROM campaigns …)='SENDING'`, `rowcount == 1` else skip); revalidate (`any(path_is_valid(p) for p in origins)` and `transport.still_valid(payload, now)`); on failure `reduce(..., SKIP_REVALIDATION)` instead of claiming; else insert the attempt row.
-2. `io_guard(conn)`; `result = transport.deliver(frozen)`; any exception → `ResultKind.OUTCOME_UNKNOWN` (R5).
+`execute`: for each transport in sorted order, independently (an `Exception` in one transport's loop is caught at the loop boundary, recorded as the job outcome per §7.2, and never stops the other transports; `BaseException` — including `EngineCrash` and the fakes' `SimulatedCrash` — always propagates, P4): for each `PENDING` job of the campaign's current generation in `id` order:
+1. `write_tx`: revalidate (`any(path_is_valid(p) for p in origins)` and `transport.still_valid(payload, now)`); on failure `reduce(..., SKIP_REVALIDATION)`; otherwise `reduce(..., CLAIM)` — the compare-and-set of P3, which also increments `attempt_count` — and, if applied, insert the attempt row; if refused, skip the job.
+2. `io_guard(conn)`; `result = transport.deliver(frozen)`; any `Exception` → `ResultKind.OUTCOME_UNKNOWN` (R5).
 3. `write_tx`: `reduce(..., RESULT, result.kind)`; attempt `finished_at`, `provider_message_ref`; `complete_if_idle`.
 
-- [ ] **Step 1: Failing tests:** happy path both transports → `SENT`, `COMPLETE`; `test_telegram_failure_does_not_stop_whatsapp` and the reverse (source §31, §29) including a raising adapter; `test_an_exception_is_outcome_unknown_never_failed` (R5); `test_revalidation_suppresses_a_member_removed_after_freeze` (R9); `test_revalidation_never_adds` (a recipient added after the freeze gets no job); `test_window_closed_between_schedule_and_send_skips` (R19); `test_claim_is_compare_and_set` (two engines on two connections to the same file race one job: exactly one `deliver`); `test_cancelled_job_is_not_claimed` (R20); `test_execute_requires_the_lease` (R20); `test_deliver_is_never_called_inside_a_transaction` (every recorded call has `in_transaction == False`); crash seams: each `CRASH_POINTS` entry raises `SimulatedCrash` at that point and leaves the database in the §10 state (asserted here; recovery is Task 12).
+- [ ] **Step 1: Failing tests:** `test_a_simulated_crash_escapes_execute` (P4); happy path both transports → `SENT`, `COMPLETE`; `test_telegram_failure_does_not_stop_whatsapp` and the reverse (source §31, §29) including a raising adapter; `test_an_exception_is_outcome_unknown_never_failed` (R5); `test_revalidation_suppresses_a_member_removed_after_freeze` (R9); `test_revalidation_never_adds` (a recipient added after the freeze gets no job); `test_window_closed_between_schedule_and_send_skips` (R19); `test_claim_is_compare_and_set` (two connections to the same file, interleaved in one thread (M7): the second claim of the same job is refused; exactly one `deliver`); `test_cancelled_job_is_not_claimed` (R20); `test_execute_requires_the_lease` (R20); `test_deliver_is_never_called_inside_a_transaction` (every recorded call has `in_transaction == False`); crash seams: each `CRASH_POINTS` entry raises `SimulatedCrash` at that point and leaves the database in the §10 state (asserted here; recovery is Task 12).
 - [ ] **Step 2: Run; expected: fail.**
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4:** Pass; gate green. Commit: `feat: delivery engine — leased execution, compare-and-set claim, revalidation, transport isolation, crash seams`.
@@ -473,12 +503,12 @@ def recover(lease, conn, *, now) -> RecoveryReport              # §10 steps 1�
 
 **Files:** Create `formal/campaign_model.py`; Test `tests/formal/test_campaign_model.py`, `tests/formal/test_campaign_model_mutations.py`, `tests/core/test_differential_walk.py`, `tests/core/test_freeze_budget.py`.
 
-- [ ] **Step 1: The model.** Pure Python, no imports from `src` except `comms.core.delivery.reducer.decide` and `summarize` **is not allowed** — the model encodes the rules independently (a second, smaller statement of them). State: lifecycle; clock phase (`before`/`after` `send_at`); generation id (0–2); up to 3 jobs, each `(state, attempts ≤ 2, current_attempt, keys)`; a `sent` counter per `(generation, job)`; a `transmissions` count per logical key. Operations: freeze (send/schedule), claim, deliver with each result, crash at each point, recover, provider update (late, duplicate, earlier-attempt), cancel, retry, resolve, unschedule, reschedule, advance clock, run_due. Exhaustive BFS.
+- [ ] **Step 1: The model.** Pure Python that imports nothing from `src`: it restates the rules independently (a second, smaller statement of them), so the differential walk compares two implementations rather than one with itself (P9). State: lifecycle; clock phase (`before`/`after` `send_at`); generation id (0–2); up to 3 jobs, each `(state, attempts ≤ 2, current_attempt, keys)`; a `sent` counter per `(generation, job)`; a `transmissions` count per logical key. Operations: freeze (send/schedule), claim, deliver with each result, crash at each point, recover, provider update (late, duplicate, earlier-attempt), cancel, retry, resolve, unschedule, reschedule, advance clock, run_due. Exhaustive BFS.
 - [ ] **Step 2: Properties** (each an assertion evaluated on every reachable state; §11): no job below `DELIVERED` once there; `OUTCOME_UNKNOWN` never auto-retried or resent; one job per `(generation, transport, identity)` and no key names two payloads; no execution before `send_at`; no endpoint after the freeze; no `SENDING` with only terminal jobs after `recover`; no empty generation; `SENT` only if every job succeeded; unknown never `FAILED`. Plus `test_no_property_is_unreachable` as in 5b-3.
 - [ ] **Step 3: Mutation tests.** For each property, a source mutation of the model that removes the guard it protects; the exploration must report that property (5b-3's `test_invariant_mutations.py` pattern).
 - [ ] **Step 4: Differential walk.** `tests/core/test_differential_walk.py`: 300 seeded random operation sequences (length ≤ 25) applied to both the model and the real library (in a temp `comms.db` with fakes); after every step the job states, lifecycle and summary must agree. A disagreement prints the seed and the sequence.
-- [ ] **Step 5: Freeze budget** (R22, M2): `test_freeze_of_5000_endpoints_is_within_budget` builds 5,000 WhatsApp contact points in one audience, freezes, asserts < 3.0 s, and prints the measured time into the evidence (`-s`).
-- [ ] **Step 6:** Record the explored-state count and property count printed by the model; gate green. Commit: `test: bounded campaign model with mutation-tested properties; differential walk against the library; freeze budget`.
+- [ ] **Step 5: Freeze budget** (R22, M2, P13): `test_freeze_of_5000_endpoints_is_within_budget` builds 5,000 WhatsApp contact points in one audience (setup untimed), times only the `send` freeze call, asserts < 3.0 s (≈ 30× the measured 88 ms insert floor), and prints the measured time into the evidence (`-s`).
+- [ ] **Step 6:** Record the explored-state count, property count and both runtimes. Ceilings (P12): model ≤ 60 s and ≤ 2,000,000 states; walk ≤ 45 s. Exceeding one reduces its bound (jobs 3→2, or sequences 300→150) under a ledgered ruling, never silently. Gate green. Commit: `test: bounded campaign model with mutation-tested properties; differential walk against the library; freeze budget`.
 
 ---
 
