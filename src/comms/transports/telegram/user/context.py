@@ -18,7 +18,7 @@ from typing import Any, Protocol
 from comms.core import timeutil
 from comms.core.providers.protocols import ContextPage, ContextQuery, ContextRefused
 from comms.transports.telegram.args import take, text
-from comms.transports.telegram.disclosure.bounds import NAME_MAX, TEXT_MAX, PageBudget, clamp
+from comms.transports.telegram.page_bounds import NAME_MAX, TEXT_MAX, PageBudget, clamp
 from comms.transports.telegram.peers import marked_chat_id, unmark_chat_id
 from comms.transports.telegram.telegram.deadline import Deadline, WorkBudget
 from comms.transports.telegram.telegram.errors import GatewayError

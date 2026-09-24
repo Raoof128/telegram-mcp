@@ -16,7 +16,7 @@ from comms.core.providers.protocols import (
     ContextRefused,
     ProviderTarget,
 )
-from comms.transports.telegram.disclosure.bounds import TEXT_CODEPOINTS_MAX
+from comms.transports.telegram.page_bounds import TEXT_CODEPOINTS_MAX
 from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 from comms.transports.telegram.user import context as context_module
 from comms.transports.telegram.user.context import UserContext

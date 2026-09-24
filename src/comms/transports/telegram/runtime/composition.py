@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from comms.runtime.adapters import build_adapters
 from comms.transports.telegram.disclosure.keys import (
     ensure_current_published,
 )
@@ -95,3 +96,13 @@ def build_telegram(
         api_hash=api_hash,
         client_factory=client_factory,
     )
+
+
+def build_comms_adapters(conn: Any, secrets: Any, settings: Any, **kw: Any) -> Any:
+    """comms v0.3 C33: the one wiring point for the adapter registry (comms.runtime.adapters).
+
+    The daemon calls this once it holds comms.db and the secret store (Part D's comms
+    runtime); ``telegram_session`` is the single ``TelethonSession`` built by
+    ``build_telegram``, shared by every Telegram user-actor adapter.
+    """
+    return build_adapters(conn, secrets, settings, **kw)

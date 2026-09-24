@@ -12,6 +12,7 @@ class FakeSession:
         self.sent = []  # (peer, text, random_id)
         self._readiness = readiness
         self.cached = cached
+        self.update_owner = None
 
     def readiness(self):
         return self._readiness
@@ -32,3 +33,14 @@ class FakeSession:
             return SendAttempt("duplicate")
         self.visible[random_id] = 100 + len(self.visible)
         return SendAttempt("sent", message_id=self.visible[random_id])
+
+    def claim_updates(self, owner):
+        assert self.update_owner in (None, owner)
+        self.update_owner = owner
+
+    def release_updates(self, owner):
+        if self.update_owner == owner:
+            self.update_owner = None
+
+    async def self_rights(self, peer_type, peer_id, *, timeout):
+        raise GatewayError("NOT_ACCESSIBLE")
