@@ -49,6 +49,9 @@ __all__ = [
     "ADMIN_COMMANDS",
     "ADMIN_PEER",
     "CONTROL_REQUESTS",
+    "LEGACY_ADMIN_SURFACE",
+    "RETIRED_ADMIN_COMMANDS",
+    "RETIRED_IN_V0_3",
     "AdminRouter",
     "PeerCredentials",
     "getpeereid",
@@ -63,6 +66,7 @@ _logger = logging.getLogger("telegram_mcp.admin")
 MALFORMED_REQUEST = "MALFORMED_REQUEST"
 UNKNOWN_COMMAND = "UNKNOWN_COMMAND"
 NOT_AVAILABLE_IN_PHASE = "NOT_AVAILABLE_IN_PHASE"
+RETIRED_IN_V0_3 = "RETIRED_IN_V0_3"
 PERMISSION_DENIED = "PERMISSION_DENIED"
 INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -82,6 +86,25 @@ ADMIN_COMMANDS: tuple[str, ...] = (
     "auth headers",
     "tunnel rotate-binding",
     "auth revoke-this-session",
+    "disclosure show",
+    "disclosure verify",
+    "disclosure key",
+    "audit verify",
+    "audit repair-anchor",
+    "audit checkpoint",
+    "lock",
+    "unlock",
+    "lock status",
+    "release verify",
+    "doctor",
+    "serve",
+)
+
+# Retired by comms v0.3 (A3, spec §33 less the disclosure-on-read authority): projects,
+# grants, scope, the policy engine's commands and the exposure budget. Each answers
+# RETIRED_IN_V0_3 before any handler runs, so nothing is mutated; their rows are kept.
+# `policy export`/`import` spoke the tombstoned tg-mcp-policy-bundle/v1 wire.
+RETIRED_ADMIN_COMMANDS: tuple[str, ...] = (
     "scope discover",
     "scope list",
     "scope allow",
@@ -109,20 +132,10 @@ ADMIN_COMMANDS: tuple[str, ...] = (
     "policy diff",
     "policy export",
     "policy import",
-    "disclosure show",
-    "disclosure verify",
-    "disclosure key",
     "exposure status",
-    "audit verify",
-    "audit repair-anchor",
-    "audit checkpoint",
-    "lock",
-    "unlock",
-    "lock status",
-    "release verify",
-    "doctor",
-    "serve",
 )
+# The pre-v0.3 surface, for the historical harness (runtime/legacy_composition) only.
+LEGACY_ADMIN_SURFACE: tuple[str, ...] = ADMIN_COMMANDS + RETIRED_ADMIN_COMMANDS
 
 # Bootstrap control requests, outside the §33 surface (design §2).
 CONTROL_REQUESTS: tuple[str, ...] = ("stop",)
@@ -189,8 +202,12 @@ class AdminRouter:
         handlers: Mapping[str, Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
         *,
         control_handlers: Mapping[str, Callable[[dict[str, Any]], dict[str, Any]]] | None = None,
+        surface: tuple[str, ...] = ADMIN_COMMANDS,
     ) -> None:
-        unknown = set(handlers or {}) - set(ADMIN_COMMANDS)
+        # ``surface`` is an injected seam: production always serves ADMIN_COMMANDS; only the
+        # historical harness passes LEGACY_ADMIN_SURFACE (a security test pins that).
+        self._surface = frozenset(surface)
+        unknown = set(handlers or {}) - self._surface
         if unknown:
             raise ValueError("handler for a command outside spec §33")
         bad_control = set(control_handlers or {}) - set(CONTROL_REQUESTS)
@@ -241,7 +258,9 @@ class AdminRouter:
             return self._error(MALFORMED_REQUEST, "args must be an object")
         if set(request) - {"cmd", "args"}:
             return self._error(MALFORMED_REQUEST, "unknown request field")
-        if command not in ADMIN_COMMANDS:
+        if command not in self._surface:
+            if command in RETIRED_ADMIN_COMMANDS:
+                return self._error(RETIRED_IN_V0_3, "command is retired in comms v0.3")
             return self._error(UNKNOWN_COMMAND, "unknown command")
         if "presence" in args:
             # Retired by comms spec v0.2: authority is the peer, not a proof.
@@ -270,7 +289,7 @@ class AdminRouter:
         ``dispatch`` would.
         """
         command = request.get("cmd")  # a decoded strict-JSON object (framing guarantees it)
-        if isinstance(command, str) and command in ADMIN_COMMANDS and not self.has_handler(command):
+        if isinstance(command, str) and command in self._surface and not self.has_handler(command):
             return self._error(NOT_AVAILABLE_IN_PHASE, "command is not implemented in this phase")
         response = self.dispatch(request)
         data = response.get("data") if response.get("ok") else None

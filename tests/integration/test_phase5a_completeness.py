@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from comms.transports.telegram.ipc.admin import ADMIN_COMMANDS, AdminRouter
+from comms.transports.telegram.ipc.admin import ADMIN_COMMANDS, RETIRED_ADMIN_COMMANDS, AdminRouter
 from comms.transports.telegram.keys.store import provision_missing, set_store_dir
 from comms.transports.telegram.runtime.composition import admin_handlers
 from comms.transports.telegram.storage.db import open_db
@@ -15,7 +15,8 @@ from tests.telegram.fake_client import FakeClient
 from tests.unit.test_dialogs_and_discovery import _dialogs_result
 
 CLI_ONLY = {"doctor", "serve"}
-LATER_IN_PHASE_5 = {"auth revoke-this-session", "project drift", "policy export", "policy import"}
+# `project drift` and `policy export`/`import` were here until comms v0.3 retired them (A3).
+LATER_IN_PHASE_5 = {"auth revoke-this-session"}
 # Named, each with its reason (design D9):
 #  tunnel rotate-binding -- Phase 6 (the CLI `rotate` already covers the pin)
 #  release verify        -- Phase 7
@@ -59,3 +60,11 @@ async def test_every_missing_admin_command_answers_not_available(handlers):
     for command in sorted(LATER_IN_PHASE_5 | DEFERRED):
         response = await router.adispatch({"cmd": command, "args": {}})
         assert response["code"] == "NOT_AVAILABLE_IN_PHASE", command
+
+
+async def test_every_retired_command_answers_retired(handlers):
+    router = AdminRouter(handlers)
+    assert set(handlers).isdisjoint(RETIRED_ADMIN_COMMANDS)
+    for command in RETIRED_ADMIN_COMMANDS:
+        response = await router.adispatch({"cmd": command, "args": {}})
+        assert response["code"] == "RETIRED_IN_V0_3", command

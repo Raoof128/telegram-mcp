@@ -707,8 +707,10 @@ def phase2a_ipc(ledger: Ledger, sandbox: Path, state: dict[str, Any]) -> None:
                     assert stray["code"] == "MALFORMED_REQUEST", stray
                     allowed = await call(encode_json_frame({"cmd": "lock"}))
                     assert allowed["ok"] is True, allowed
-                    unrouted = await call(encode_json_frame({"cmd": "project rename"}))
+                    unrouted = await call(encode_json_frame({"cmd": "audit verify"}))
                     assert unrouted["code"] == "NOT_AVAILABLE_IN_PHASE", unrouted
+                    retired = await call(encode_json_frame({"cmd": "project rename"}))
+                    assert retired["code"] == "RETIRED_IN_V0_3", retired
                     unknown = await call(encode_json_frame({"cmd": "drop everything"}))
                     assert unknown["code"] == "UNKNOWN_COMMAND", unknown
                     duplicate = await call(b'{"cmd": "lock status", "cmd": "lock"}')
@@ -1340,10 +1342,11 @@ def phase5a_operator(ledger: Ledger) -> None:
     import secrets as _secrets
 
     sys.path.insert(0, str(REPO))
-    from comms.transports.telegram.ipc.admin import AdminRouter, serve_admin
+    from comms.transports.telegram.ipc.admin import LEGACY_ADMIN_SURFACE, AdminRouter, serve_admin
     from comms.transports.telegram.ipc.framing import decode_json_frame, encode_json_frame
     from comms.transports.telegram.keys.store import provision_missing, set_store_dir
     from comms.transports.telegram.runtime.composition import admin_handlers
+    from comms.transports.telegram.runtime.legacy_composition import legacy_admin_handlers
     from comms.transports.telegram.storage.db import open_db
     from tests.authority_fixtures import (
         BETA_REF,
@@ -1365,16 +1368,22 @@ def phase5a_operator(ledger: Ledger) -> None:
             seed_second_project(conn)
             (root / "anchor").mkdir(mode=0o700)
 
-            handlers = admin_handlers(
-                conn,
-                key_dir=root / "keys",
-                anchor_path=root / "anchor" / "anchor.json",
-                telegram=None,
-                seeds=lambda ref: None,
-                runtime_id=_secrets.token_bytes(16),
-                clock=time.time,
-            )
-            router = AdminRouter(handlers)
+            wiring = {
+                "key_dir": root / "keys",
+                "anchor_path": root / "anchor" / "anchor.json",
+                "telegram": None,
+                "seeds": lambda ref: None,
+                "runtime_id": _secrets.token_bytes(16),
+                "clock": time.time,
+            }
+            production = AdminRouter(admin_handlers(conn, **wiring))
+            results["retired"] = {
+                cmd: production.dispatch({"cmd": cmd, "args": {}})["code"]
+                for cmd in ("policy simulate", "policy diff", "project disable", "exposure status")
+            }
+            # Simulate/diff/commit are retired in comms v0.3; driven here on the historical surface.
+            handlers = legacy_admin_handlers(conn, **wiring)
+            router = AdminRouter(handlers, surface=LEGACY_ADMIN_SURFACE)
             sock = root / "admin.sock"
             server = await serve_admin(sock, router)
             try:
@@ -1417,7 +1426,14 @@ def phase5a_operator(ledger: Ledger) -> None:
 
     ledger.run(
         area,
-        "simulate then diff returns the staged change",
+        "production retires the policy, project and exposure commands",
+        lambda: (
+            set(drive()["retired"].values()) == {"RETIRED_IN_V0_3"} or _raise(drive()["retired"])
+        ),
+    )
+    ledger.run(
+        area,
+        "simulate then diff returns the staged change (historical surface)",
         lambda: drive()["simulated"] == drive()["diff"] or _raise("diff differs"),
     )
     ledger.run(

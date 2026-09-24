@@ -138,10 +138,17 @@ async def test_admin_verb_proxies_to_a_live_socket(monkeypatch, capsys, tmp_path
 
         # a routed but unimplemented command is refused, not faked
         code = await asyncio.to_thread(
-            _run, ["admin", "project", "list", "--runtime-dir", "run"], monkeypatch
+            _run, ["admin", "audit", "verify", "--runtime-dir", "run"], monkeypatch
         )
         assert code == 5
         assert "NOT_AVAILABLE_IN_PHASE" in capsys.readouterr().err
+
+        # a command comms v0.3 retired says so (A3)
+        code = await asyncio.to_thread(
+            _run, ["admin", "project", "list", "--runtime-dir", "run"], monkeypatch
+        )
+        assert code == 8
+        assert "RETIRED_IN_V0_3" in capsys.readouterr().err
 
         # a mutating command runs on the peer's authority alone (comms spec v0.2)
         code = await asyncio.to_thread(_run, ["admin", "lock", "--runtime-dir", "run"], monkeypatch)

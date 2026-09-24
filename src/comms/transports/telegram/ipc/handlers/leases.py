@@ -14,7 +14,7 @@ from typing import Any
 
 from comms.transports.telegram.ipc.leases import mint_lease
 from comms.transports.telegram.runtime.identity import resolve_principal
-from comms.transports.telegram.storage.authority_view import load_security
+from comms.transports.telegram.storage.owner_state import load_security
 
 __all__ = ["auth_headers_handler"]
 

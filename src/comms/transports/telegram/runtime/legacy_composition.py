@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from comms.transports.telegram.authority.staging import StagingRegistry
 from comms.transports.telegram.disclosure.budget import BudgetLedger
 from comms.transports.telegram.disclosure.coordinator import DisclosureCoordinator
 from comms.transports.telegram.disclosure.keys import (
@@ -25,7 +26,16 @@ from comms.transports.telegram.disclosure.keys import (
 )
 from comms.transports.telegram.disclosure.seams import CoordinatorAuthority
 from comms.transports.telegram.http_guards import DEFAULT_LIMITS, RateLimiter
-from comms.transports.telegram.ipc.admin import AdminRouter
+from comms.transports.telegram.ipc.admin import LEGACY_ADMIN_SURFACE, AdminRouter
+from comms.transports.telegram.ipc.handlers.clients import CLIENT_COMMANDS
+from comms.transports.telegram.ipc.handlers.exposure import exposure_handlers
+from comms.transports.telegram.ipc.handlers.policy import policy_handlers
+from comms.transports.telegram.ipc.handlers.projects import (
+    PROJECT_COMMANDS,
+    member_commands,
+    project_handlers,
+)
+from comms.transports.telegram.ipc.handlers.scope import scope_commands, scope_handlers
 from comms.transports.telegram.ipc.leases import LeaseError, verify_lease
 from comms.transports.telegram.keys.store import key_id, load_key, set_store_dir
 from comms.transports.telegram.runtime.composition import _Seeds, admin_handlers
@@ -34,11 +44,12 @@ from comms.transports.telegram.runtime.ingress import create_ingress_app
 from comms.transports.telegram.sensitive_dispatch import SensitiveDispatcher
 from comms.transports.telegram.storage.authority_view import load_security
 from comms.transports.telegram.storage.db import bind_cursor_store
+from comms.transports.telegram.telegram.discovery import DiscoveryStore
 from comms.transports.telegram.telegram.metadata import MetadataReadAdapter
 from comms.transports.telegram.telegram.reads import TelegramReads
 from comms.transports.telegram.telegram.service import RoutedRetrieval
 
-__all__ = ["RuntimeServices", "build_runtime"]
+__all__ = ["RuntimeServices", "build_runtime", "legacy_admin_handlers"]
 
 
 @dataclass
@@ -60,6 +71,42 @@ def _disclosure_public(conn: sqlite3.Connection) -> tuple[str, str]:
     if current is None or current["key_id"] != ident:
         raise RuntimeError("disclosure key publication did not take effect")  # fail closed
     return ident, current["public_key_b64url"]
+
+
+def legacy_admin_handlers(
+    conn: sqlite3.Connection,
+    *,
+    key_dir: Path,
+    anchor_path: Path,
+    telegram: Any,
+    seeds: Callable[[str], bytes | None],
+    runtime_id: bytes,
+    clock: Callable[[], float],
+) -> dict[str, Callable[[dict[str, Any]], Any]]:
+    """The pre-v0.3 handler map: production's, plus the retired authority commands."""
+    handlers = admin_handlers(
+        conn,
+        key_dir=key_dir,
+        anchor_path=anchor_path,
+        telegram=telegram,
+        seeds=seeds,
+        runtime_id=runtime_id,
+        clock=clock,
+    )
+    discovery = DiscoveryStore()
+    members = DiscoveryStore()  # one store: minted by `project members`, used by remove-peer
+    simulatable: dict[str, Any] = {
+        **PROJECT_COMMANDS,
+        **CLIENT_COMMANDS,
+        **member_commands(members),
+    }
+    handlers.update(project_handlers(conn, members=members))
+    handlers.update(exposure_handlers(conn))
+    if telegram is not None:
+        handlers.update(scope_handlers(conn, telegram, discovery))
+        simulatable.update(scope_commands(discovery))
+    handlers.update(policy_handlers(conn, registry=StagingRegistry(), simulatable=simulatable))
+    return handlers
 
 
 def build_runtime(
@@ -143,7 +190,7 @@ def build_runtime(
         limiter=RateLimiter(limits or DEFAULT_LIMITS),
         status_key=_disclosure_public(conn),
     )
-    handlers = admin_handlers(
+    handlers = legacy_admin_handlers(
         conn,
         key_dir=key_dir,
         anchor_path=anchor_path,
@@ -154,7 +201,7 @@ def build_runtime(
     )
     return RuntimeServices(
         ingress_app=app,
-        admin_router=AdminRouter(handlers),
+        admin_router=AdminRouter(handlers, surface=LEGACY_ADMIN_SURFACE),
         coordinator=coordinator,
         runtime_id=runtime_id,
     )

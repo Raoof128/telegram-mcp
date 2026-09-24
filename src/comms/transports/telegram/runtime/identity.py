@@ -12,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from comms.transports.telegram.storage.authority_view import owner_account
+from comms.transports.telegram.storage.owner_state import owner_account
 
 __all__ = ["PrincipalContext", "resolve_principal"]
 

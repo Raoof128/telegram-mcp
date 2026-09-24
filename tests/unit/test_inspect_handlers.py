@@ -5,6 +5,7 @@ import time
 import pytest
 
 from comms.transports.telegram.disclosure.lineage import LineageVerdict, NoRestoreLineage
+from comms.transports.telegram.ipc.handlers.exposure import exposure_handlers
 from comms.transports.telegram.ipc.handlers.inspect import inspect_handlers
 from comms.transports.telegram.storage.db import open_db
 from tests.authority_fixtures import insert_committed_receipt, seed_authority_rows
@@ -37,7 +38,10 @@ def conn(tmp_path):
 
 
 def _h(conn, lineage=None):
-    return inspect_handlers(conn, lineage=lineage or NoRestoreLineage())
+    return {
+        **inspect_handlers(conn, lineage=lineage or NoRestoreLineage()),
+        **exposure_handlers(conn),  # retired in comms v0.3; kept for its history
+    }
 
 
 def test_show_is_privacy_minimised_and_reports_signature_state(conn):
