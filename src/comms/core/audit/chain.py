@@ -26,6 +26,7 @@ from comms.core.keys import ids
 
 __all__ = [
     "COMMS",
+    "EPOCH_SEAL",
     "ChainError",
     "ChainProfile",
     "append_event",
@@ -241,7 +242,7 @@ def seal_and_open_epoch(
         profile,
         checkpoint_key,
         now=timeutil.iso(now),
-        reason="EPOCH_SEAL" if profile.checkpoint_has_reason else None,
+        reason=EPOCH_SEAL if profile.checkpoint_has_reason else None,
     )
     epoch = current["chain_epoch"] + 1
     return _insert(
@@ -255,48 +256,127 @@ def seal_and_open_epoch(
     )
 
 
+EPOCH_SEAL = "EPOCH_SEAL"
+
+
+def _checkpoint_rows(
+    conn: Any, profile: ChainProfile, where: str = "", args: tuple[Any, ...] = ()
+) -> list[dict[str, Any]]:
+    names = (*profile.signed_checkpoint_fields, "signing_key_id", "signature")
+    rows = conn.execute(
+        f"SELECT {', '.join(names)} FROM {profile.checkpoints_table} {where}"
+        " ORDER BY chain_epoch, chain_seq",
+        args,
+    ).fetchall()
+    return [dict(zip(names, row, strict=True)) for row in rows]
+
+
+def _verify_signature(
+    profile: ChainProfile, record: Mapping[str, Any], public_for: Callable[[str], bytes | None]
+) -> None:
+    public = public_for(record["signing_key_id"])
+    if public is None or ids.ed25519_key_id(public) != record["signing_key_id"]:
+        raise ChainError("checkpoint signing key is unknown")
+    try:
+        Ed25519PublicKey.from_public_bytes(public).verify(
+            bytes.fromhex(record["signature"]), checkpoint_message(profile, record)
+        )
+    except (InvalidSignature, ValueError):
+        raise ChainError("checkpoint signature does not verify") from None
+
+
+def _mac_key(key_for_epoch: Callable[[int], bytes], epoch: int) -> bytes:
+    try:
+        return key_for_epoch(epoch)
+    except (KeyError, LookupError):
+        raise ChainError("no chain key for this epoch") from None
+
+
 def verify_chain(
     conn: Any,
     profile: ChainProfile,
     key_for_epoch: Callable[[int], bytes],
     *,
     root: Mapping[str, Any] | None = None,
+    public_for: Callable[[str], bytes | None] | None = None,
 ) -> None:
-    """Recompute every retained link (epochs: Part B).
+    """Recompute every retained link, across contiguous sealed epochs (design §B.1).
 
-    Without ``root`` the chain must start at its genesis. With ``root`` (a checkpoint row
-    whose signature the caller has verified) the first retained event must be exactly the
-    root's last event: its MAC recomputes and equals the signed ``last_event_mac``, and its
-    link backwards is vouched for by the signature instead of by deleted rows.
+    Without ``root`` the chain starts at epoch 1's genesis. With ``root`` (a checkpoint
+    row) the first retained event must be exactly the root's last event, whose MAC
+    recomputes and equals the signed ``last_event_mac``; its link backwards is vouched for
+    by the signature, which is checked here when ``public_for`` is given. Epoch numbers must
+    be contiguous; every epoch but the last must end at an ``EPOCH_SEAL`` checkpoint over its
+    last event whose signature verifies, and the last epoch must carry no seal (a seal
+    means its successor existed). More than one epoch needs ``public_for``. Each epoch's
+    events are checked under exactly ``key_for_epoch(epoch)``.
     """
     names = (*profile.event_columns, *CHAIN_COLUMNS)
-    rows = conn.execute(
-        f"SELECT {', '.join(names)} FROM {profile.events_table} ORDER BY chain_epoch, chain_seq"
-    ).fetchall()
+    rows = [
+        dict(zip(names, row, strict=True))
+        for row in conn.execute(
+            f"SELECT {', '.join(names)} FROM {profile.events_table} ORDER BY chain_epoch, chain_seq"
+        ).fetchall()
+    ]
     if root is not None and not rows:
         raise ChainError("the root's event row is missing")
+    if not rows:
+        return
+    epochs = sorted({r["chain_epoch"] for r in rows})
+    if epochs != list(range(epochs[0], epochs[-1] + 1)):
+        raise ChainError("chain epochs are not contiguous")
+    if root is None and epochs[0] != 1:
+        raise ChainError("the chain does not start at epoch 1")
+    if len(epochs) > 1 and (public_for is None or not profile.checkpoint_has_reason):
+        raise ChainError("verifying epoch seals needs public keys and a sealing profile")
+    seals: dict[int, dict[str, Any]] = {}
+    if profile.checkpoint_has_reason:
+        for sealing in _checkpoint_rows(conn, profile, "WHERE reason = ?", (EPOCH_SEAL,)):
+            if sealing["chain_epoch"] in seals:
+                raise ChainError("an epoch has two seals")
+            seals[sealing["chain_epoch"]] = sealing
+    if root is not None:
+        first = rows[0]
+        if (first["chain_epoch"], first["chain_seq"], first["event_id"]) != (
+            root["chain_epoch"],
+            root["chain_seq"],
+            root["last_event_id"],
+        ) or not hmac.compare_digest(first["event_mac"], root["last_event_mac"]):
+            raise ChainError("the first retained event is not the root's event")
+        if public_for is not None:
+            signed = [
+                c
+                for c in _checkpoint_rows(
+                    conn,
+                    profile,
+                    "WHERE chain_epoch = ? AND chain_seq = ?",
+                    (root["chain_epoch"], root["chain_seq"]),
+                )
+                if c["last_event_id"] == root["last_event_id"]
+            ]
+            if not signed:
+                raise ChainError("the root is not a stored checkpoint")
+            for checkpoint in signed:
+                _verify_signature(profile, checkpoint, public_for)
     expected_prev: str | None = None
     expected_seq: int | None = None
-    for row in rows:
-        record = dict(zip(names, row, strict=True))
-        if expected_seq is None and root is not None:
-            if (record["chain_epoch"], record["chain_seq"], record["event_id"]) != (
-                root["chain_epoch"],
-                root["chain_seq"],
-                root["last_event_id"],
-            ) or not hmac.compare_digest(record["event_mac"], root["last_event_mac"]):
-                raise ChainError("the first retained event is not the root's event")
-            expected_prev, expected_seq = record["prev_event_mac"], record["chain_seq"]
-        if expected_seq is None:
-            expected_prev, expected_seq = genesis_mac(profile, record["chain_epoch"]), 1
+    previous_epoch: int | None = None
+    for index, record in enumerate(rows):
+        epoch: int = record["chain_epoch"]
+        if epoch != previous_epoch:
+            previous_epoch = epoch
+            if index == 0 and root is not None:
+                expected_prev, expected_seq = record["prev_event_mac"], record["chain_seq"]
+            else:
+                expected_prev, expected_seq = genesis_mac(profile, epoch), 1
         if record["chain_seq"] != expected_seq:
             raise ChainError("chain sequence is not continuous")
         if record["prev_event_mac"] != expected_prev:
             raise ChainError("chain link does not match the previous event")
         recomputed = event_mac(
             profile,
-            key_for_epoch(record["chain_epoch"]),
-            chain_epoch=record["chain_epoch"],
+            _mac_key(key_for_epoch, epoch),
+            chain_epoch=epoch,
             chain_seq=record["chain_seq"],
             prev_event_mac=record["prev_event_mac"],
             event=record,
@@ -304,6 +384,23 @@ def verify_chain(
         if not hmac.compare_digest(recomputed, record["event_mac"]):
             raise ChainError("event MAC does not verify")
         expected_prev, expected_seq = record["event_mac"], record["chain_seq"] + 1
+        last_of_epoch = index + 1 == len(rows) or rows[index + 1]["chain_epoch"] != epoch
+        if last_of_epoch and epoch != epochs[-1]:
+            seal = seals.get(epoch)
+            if seal is None or (
+                seal["chain_seq"],
+                seal["last_event_id"],
+                seal["last_event_mac"],
+            ) != (
+                record["chain_seq"],
+                record["event_id"],
+                record["event_mac"],
+            ):
+                raise ChainError("an epoch does not end at its seal")
+            assert public_for is not None
+            _verify_signature(profile, seal, public_for)
+    if epochs[-1] in seals:
+        raise ChainError("the last epoch carries a seal: its successor is missing")
 
 
 def checkpoint_message(profile: ChainProfile, row: Mapping[str, Any]) -> bytes:
@@ -348,19 +445,5 @@ def verify_checkpoints(
     conn: Any, profile: ChainProfile, public_for: Callable[[str], bytes | None]
 ) -> None:
     """Verify every retained checkpoint by its own recorded key; the ID is recomputed."""
-    names = (*profile.signed_checkpoint_fields, "signing_key_id", "signature")
-    rows = conn.execute(
-        f"SELECT {', '.join(names)} FROM {profile.checkpoints_table}"
-        " ORDER BY chain_epoch, chain_seq"
-    ).fetchall()
-    for row in rows:
-        record = dict(zip(names, row, strict=True))
-        public = public_for(record["signing_key_id"])
-        if public is None or ids.ed25519_key_id(public) != record["signing_key_id"]:
-            raise ChainError("checkpoint signing key is unknown")
-        try:
-            Ed25519PublicKey.from_public_bytes(public).verify(
-                bytes.fromhex(record["signature"]), checkpoint_message(profile, record)
-            )
-        except (InvalidSignature, ValueError):
-            raise ChainError("checkpoint signature does not verify") from None
+    for record in _checkpoint_rows(conn, profile):
+        _verify_signature(profile, record, public_for)
