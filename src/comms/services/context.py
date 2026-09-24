@@ -19,6 +19,7 @@ from typing import Any
 from comms.core.campaigns.directory import destination_id
 from comms.core.errors import CommsError
 from comms.core.objects import object_ref
+from comms.core.providers.capability import Capability, CapabilityState
 from comms.core.providers.protocols import (
     ContextPage,
     ContextQuery,
@@ -26,6 +27,7 @@ from comms.core.providers.protocols import (
     ContextSource,
     ProviderTarget,
 )
+from comms.services.capability import STATE_CODE, CapabilityService
 
 __all__ = ["INCLUDES", "SEARCH_BOUNDS", "ContextEngine"]
 
@@ -48,13 +50,54 @@ class ContextEngine:
         *,
         clock: Callable[[], datetime],
         monotonic: Callable[[], float],
+        capability: CapabilityService | None = None,
     ) -> None:
-        self._conn, self._sources, self._clock, self._monotonic = (
-            conn,
-            dict(sources),
-            clock,
-            monotonic,
-        )
+        self._conn, self._sources, self._clock = conn, dict(sources), clock
+        self._monotonic, self._capability = monotonic, capability
+
+    # -- Telegram source choice (D10; P §12, §20) ------------------------------------------
+
+    def recent_for(
+        self,
+        group: str,
+        targets: Mapping[str, ProviderTarget],
+        *,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """Live provider history when the user account can read the group, else the bot's
+        locally retained updates (labelled ``telegram_local``)."""
+        target = self._reader(targets, Capability.HISTORY_READ, fallback=True)
+        return self.recent(group, target, limit=limit, cursor=cursor)
+
+    def search_for(
+        self,
+        groups: Sequence[tuple[str, Mapping[str, ProviderTarget]]],
+        query: str,
+        *,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Search is provider history: the user actor only, never quietly the bot's updates."""
+        chosen = [
+            (group, self._reader(targets, Capability.HISTORY_SEARCH, fallback=False))
+            for group, targets in groups
+        ]
+        return self.search(chosen, query, limit=limit)
+
+    def _reader(
+        self, targets: Mapping[str, ProviderTarget], capability: Capability, *, fallback: bool
+    ) -> ProviderTarget:
+        user = targets.get("telegram_user")
+        code = "NOT_CONFIGURED"
+        if user is not None and "telegram_user" in self._sources and self._capability is not None:
+            state = self._capability.state("telegram_user", user, capability)
+            if state is CapabilityState.AVAILABLE:
+                return user
+            code = STATE_CODE.get(state, "CAPABILITY_UNAVAILABLE")
+        bot = targets.get("telegram_bot")
+        if fallback and bot is not None and "telegram_bot" in self._sources:
+            return bot
+        raise CommsError(code)
 
     def recent(
         self, group: str, target: ProviderTarget, *, limit: int = 20, cursor: str | None = None

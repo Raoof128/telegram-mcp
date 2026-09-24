@@ -25,11 +25,11 @@ from comms.core.providers.protocols import (
     ProviderTarget,
 )
 
-__all__ = ["AUTHORITY_ORDER", "CapabilityService"]
+__all__ = ["AUTHORITY_ORDER", "STATE_CODE", "CapabilityService"]
 
 # P §68 step 4: least extra authority first.
 AUTHORITY_ORDER = ("telegram_bot", "whatsapp_cloud", "telegram_user")
-_CODE = {
+STATE_CODE = {
     S.NOT_AUTHORIZED: "NOT_AUTHORIZED",
     S.ACCOUNT_INELIGIBLE: "ACCOUNT_INELIGIBLE",
     S.PROVIDER_UNSUPPORTED: "PROVIDER_UNSUPPORTED",
@@ -83,7 +83,7 @@ class CapabilityService:
         """A consequential write: a fresh snapshot, and only an explicit AVAILABLE passes."""
         state = self.state(actor, target, capability, refresh=True)
         if state is not S.AVAILABLE:
-            raise CommsError(_CODE[state])
+            raise CommsError(STATE_CODE[state])
 
     def choose_actor(
         self,
@@ -105,7 +105,7 @@ class CapabilityService:
             state = self.state(actor, targets[actor], capability)
             if state is S.AVAILABLE:
                 return actor
-            reasons.append(_CODE[state])
+            reasons.append(STATE_CODE[state])
         best = min(reasons, key=_REASON_ORDER.index) if reasons else "CAPABILITY_UNAVAILABLE"
         raise CommsError(best)
 
