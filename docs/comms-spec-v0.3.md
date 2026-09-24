@@ -173,6 +173,8 @@ Two further limits are not claimed:
 - **A29. One tool catalog.** One `TOOL_CATALOG` generates `tools/list`, the dispatch allowlist, the input and output schemas, the annotations and the documentation table. The catalog is static and ordered: capability state is answered at call time, never by hiding tools. Pinned: the tool count, the ordered names, each tool's schema digest, and an overall catalog digest.
 - **A30. `ctx_` handles** are short-lived and bound to the client, the owner, the `security_epoch`, the query digest, the target, the actor, the source snapshot and an expiry. They are never bearer capabilities.
 - **A31. Refs.** `rcp_` is a person, `dst_` a delivery destination, and `grp_` a group object mapped 1:1 to a group-like `dst_`. There is no `usr_` ref in v0.3.
+
+  *Execution amendment (R-001, measured in Task A1b):* P §4's `msg_` and `tpl_` collide with WhatsVault's `msg` and `tpl` IDs, which reach the context engine through the webhook archive. Comms therefore uses **`cmg_`** for messages and **`ctp_`** for templates. `msg_` and `tpl_` stay WhatsVault's.
 - **A32. Untrusted content.** No write tool accepts retrieved text, or a `ctx_` handle, as authority. Mutations take explicit structured refs only.
 - **A33. `cml1` local leases** use the domain `comms-local-lease/v1\0`, audience `comms-loopback`, and fresh client seeds. `tgml1` is retired at cutover, in the phase `LEGACY_CLIENT_AUTH_REVOKED`, before `COMPLETE`.
   - **Lease bounds:** a lifetime of at most 60 s, ±30 s clock skew, a 16-byte nonce, strict JSON with duplicate keys refused, at most 1 KiB, a constant-time MAC check, `cid` bound to its seed, and a loopback or peer-credential source.

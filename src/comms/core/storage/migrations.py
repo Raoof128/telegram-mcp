@@ -11,7 +11,7 @@ from typing import Any
 
 from comms.core.storage.db import write_tx
 
-__all__ = ["MIGRATIONS", "SCHEMA_V1", "Migration", "migrate"]
+__all__ = ["MIGRATIONS", "SCHEMA_V1", "SCHEMA_V2", "Migration", "migrate"]
 
 
 @dataclass(frozen=True)
@@ -184,7 +184,23 @@ def _statements(sql: str) -> tuple[str, ...]:
 
 SCHEMA_V1: tuple[str, ...] = _statements(_SCHEMA_V1_SQL)
 
-MIGRATIONS: tuple[Migration, ...] = (Migration(1, SCHEMA_V1),)
+# comms v0.3: assembled across Part A's tasks before the single merge (plan Global Constraints).
+_SCHEMA_V2_SQL = """
+CREATE TABLE key_slots (purpose TEXT NOT NULL, version INTEGER NOT NULL CHECK (version >= 1), key_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('ACTIVE','TRUSTED_RETIRED','VERIFICATION_ONLY','REVOKED','RETIRED','ORPHAN','DESTROYED')),
+  created_at TEXT NOT NULL, retired_at TEXT, PRIMARY KEY (purpose, version));
+CREATE UNIQUE INDEX key_slots_one_active ON key_slots (purpose) WHERE state = 'ACTIVE';
+CREATE TRIGGER key_slots_binding_immutable BEFORE UPDATE OF purpose, version, key_id, created_at ON key_slots
+  BEGIN SELECT RAISE(ABORT, 'key slot binding is immutable'); END;
+CREATE TABLE verification_keys (key_id TEXT PRIMARY KEY, purpose TEXT NOT NULL, algorithm TEXT NOT NULL,
+  public_key BLOB NOT NULL, activated_at TEXT NOT NULL, retired_at TEXT,
+  trust_state TEXT NOT NULL CHECK (trust_state IN ('ACTIVE','TRUSTED_RETIRED','VERIFICATION_ONLY','REVOKED')));
+CREATE TRIGGER verification_keys_public_immutable BEFORE UPDATE OF key_id, purpose, algorithm, public_key
+  ON verification_keys BEGIN SELECT RAISE(ABORT, 'verification key is immutable'); END;
+"""
+SCHEMA_V2: tuple[str, ...] = _statements(_SCHEMA_V2_SQL)
+
+MIGRATIONS: tuple[Migration, ...] = (Migration(1, SCHEMA_V1), Migration(2, SCHEMA_V2))
 
 
 def migrate(conn: Any, migrations: tuple[Migration, ...] = MIGRATIONS) -> int:
