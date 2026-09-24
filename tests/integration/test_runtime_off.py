@@ -1,6 +1,6 @@
 import socket
 
-from telegram_mcp.runtime.bootstrap import bootstrap_status
+from comms.transports.telegram.runtime.bootstrap import bootstrap_status
 
 
 def test_off_means_nothing_listens():

@@ -19,7 +19,7 @@ import pytest
 def store_dir(tmp_path, monkeypatch):
     """A 0700 tmp store dir, bound as the process-wide key store."""
     os.chmod(tmp_path, 0o700)
-    from telegram_mcp.keys import store
+    from comms.transports.telegram.keys import store
 
     monkeypatch.setattr(store, "_STORE_DIR", None)
     store.set_store_dir(tmp_path)
@@ -30,7 +30,7 @@ def store_dir(tmp_path, monkeypatch):
 
 
 def test_registry_has_thirteen_purposes_phase_split():
-    from telegram_mcp.keys.registry import KEY_REGISTRY
+    from comms.transports.telegram.keys.registry import KEY_REGISTRY
 
     assert len(KEY_REGISTRY) == 12 + 1  # 12 spec purposes + agent-transport-key (origin impl)
     assert sum(1 for s in KEY_REGISTRY.values() if s.origin == "impl") == 1
@@ -41,7 +41,7 @@ def test_registry_has_thirteen_purposes_phase_split():
 
 
 def test_registry_rows_match_design_section_3():
-    from telegram_mcp.keys.registry import KEY_REGISTRY
+    from comms.transports.telegram.keys.registry import KEY_REGISTRY
 
     assert KEY_REGISTRY["principal-key"].algorithm == "HMAC-SHA-256"
     assert KEY_REGISTRY["cursor-key"].algorithm == "HMAC-SHA-256"
@@ -77,7 +77,7 @@ def test_registry_rows_match_design_section_3():
 
 
 def test_phase3_rows_pin_algorithms_per_spec_9_6_1():
-    from telegram_mcp.keys.registry import KEY_REGISTRY
+    from comms.transports.telegram.keys.registry import KEY_REGISTRY
 
     assert KEY_REGISTRY["disclosure-key"].algorithm == "Ed25519"
     assert KEY_REGISTRY["audit-checkpoint-key"].algorithm == "Ed25519"
@@ -88,7 +88,7 @@ def test_phase3_rows_pin_algorithms_per_spec_9_6_1():
 
 
 def test_keyspec_is_frozen():
-    from telegram_mcp.keys.registry import KeySpec
+    from comms.transports.telegram.keys.registry import KeySpec
 
     spec = KeySpec(
         algorithm="Ed25519",
@@ -102,7 +102,7 @@ def test_keyspec_is_frozen():
 
 
 def test_keyspec_rejects_bad_origin_and_phase():
-    from telegram_mcp.keys.registry import KeySpec
+    from comms.transports.telegram.keys.registry import KeySpec
 
     with pytest.raises(ValueError):
         KeySpec(algorithm="Ed25519", owner="x", persistent=True, required_phase=2, origin="lore")
@@ -114,14 +114,14 @@ def test_keyspec_rejects_bad_origin_and_phase():
 
 
 def test_no_phase3_private_keys_provisioned(tmp_path):
-    from telegram_mcp.keys.store import provision_missing
+    from comms.transports.telegram.keys.store import provision_missing
 
     created = provision_missing(tmp_path, phases=(2,))
     assert not any("disclosure" in name or "audit" in name or "backup" in name for name in created)
 
 
 def test_provision_creates_only_phase2_file_backed_rows(store_dir):
-    from telegram_mcp.keys.store import provision_missing
+    from comms.transports.telegram.keys.store import provision_missing
 
     created = provision_missing(store_dir, phases=(2,))
     assert set(created) == {"principal-key", "cursor-key", "privacy-key", "challenge-key"}
@@ -131,7 +131,7 @@ def test_provision_creates_only_phase2_file_backed_rows(store_dir):
 
 
 def test_provision_phases_3_creates_exactly_the_three_phase_three_rows(store_dir):
-    from telegram_mcp.keys.store import provision_missing
+    from comms.transports.telegram.keys.store import provision_missing
 
     assert sorted(provision_missing(store_dir, phases=(3,))) == [
         "audit-chain-key",
@@ -141,7 +141,7 @@ def test_provision_phases_3_creates_exactly_the_three_phase_three_rows(store_dir
 
 
 def test_provision_never_overwrites(store_dir):
-    from telegram_mcp.keys.store import load_key, provision_missing
+    from comms.transports.telegram.keys.store import load_key, provision_missing
 
     first = {name: load_key(name) for name in provision_missing(store_dir, phases=(2,))}
     assert provision_missing(store_dir, phases=(2,)) == []
@@ -150,7 +150,7 @@ def test_provision_never_overwrites(store_dir):
 
 
 def test_load_enforces_0600(store_dir):
-    from telegram_mcp.keys.store import KeyStoreError, load_key, provision_missing
+    from comms.transports.telegram.keys.store import KeyStoreError, load_key, provision_missing
 
     provision_missing(store_dir, phases=(2,))
     target = store_dir / "challenge-key"
@@ -160,7 +160,7 @@ def test_load_enforces_0600(store_dir):
 
 
 def test_provision_rejects_bad_parent_dir(tmp_path):
-    from telegram_mcp.keys.store import KeyStoreError, provision_missing
+    from comms.transports.telegram.keys.store import KeyStoreError, provision_missing
 
     os.chmod(tmp_path, 0o755)
     with pytest.raises(KeyStoreError, match="0700"):
@@ -168,14 +168,14 @@ def test_provision_rejects_bad_parent_dir(tmp_path):
 
 
 def test_load_unknown_purpose_raises(store_dir):
-    from telegram_mcp.keys.store import KeyStoreError, load_key
+    from comms.transports.telegram.keys.store import KeyStoreError, load_key
 
     with pytest.raises(KeyStoreError, match="unknown key purpose"):
         load_key("mallory-key")
 
 
 def test_load_missing_file_raises(store_dir):
-    from telegram_mcp.keys.store import KeyStoreError, load_key
+    from comms.transports.telegram.keys.store import KeyStoreError, load_key
 
     # Phase-3 rows are registry-only: no private file may exist yet.
     with pytest.raises(KeyStoreError, match="key file is missing"):
@@ -188,7 +188,7 @@ def test_key_id_ed25519_matches_raw_public_bytes(store_dir):
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    from telegram_mcp.keys.store import key_id, load_key, provision_missing
+    from comms.transports.telegram.keys.store import key_id, load_key, provision_missing
 
     provision_missing(store_dir, phases=(2,))
     seed = load_key("challenge-key")
@@ -202,7 +202,7 @@ def test_key_id_ed25519_matches_raw_public_bytes(store_dir):
 
 
 def test_key_id_hmac_shape(store_dir):
-    from telegram_mcp.keys.store import key_id, load_key, provision_missing
+    from comms.transports.telegram.keys.store import key_id, load_key, provision_missing
 
     provision_missing(store_dir, phases=(2,))
     for name in ("principal-key", "cursor-key", "privacy-key"):
@@ -235,8 +235,8 @@ def _self_signed_cert():
 def test_tunnel_pin_fingerprint_is_spki(store_dir):
     from cryptography.hazmat.primitives import serialization
 
-    from telegram_mcp.keys import pairing
-    from telegram_mcp.keys.store import key_id
+    from comms.transports.telegram.keys import pairing
+    from comms.transports.telegram.keys.store import key_id
 
     cert = _self_signed_cert()
     der = cert.public_key().public_bytes(
@@ -248,7 +248,7 @@ def test_tunnel_pin_fingerprint_is_spki(store_dir):
 
 
 def test_lease_seed_per_client(store_dir):
-    from telegram_mcp.keys.store import load_key, provision_lease_seed
+    from comms.transports.telegram.keys.store import load_key, provision_lease_seed
 
     seed_a = provision_lease_seed(store_dir, "tcl_" + "d" * 26)
     seed_b = provision_lease_seed(store_dir, "tcl_" + "e" * 26)
@@ -262,7 +262,7 @@ def test_lease_seed_per_client(store_dir):
 
 
 def test_lease_seed_rejects_unsafe_client_ref(store_dir):
-    from telegram_mcp.keys.store import KeyStoreError, provision_lease_seed
+    from comms.transports.telegram.keys.store import KeyStoreError, provision_lease_seed
 
     for bad in ("", "../escape", "a/b", "x" * 129):
         with pytest.raises(KeyStoreError, match="invalid client reference"):
@@ -277,7 +277,7 @@ def test_pairing_agent_two_slots(store_dir):
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    from telegram_mcp.keys import pairing
+    from comms.transports.telegram.keys import pairing
 
     approval_pub = (
         ec.generate_private_key(ec.SECP256R1())
@@ -301,8 +301,8 @@ def test_pairing_agent_two_slots(store_dir):
 
 
 def test_pairing_challenge_export_and_verify(store_dir):
-    from telegram_mcp.keys import pairing
-    from telegram_mcp.keys.store import key_id, provision_missing
+    from comms.transports.telegram.keys import pairing
+    from comms.transports.telegram.keys.store import key_id, provision_missing
 
     provision_missing(store_dir, phases=(2,))
     raw = pairing.export_public("challenge-key")
@@ -312,16 +312,16 @@ def test_pairing_challenge_export_and_verify(store_dir):
 
 
 def test_pairing_rejects_hmac_pin(store_dir):
-    from telegram_mcp.keys import pairing
-    from telegram_mcp.keys.store import KeyStoreError
+    from comms.transports.telegram.keys import pairing
+    from comms.transports.telegram.keys.store import KeyStoreError
 
     with pytest.raises(KeyStoreError, match="no public half"):
         pairing.import_peer_pin("cursor-key", b"\x00" * 32)
 
 
 def test_pairing_unknown_purpose_raises(store_dir):
-    from telegram_mcp.keys import pairing
-    from telegram_mcp.keys.store import KeyStoreError
+    from comms.transports.telegram.keys import pairing
+    from comms.transports.telegram.keys.store import KeyStoreError
 
     with pytest.raises(KeyStoreError, match="unknown key purpose"):
         pairing.import_peer_pin("mallory-key", b"\x00" * 32)
@@ -329,8 +329,8 @@ def test_pairing_unknown_purpose_raises(store_dir):
 
 
 def test_pairing_rejects_malformed_public(store_dir):
-    from telegram_mcp.keys import pairing
-    from telegram_mcp.keys.store import KeyStoreError
+    from comms.transports.telegram.keys import pairing
+    from comms.transports.telegram.keys.store import KeyStoreError
 
     with pytest.raises(KeyStoreError, match="invalid key material"):
         pairing.import_peer_pin("agent-transport-key", b"too-short")
@@ -339,7 +339,7 @@ def test_pairing_rejects_malformed_public(store_dir):
 
 
 def test_phase_three_rows_are_provisioned_and_have_distinct_ids(tmp_path):
-    from telegram_mcp.keys.store import key_id, provision_missing
+    from comms.transports.telegram.keys.store import key_id, provision_missing
 
     created = provision_missing(tmp_path, phases=(2, 3))
 
@@ -353,7 +353,7 @@ def test_phase_three_rows_are_provisioned_and_have_distinct_ids(tmp_path):
 
 
 def test_phase_two_only_provisioning_still_skips_phase_three(tmp_path):
-    from telegram_mcp.keys.store import provision_missing
+    from comms.transports.telegram.keys.store import provision_missing
 
     created = provision_missing(tmp_path, phases=(2,))
 

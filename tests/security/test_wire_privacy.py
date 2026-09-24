@@ -4,9 +4,9 @@ import logging
 
 from starlette.testclient import TestClient
 
-from telegram_mcp.config import DemoConfig
-from telegram_mcp.observability.logging import install_safe_logging
-from telegram_mcp.server import create_app
+from comms.transports.telegram.config import DemoConfig
+from comms.transports.telegram.observability.logging import install_safe_logging
+from comms.transports.telegram.server import create_app
 
 install_safe_logging()
 

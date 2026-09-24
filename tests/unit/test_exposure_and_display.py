@@ -3,10 +3,10 @@
 
 import pytest
 
-from telegram_mcp.consent.display import ACTION_DISPLAY, build_display
-from telegram_mcp.disclosure.budget import GLOBAL, PROJECT, BucketKey, Usage
-from telegram_mcp.disclosure.exposure import exposure_digest, exposure_snapshot
-from telegram_mcp.disclosure.measure import RECORD_ELEMENT
+from comms.transports.telegram.consent.display import ACTION_DISPLAY, build_display
+from comms.transports.telegram.disclosure.budget import GLOBAL, PROJECT, BucketKey, Usage
+from comms.transports.telegram.disclosure.exposure import exposure_digest, exposure_snapshot
+from comms.transports.telegram.disclosure.measure import RECORD_ELEMENT
 
 G = BucketKey(1, GLOBAL, "a" * 64)
 P = BucketKey(1, PROJECT, "b" * 64)
@@ -71,8 +71,8 @@ def test_unknown_client_kind_is_refused():
 
 
 def test_a_cross_project_prompt_warns_about_context_insertion():
-    from telegram_mcp.consent.display import build_display
-    from telegram_mcp.disclosure.budget import Usage
+    from comms.transports.telegram.consent.display import build_display
+    from comms.transports.telegram.disclosure.budget import Usage
 
     display = build_display(
         tool_name="telegram_cross_project_search",

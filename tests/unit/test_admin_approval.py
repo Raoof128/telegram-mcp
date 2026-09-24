@@ -6,13 +6,18 @@ import hashlib
 import json
 import socket
 
-from telegram_mcp.consent.admin_approval import AdminApprover, sentinel_ref
-from telegram_mcp.consent.broker import ConsentBroker
-from telegram_mcp.consent.challenge import StubSigner
-from telegram_mcp.consent.prompter import Prompter
-from telegram_mcp.ipc.admin import AdminRouter
-from telegram_mcp.ipc.framing import decode_json_frame, encode_json_frame, read_frame, write_frame
-from telegram_mcp.storage.db import open_db
+from comms.transports.telegram.consent.admin_approval import AdminApprover, sentinel_ref
+from comms.transports.telegram.consent.broker import ConsentBroker
+from comms.transports.telegram.consent.challenge import StubSigner
+from comms.transports.telegram.consent.prompter import Prompter
+from comms.transports.telegram.ipc.admin import AdminRouter
+from comms.transports.telegram.ipc.framing import (
+    decode_json_frame,
+    encode_json_frame,
+    read_frame,
+    write_frame,
+)
+from comms.transports.telegram.storage.db import open_db
 from tests.authority_fixtures import seed_authority_rows
 
 KEY = b"\x07" * 32

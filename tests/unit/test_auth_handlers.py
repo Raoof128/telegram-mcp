@@ -2,10 +2,10 @@ import logging
 
 import pytest
 
-from telegram_mcp.ipc.handlers.auth import auth_handlers
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.storage.identity import ensure_owner_principal
-from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
+from comms.transports.telegram.ipc.handlers.auth import auth_handlers
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.storage.identity import ensure_owner_principal
+from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 from tests.telegram.fake_client import FakeClient
 
 KEY = b"\x07" * 32

@@ -5,7 +5,7 @@ import base64
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from telegram_mcp.disclosure.receipts import (
+from comms.transports.telegram.disclosure.receipts import (
     APPENDIX_K_FIELDS,
     PROOF_SCHEMA,
     ReceiptError,

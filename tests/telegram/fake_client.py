@@ -16,7 +16,7 @@ from telethon import errors, utils
 from telethon import password as srp
 from telethon.tl import types
 
-from telegram_mcp.telegram.telethon_adapter import qualified
+from comms.transports.telegram.telegram.telethon_adapter import qualified
 
 _ME = 4242
 

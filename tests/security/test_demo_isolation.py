@@ -2,21 +2,21 @@
 
 import sys
 
-from telegram_mcp import config as config_module
+from comms.transports.telegram import config as config_module
 
 
 def test_no_telethon_import():
     import subprocess
 
-    probe = "import sys, telegram_mcp.server, telegram_mcp.config; print('telethon' in sys.modules)"
+    probe = "import sys, comms.transports.telegram.server, comms.transports.telegram.config; print('telethon' in sys.modules)"
     done = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, timeout=60, check=True
     )
     assert done.stdout.strip() == "False"
     assert not hasattr(config_module, "Telethon")
-    import telegram_mcp.config
+    import comms.transports.telegram.config
 
-    assert "telethon" not in telegram_mcp.config.__dict__.get("__doc__", "")
+    assert "telethon" not in comms.transports.telegram.config.__dict__.get("__doc__", "")
 
 
 def test_no_session_or_database_access(monkeypatch):
@@ -27,13 +27,13 @@ def test_no_session_or_database_access(monkeypatch):
 
     monkeypatch.setattr(sqlite3, "connect", _forbidden)
     # Config construction itself must not touch the network or filesystem.
-    from telegram_mcp.config import DemoConfig
+    from comms.transports.telegram.config import DemoConfig
 
     DemoConfig()
 
 
 def test_only_limited_profiles_exist():
-    from telegram_mcp.config import DemoConfig
+    from comms.transports.telegram.config import DemoConfig
 
     fields = set(DemoConfig.model_fields)
     assert fields == {"mode", "host", "port", "max_request_bytes", "max_response_bytes"}
@@ -51,7 +51,7 @@ def test_status_never_advertises_a_publicly_known_key():
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    from telegram_mcp.tools.status import ephemeral_disclosure_key, make_status
+    from comms.transports.telegram.tools.status import ephemeral_disclosure_key, make_status
 
     zero_raw = Ed25519PrivateKey.from_private_bytes(bytes(32)).public_key().public_bytes_raw()
     zero_public = base64.urlsafe_b64encode(zero_raw).rstrip(b"=").decode("ascii")
@@ -64,7 +64,7 @@ def test_status_never_advertises_a_publicly_known_key():
 def test_status_requires_a_key_pair():
     import pytest
 
-    from telegram_mcp.tools.status import make_status
+    from comms.transports.telegram.tools.status import make_status
 
     # The contract admits no null here, so there is no "no key" state to
     # report. A build with no key cannot answer telegram_status at all.
@@ -73,7 +73,7 @@ def test_status_requires_a_key_pair():
 
 
 def test_ephemeral_keys_differ_between_processes():
-    from telegram_mcp.tools.status import ephemeral_disclosure_key
+    from comms.transports.telegram.tools.status import ephemeral_disclosure_key
 
     assert ephemeral_disclosure_key() != ephemeral_disclosure_key()
 
@@ -83,8 +83,8 @@ def test_the_advertised_key_satisfies_the_frozen_contract(ephemeral_disclosure_k
 
     import jsonschema
 
-    from telegram_mcp.tools.status import make_status
+    from comms.transports.telegram.tools.status import make_status
 
-    with open("src/telegram_mcp/contracts/telegram_status.data.json") as handle:
+    with open("src/comms/transports/telegram/contracts/telegram_status.data.json") as handle:
         schema = json.load(handle)
     jsonschema.validate(make_status(disclosure_key=ephemeral_disclosure_key)["data"], schema)

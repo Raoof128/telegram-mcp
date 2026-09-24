@@ -1,7 +1,7 @@
-from telegram_mcp.ipc.handlers.clients import client_handlers
-from telegram_mcp.keys.store import read_lease_seed
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.storage.identity import ensure_account, ensure_owner_principal
+from comms.transports.telegram.ipc.handlers.clients import client_handlers
+from comms.transports.telegram.keys.store import read_lease_seed
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.storage.identity import ensure_account, ensure_owner_principal
 
 KEY = b"\x07" * 32
 

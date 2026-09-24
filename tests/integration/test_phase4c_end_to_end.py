@@ -8,8 +8,8 @@ from datetime import UTC, datetime, timedelta
 from telethon import errors
 from telethon.tl import types
 
-from telegram_mcp.consent.challenge import jcs_dumps
-from telegram_mcp.storage.refstore import RefStore
+from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.storage.refstore import RefStore
 from tests.authority_fixtures import BETA_REF, PROJECT_REF, seed_second_project
 from tests.integration.test_phase4a_end_to_end import CODEX, call
 from tests.integration.test_phase4b_end_to_end import _close, _world

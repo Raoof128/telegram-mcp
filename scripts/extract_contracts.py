@@ -15,7 +15,7 @@ EXPECTED_SHA256 = "36b67f488415f2ab1c44b8d906de7f192fbe0dc562a2aeac76938b24c4a61
 
 WORKSPACE = Path(__file__).resolve().parents[1]
 SPEC_PATH = WORKSPACE / "telegram-mcp-v0.1.10-final-engineering-spec.md"
-CONTRACTS_DIR = WORKSPACE / "src" / "telegram_mcp" / "contracts"
+CONTRACTS_DIR = WORKSPACE / "src" / "comms" / "transports" / "telegram" / "contracts"
 
 # Full exact heading prefixes (trailing space prevents E.1 matching E.10-E.13).
 INPUT_HEADINGS = {

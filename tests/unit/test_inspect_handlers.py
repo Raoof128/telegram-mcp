@@ -4,15 +4,15 @@ import time
 
 import pytest
 
-from telegram_mcp.disclosure.lineage import LineageVerdict, NoRestoreLineage
-from telegram_mcp.ipc.handlers.inspect import inspect_handlers
-from telegram_mcp.storage.db import open_db
+from comms.transports.telegram.disclosure.lineage import LineageVerdict, NoRestoreLineage
+from comms.transports.telegram.ipc.handlers.inspect import inspect_handlers
+from comms.transports.telegram.storage.db import open_db
 from tests.authority_fixtures import insert_committed_receipt, seed_authority_rows
 
 
 @pytest.fixture(autouse=True)
 def _keys(tmp_path):
-    from telegram_mcp.keys.store import provision_missing, set_store_dir
+    from comms.transports.telegram.keys.store import provision_missing, set_store_dir
 
     store = tmp_path / "keys"
     provision_missing(store, phases=(2, 3))
@@ -86,7 +86,7 @@ def test_lineage_distinguishes_restore_from_tampering(conn):
 
 def test_a_withheld_disclosure_says_so(conn):
     """Review #7: Phase 3's degraded state stays visible (accounted, never delivered)."""
-    from telegram_mcp.disclosure.audit.anchor import latch_degraded
+    from comms.transports.telegram.disclosure.audit.anchor import latch_degraded
 
     latch_degraded(conn, reason="anchor_refresh_failure", disclosure_ref=REF)
     shown = _h(conn)["disclosure show"]({"disclosure_ref": REF})
@@ -148,7 +148,7 @@ def test_exposure_status_filters_are_optional(conn):
 
 
 def _global_digest():
-    from telegram_mcp.disclosure.budget import GLOBAL, subject_digest
+    from comms.transports.telegram.disclosure.budget import GLOBAL, subject_digest
 
     return subject_digest(GLOBAL)
 

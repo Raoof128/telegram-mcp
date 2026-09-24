@@ -1,10 +1,10 @@
 import pytest
 
-from telegram_mcp.ipc.handlers.projects import project_handlers
-from telegram_mcp.ipc.handlers.scope import scope_handlers
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.telegram.discovery import DiscoveryStore
-from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
+from comms.transports.telegram.ipc.handlers.projects import project_handlers
+from comms.transports.telegram.ipc.handlers.scope import scope_handlers
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.telegram.discovery import DiscoveryStore
+from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 from tests.authority_fixtures import PROJECT_REF, seed_authority_rows
 from tests.telegram.fake_client import FakeClient
 from tests.unit.test_dialogs_and_discovery import _dialogs_result
@@ -73,7 +73,7 @@ async def test_a_failed_eviction_still_refuses_stale_handles(world, monkeypatch)
     _conn, h = world
     found = await h["scope discover"]({})
     first, second = found["selections"][0]["handle"], found["selections"][1]["handle"]
-    from telegram_mcp.telegram.discovery import DiscoveryStore
+    from comms.transports.telegram.telegram.discovery import DiscoveryStore
 
     monkeypatch.setattr(DiscoveryStore, "invalidate_all", lambda self: None)  # eviction "fails"
     h["scope allow"]({"handle": first})

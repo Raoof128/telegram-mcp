@@ -2,8 +2,8 @@
 
 import pytest
 
-from telegram_mcp.consent.admin_summaries import LIMIT, summarize
-from telegram_mcp.ipc.admin import PRESENCE_GATED
+from comms.transports.telegram.consent.admin_summaries import LIMIT, summarize
+from comms.transports.telegram.ipc.admin import PRESENCE_GATED
 
 LONG_REF = "tpr_" + "q" * 26
 LONG_ARGS = {

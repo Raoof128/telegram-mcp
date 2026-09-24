@@ -10,7 +10,7 @@ import re
 
 import pytest
 
-from telegram_mcp.authority.cursors import (
+from comms.transports.telegram.authority.cursors import (
     CURSOR_TTL_S,
     CursorError,
     CursorPresenter,
@@ -23,15 +23,15 @@ from telegram_mcp.authority.cursors import (
     query_digest,
     scope_entries_from_view,
 )
-from telegram_mcp.authority.epochs import (
+from comms.transports.telegram.authority.epochs import (
     PresenceRequired,
     bump_policy_epoch,
     bump_project_epoch,
     new_epoch_state,
     set_locked,
 )
-from telegram_mcp.authority.refs import REF_PREFIXES, validate_ref_format
-from telegram_mcp.opaque import mint_opaque_ref
+from comms.transports.telegram.authority.refs import REF_PREFIXES, validate_ref_format
+from comms.transports.telegram.opaque import mint_opaque_ref
 
 CURSOR_KEY = b"\x11" * 32
 PRIVACY_KEY = b"\x22" * 32
@@ -193,7 +193,7 @@ def test_list_projects_variant_never_collides_with_a_selected_vector():
 
 
 def test_scope_entries_come_from_the_authority_view():
-    from telegram_mcp.authority.policy import (
+    from comms.transports.telegram.authority.policy import (
         ClientProjectGrant,
         ClientState,
         ProjectState,

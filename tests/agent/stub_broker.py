@@ -1,8 +1,8 @@
 """Broker-side driver for the consent agent's rendezvous scenarios.
 
 The plan calls this a stub broker. It drives the **real** Python halves —
-``telegram_mcp.ipc.rendezvous.serve_rendezvous`` for RV-1 and
-``telegram_mcp.consent.broker.ConsentBroker`` for issuance and exact-once
+``comms.transports.telegram.ipc.rendezvous.serve_rendezvous`` for RV-1 and
+``comms.transports.telegram.consent.broker.ConsentBroker`` for issuance and exact-once
 consume — because a hand-written stub would only prove the agent agrees with
 the stub. What these scenarios exercise is byte agreement between the real
 broker and the real agent binary, which is the whole point of the gate.
@@ -41,17 +41,17 @@ from typing import Any
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
-from telegram_mcp.consent.broker import ConsentBroker, ConsentError
-from telegram_mcp.consent.challenge import display_digest, synthetic_exposure_digest
-from telegram_mcp.consent.prompter import prompt_frame
-from telegram_mcp.ipc.framing import (
+from comms.transports.telegram.consent.broker import ConsentBroker, ConsentError
+from comms.transports.telegram.consent.challenge import display_digest, synthetic_exposure_digest
+from comms.transports.telegram.consent.prompter import prompt_frame
+from comms.transports.telegram.ipc.framing import (
     FrameError,
     decode_json_frame,
     encode_json_frame,
     read_frame,
     write_frame,
 )
-from telegram_mcp.ipc.rendezvous import serve_rendezvous
+from comms.transports.telegram.ipc.rendezvous import serve_rendezvous
 
 AGENT_BIN = "build/consent/TelegramMCPConsent.app/Contents/MacOS/telegram-mcp-consent"
 

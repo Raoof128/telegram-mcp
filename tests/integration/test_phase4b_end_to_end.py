@@ -8,11 +8,11 @@ from pathlib import Path
 import uvicorn
 from telethon.tl import types
 
-from telegram_mcp.consent.challenge import StubSigner
-from telegram_mcp.keys.store import provision_lease_seed, provision_missing
-from telegram_mcp.runtime.composition import build_runtime
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
+from comms.transports.telegram.consent.challenge import StubSigner
+from comms.transports.telegram.keys.store import provision_lease_seed, provision_missing
+from comms.transports.telegram.runtime.composition import build_runtime
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 from tests.authority_fixtures import PROJECT_REF, seed_authority_rows, seed_project_world
 from tests.integration.test_phase4a_end_to_end import CODEX, RUNTIME, Agent, _free_port, call
 from tests.integration.test_telegram_reads import (

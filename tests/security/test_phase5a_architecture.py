@@ -3,7 +3,7 @@
 import ast
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "telegram_mcp"
+SRC = Path(__file__).resolve().parents[2] / "src" / "comms" / "transports" / "telegram"
 HANDLERS = SRC / "ipc" / "handlers"
 TX_NAMES = {"immediate_transaction", "commit", "rollback"}
 
@@ -89,8 +89,8 @@ def test_only_authority_policy_calls_the_class_rule():
 def test_snapshots_carry_the_view_not_a_private_owner_scope():
     from dataclasses import fields
 
-    from telegram_mcp.disclosure.seams import ProjectSnapshot
-    from telegram_mcp.disclosure.search_authority import SearchSnapshot
+    from comms.transports.telegram.disclosure.seams import ProjectSnapshot
+    from comms.transports.telegram.disclosure.search_authority import SearchSnapshot
 
     for cls in (ProjectSnapshot, SearchSnapshot):
         names = {f.name for f in fields(cls)}

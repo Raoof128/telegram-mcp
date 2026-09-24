@@ -4,9 +4,9 @@ import os
 
 import pytest
 
-from telegram_mcp.disclosure.audit.anchor import CLEAN, derive_integrity
-from telegram_mcp.disclosure.audit.chain import verify_chain
-from telegram_mcp.ipc.handlers._wrapper import (
+from comms.transports.telegram.disclosure.audit.anchor import CLEAN, derive_integrity
+from comms.transports.telegram.disclosure.audit.chain import verify_chain
+from comms.transports.telegram.ipc.handlers._wrapper import (
     AuditSink,
     TxCommand,
     admin_event,
@@ -14,8 +14,8 @@ from telegram_mcp.ipc.handlers._wrapper import (
     run_tx,
     simulate_tx,
 )
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.storage.settings import get_setting
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.storage.settings import get_setting
 from tests.authority_fixtures import seed_authority_rows
 
 KEY = b"k" * 32
@@ -124,7 +124,7 @@ def test_an_anchor_failure_keeps_the_commit_and_latches_degraded(conn, tmp_path)
 
 
 def test_audited_commands_refuse_while_degraded(conn, sink):
-    from telegram_mcp.disclosure.audit.anchor import latch_degraded
+    from comms.transports.telegram.disclosure.audit.anchor import latch_degraded
 
     latch_degraded(conn, reason="anchor_refresh_failure")
     with pytest.raises(PermissionError):
@@ -133,7 +133,7 @@ def test_audited_commands_refuse_while_degraded(conn, sink):
 
 
 def test_a_busy_database_is_a_fixed_refusal(conn, tmp_path):
-    from telegram_mcp.ipc.handlers._wrapper import BUSY
+    from comms.transports.telegram.ipc.handlers._wrapper import BUSY
 
     holder = open_db(tmp_path / "m.db")
     holder.execute("BEGIN IMMEDIATE")
@@ -150,7 +150,7 @@ def test_a_busy_database_is_a_fixed_refusal(conn, tmp_path):
 
 
 def test_admin_event_has_every_column_and_a_closed_tool_name():
-    from telegram_mcp.disclosure.audit.chain import EVENT_COLUMNS
+    from comms.transports.telegram.disclosure.audit.chain import EVENT_COLUMNS
 
     event = admin_event("admin.unlock", NOW)
     assert set(event) == set(EVENT_COLUMNS) and event["status"] == "ok"

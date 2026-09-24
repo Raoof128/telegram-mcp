@@ -4,9 +4,9 @@ import json
 
 import pytest
 
-from telegram_mcp.authority.effective import diff_rows, rows_digest
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.storage.effective_access import base_digest, explain, snapshot
+from comms.transports.telegram.authority.effective import diff_rows, rows_digest
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.storage.effective_access import base_digest, explain, snapshot
 from tests.authority_fixtures import PROJECT_REF, seed_authority_rows, seed_project_world
 
 CLIENT = "tcl_" + "a" * 26

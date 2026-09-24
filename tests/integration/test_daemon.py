@@ -8,10 +8,15 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
-from telegram_mcp.ipc.framing import decode_json_frame, encode_json_frame, read_frame, write_frame
-from telegram_mcp.keys.pairing import import_peer_pin
-from telegram_mcp.keys.store import provision_missing, set_store_dir
-from telegram_mcp.runtime.daemon import DaemonConfig, DaemonError, run_daemon
+from comms.transports.telegram.ipc.framing import (
+    decode_json_frame,
+    encode_json_frame,
+    read_frame,
+    write_frame,
+)
+from comms.transports.telegram.keys.pairing import import_peer_pin
+from comms.transports.telegram.keys.store import provision_missing, set_store_dir
+from comms.transports.telegram.runtime.daemon import DaemonConfig, DaemonError, run_daemon
 from tests.telegram.fake_client import FakeClient
 
 

@@ -4,9 +4,9 @@ import logging
 
 import pytest
 
-from telegram_mcp.contract import validate_output
-from telegram_mcp.dispatch import dispatch
-from telegram_mcp.results import error_result, success_result
+from comms.transports.telegram.contract import validate_output
+from comms.transports.telegram.dispatch import dispatch
+from comms.transports.telegram.results import error_result, success_result
 
 TPR_A = "tpr_" + "a" * 26
 TPR_B = "tpr_" + "b" * 26
@@ -76,8 +76,8 @@ def test_full_envelope_never_exceeds_cap():
 
     from starlette.testclient import TestClient
 
-    from telegram_mcp.config import DemoConfig
-    from telegram_mcp.server import create_app
+    from comms.transports.telegram.config import DemoConfig
+    from comms.transports.telegram.server import create_app
 
     meta = {
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -107,7 +107,7 @@ def test_full_envelope_never_exceeds_cap():
 def test_sdk_warning_redaction_is_not_prefix_fragile(caplog):
     import logging
 
-    from telegram_mcp.observability.logging import _SdkHeaderRedactionFilter
+    from comms.transports.telegram.observability.logging import _SdkHeaderRedactionFilter
 
     logger = logging.getLogger("telegram_mcp.test.filter.probe")
     logger.addFilter(_SdkHeaderRedactionFilter())

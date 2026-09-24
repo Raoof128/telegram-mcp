@@ -2,7 +2,7 @@
 
 import pytest
 
-from telegram_mcp.disclosure.coverage import (
+from comms.transports.telegram.disclosure.coverage import (
     PARTIAL_REASONS,
     CoverageError,
     build_coverage,

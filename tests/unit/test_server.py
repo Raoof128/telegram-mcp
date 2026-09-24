@@ -1,7 +1,7 @@
 import pytest
 
-from telegram_mcp.config import DemoConfig
-from telegram_mcp.server import build_server
+from comms.transports.telegram.config import DemoConfig
+from comms.transports.telegram.server import build_server
 
 
 def test_minimal_capabilities_and_instructions():
@@ -19,8 +19,8 @@ def test_minimal_capabilities_and_instructions():
 
 
 def test_ten_descriptors_no_oauth_nine_flags():
-    from telegram_mcp.contract import EXPECTED_TOOLS
-    from telegram_mcp.server import _descriptors
+    from comms.transports.telegram.contract import EXPECTED_TOOLS
+    from comms.transports.telegram.server import _descriptors
 
     tools = _descriptors()
     assert [t.name for t in tools] == list(EXPECTED_TOOLS)
@@ -37,7 +37,7 @@ def test_ten_descriptors_no_oauth_nine_flags():
 def test_duplicate_manifest_keys_rejected(monkeypatch):
     import importlib.resources as _resources
 
-    from telegram_mcp import server as server_module
+    from comms.transports.telegram import server as server_module
 
     class _DupFile:
         def __truediv__(self, other):

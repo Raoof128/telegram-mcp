@@ -4,8 +4,8 @@ import pytest
 from telethon import errors
 from telethon.tl import types
 
-from telegram_mcp.disclosure.coordinator import AuthorityRefusal, RetrievalRefusal
-from telegram_mcp.storage.refstore import RefStore
+from comms.transports.telegram.disclosure.coordinator import AuthorityRefusal, RetrievalRefusal
+from comms.transports.telegram.storage.refstore import RefStore
 from tests.integration.test_telegram_reads import ALI, WHEN, _peer_dialogs, make_reads_world
 
 

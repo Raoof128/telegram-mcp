@@ -10,9 +10,9 @@ import hashlib
 
 import pytest
 
-from telegram_mcp.consent.challenge import jcs_dumps
-from telegram_mcp.disclosure.budget import Usage, buckets_for
-from telegram_mcp.disclosure.coverage import build_coverage
+from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.disclosure.budget import Usage, buckets_for
+from comms.transports.telegram.disclosure.coverage import build_coverage
 from tests.authority_fixtures import PROJECT_REF
 from tests.coordinator_fixtures import build_coordinator
 

@@ -4,9 +4,9 @@ import pytest
 from telethon import errors
 from telethon.tl import types
 
-from telegram_mcp.telegram.deadline import Deadline, WorkBudget
-from telegram_mcp.telegram.errors import GatewayError
-from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
+from comms.transports.telegram.telegram.deadline import Deadline, WorkBudget
+from comms.transports.telegram.telegram.errors import GatewayError
+from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 from tests.telegram.fake_client import FakeClient
 
 WHEN = datetime(2026, 9, 21, 8, 0, 0, tzinfo=UTC)

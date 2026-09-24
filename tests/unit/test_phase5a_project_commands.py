@@ -2,10 +2,10 @@
 
 import pytest
 
-from telegram_mcp.ipc.handlers.clients import client_handlers
-from telegram_mcp.ipc.handlers.projects import PROJECT_COMMANDS, project_handlers
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.telegram.discovery import DiscoveryStore
+from comms.transports.telegram.ipc.handlers.clients import client_handlers
+from comms.transports.telegram.ipc.handlers.projects import PROJECT_COMMANDS, project_handlers
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.telegram.discovery import DiscoveryStore
 from tests.authority_fixtures import (
     BETA_REF,
     PROJECT_REF,

@@ -2,7 +2,7 @@
 
 import pytest
 
-from telegram_mcp.disclosure.measure import (
+from comms.transports.telegram.disclosure.measure import (
     RECORD_ELEMENT,
     MeasurementError,
     bytes_disclosed,
@@ -58,7 +58,7 @@ def test_shared_record_is_charged_to_every_contributing_project():
     # Do NOT compare against bytes_disclosed -- the global figure also
     # carries container overhead (projects[], search_scope), so the
     # comparison can go either way and would fail on this very fixture.
-    from telegram_mcp.consent.challenge import jcs_dumps
+    from comms.transports.telegram.consent.challenge import jcs_dumps
 
     record_bytes = sum(len(jcs_dumps(r)) for r in _CROSS["results"])
     assert sum(per.values()) > record_bytes

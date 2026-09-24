@@ -4,7 +4,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from telegram_mcp.disclosure.coordinator import AuthorityRefusal, ConsentRefusal
+from comms.transports.telegram.disclosure.coordinator import AuthorityRefusal, ConsentRefusal
 from tests.coordinator_fixtures import build_coordinator
 
 
@@ -96,7 +96,7 @@ async def test_side_keys_reach_meta_and_are_never_measured(tmp_path):
     assert outcome.released
     assert outcome.meta["next_cursor"] == cursor
     assert "_next_cursor" not in outcome.data
-    from telegram_mcp.disclosure.measure import bytes_disclosed
+    from comms.transports.telegram.disclosure.measure import bytes_disclosed
 
     receipt_bytes = conn.execute("SELECT bytes_disclosed FROM disclosure_receipts").fetchone()[0]
     assert receipt_bytes == bytes_disclosed(outcome.data)

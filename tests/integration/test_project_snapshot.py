@@ -2,12 +2,12 @@
 
 import pytest
 
-from telegram_mcp.disclosure.budget import GLOBAL, PROJECT
-from telegram_mcp.disclosure.coordinator import AuthorityRefusal
-from telegram_mcp.disclosure.seams import CoordinatorAuthority, ProjectSnapshot
-from telegram_mcp.keys.store import load_key, provision_missing
-from telegram_mcp.runtime.identity import resolve_principal
-from telegram_mcp.storage.db import bind_cursor_store, open_db
+from comms.transports.telegram.disclosure.budget import GLOBAL, PROJECT
+from comms.transports.telegram.disclosure.coordinator import AuthorityRefusal
+from comms.transports.telegram.disclosure.seams import CoordinatorAuthority, ProjectSnapshot
+from comms.transports.telegram.keys.store import load_key, provision_missing
+from comms.transports.telegram.runtime.identity import resolve_principal
+from comms.transports.telegram.storage.db import bind_cursor_store, open_db
 from tests.authority_fixtures import PROJECT_REF, seed_authority_rows, seed_project_world
 
 CLIENT = "tcl_" + "a" * 26

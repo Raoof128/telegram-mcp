@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from telegram_mcp.authority.policy import (
+from comms.transports.telegram.authority.policy import (
     AuthorityChanged,
     AuthorityRequest,
     AuthoritySnapshot,

@@ -2,9 +2,9 @@
 
 import pytest
 
-from telegram_mcp.disclosure.seams import CatalogueSnapshot, VisibleProject
-from telegram_mcp.telegram.metadata import MetadataReadAdapter
-from telegram_mcp.telegram.service import TOOL_METHODS, RoutedRetrieval
+from comms.transports.telegram.disclosure.seams import CatalogueSnapshot, VisibleProject
+from comms.transports.telegram.telegram.metadata import MetadataReadAdapter
+from comms.transports.telegram.telegram.service import TOOL_METHODS, RoutedRetrieval
 
 
 def _project(ref_char, slug, name, egress="full_text"):

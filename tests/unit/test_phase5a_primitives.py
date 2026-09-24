@@ -4,12 +4,12 @@ import secrets
 
 import pytest
 
-from telegram_mcp.authority.epochs import set_locked
-from telegram_mcp.disclosure.audit import anchor, chain
-from telegram_mcp.disclosure.audit.chain import immediate_transaction
-from telegram_mcp.storage.db import bind_epoch_state, open_db, write_epoch_state
-from telegram_mcp.storage.refstore import RefStore
-from telegram_mcp.storage.settings import get_setting
+from comms.transports.telegram.authority.epochs import set_locked
+from comms.transports.telegram.disclosure.audit import anchor, chain
+from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
+from comms.transports.telegram.storage.db import bind_epoch_state, open_db, write_epoch_state
+from comms.transports.telegram.storage.refstore import RefStore
+from comms.transports.telegram.storage.settings import get_setting
 from tests.authority_fixtures import seed_authority_rows
 
 NOW = "2026-09-24T00:00:00Z"
@@ -29,7 +29,7 @@ def _event(tool="admin.lock"):
 
 
 def test_the_append_guard_is_the_coordinators_guard():
-    from telegram_mcp.disclosure import coordinator
+    from comms.transports.telegram.disclosure import coordinator
 
     assert coordinator.APPEND_GUARD is chain.APPEND_GUARD
 

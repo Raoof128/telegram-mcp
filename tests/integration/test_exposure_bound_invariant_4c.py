@@ -9,10 +9,10 @@ import random
 import pytest
 from telethon.tl import types
 
-from telegram_mcp.disclosure.budget import buckets_for
-from telegram_mcp.disclosure.coordinator import RetrievalRefusal, _split_sidecar
-from telegram_mcp.storage.refstore import RefStore
-from telegram_mcp.telegram.reads import TelegramReads
+from comms.transports.telegram.disclosure.budget import buckets_for
+from comms.transports.telegram.disclosure.coordinator import RetrievalRefusal, _split_sidecar
+from comms.transports.telegram.storage.refstore import RefStore
+from comms.transports.telegram.telegram.reads import TelegramReads
 from tests.authority_fixtures import BETA_REF, PROJECT_REF, seed_second_project
 from tests.integration.test_exposure_bound_invariant import _script
 from tests.integration.test_telegram_reads import make_reads_world

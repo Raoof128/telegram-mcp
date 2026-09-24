@@ -3,9 +3,9 @@ from datetime import UTC, datetime
 import pytest
 from telethon.tl import types
 
-from telegram_mcp.telegram.deadline import Deadline, WorkBudget
-from telegram_mcp.telegram.discovery import DiscoveryStore
-from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
+from comms.transports.telegram.telegram.deadline import Deadline, WorkBudget
+from comms.transports.telegram.telegram.discovery import DiscoveryStore
+from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 from tests.telegram.fake_client import FakeClient
 
 WHEN = datetime(2026, 9, 21, 0, 15, 34, tzinfo=UTC)

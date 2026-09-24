@@ -11,14 +11,19 @@ import pytest
 import uvicorn
 from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
 
-from telegram_mcp.consent.challenge import StubSigner
-from telegram_mcp.disclosure.receipts import verify_proof
-from telegram_mcp.disclosure.verify import verify_persisted_receipt
-from telegram_mcp.ipc.framing import decode_json_frame, encode_json_frame, read_frame, write_frame
-from telegram_mcp.ipc.leases import mint_lease
-from telegram_mcp.keys.store import provision_lease_seed, provision_missing
-from telegram_mcp.runtime.composition import build_runtime
-from telegram_mcp.storage.db import open_db
+from comms.transports.telegram.consent.challenge import StubSigner
+from comms.transports.telegram.disclosure.receipts import verify_proof
+from comms.transports.telegram.disclosure.verify import verify_persisted_receipt
+from comms.transports.telegram.ipc.framing import (
+    decode_json_frame,
+    encode_json_frame,
+    read_frame,
+    write_frame,
+)
+from comms.transports.telegram.ipc.leases import mint_lease
+from comms.transports.telegram.keys.store import provision_lease_seed, provision_missing
+from comms.transports.telegram.runtime.composition import build_runtime
+from comms.transports.telegram.storage.db import open_db
 from tests.authority_fixtures import seed_authority_rows
 
 CODEX = "tcl_" + "a" * 26
@@ -284,7 +289,7 @@ async def test_no_agent_is_unavailable_at_once(world):
 
 
 async def test_cancellation_during_consent_never_reaches_retrieval(world):
-    from telegram_mcp.runtime.identity import resolve_principal
+    from comms.transports.telegram.runtime.identity import resolve_principal
 
     world["agent"].mode = "silent"
     services = world["services"]

@@ -1,6 +1,6 @@
 import pytest
 
-from telegram_mcp.dispatch import dispatch
+from comms.transports.telegram.dispatch import dispatch
 
 
 def test_unknown_tool_never_reflects_input():

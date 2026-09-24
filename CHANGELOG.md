@@ -412,3 +412,13 @@
 - **Files changed:** `docs/superpowers/specs/2026-09-24-comms-consolidation-design.md`, `AGENT.md`, this file.
 - **Verification:** Both baselines were measured, and the identifiers were grep-confirmed.
 - **Follow-ups:** the 5b-1 plan.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms 5b-1 (mechanical relocation).
+- **Summary:** `telegram_mcp` becomes `comms.transports.telegram`, proven AST-equivalent. `comms.core` is empty and guarded; the legacy CLI is kept.
+- **Files changed:** see the matching `AGENT.md` entry.
+- **Verification:** 1514 passed, 11 skipped; smoke 60/60; formal 624/18; ruff, format, mypy and build clean.
+- **Follow-ups:**
+  - The merge decision.
+  - The 5b-2 plan.

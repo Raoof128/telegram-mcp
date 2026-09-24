@@ -2,7 +2,7 @@
 
 import pytest
 
-from telegram_mcp.disclosure.audit.chain import (
+from comms.transports.telegram.disclosure.audit.chain import (
     ADMIN_EVENTS,
     ChainError,
     append_event,
@@ -11,8 +11,8 @@ from telegram_mcp.disclosure.audit.chain import (
     mint_event_id,
     verify_chain,
 )
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.storage.migrations import migrate
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.storage.migrations import migrate
 
 _KEY = bytes(range(32))
 
@@ -28,7 +28,7 @@ def _append(conn, event):
     """Every append runs inside a caller-owned transaction; there is no
     convenience path that commits for you, because the coordinator must be
     able to put the receipt and the ledger rows in the same transaction."""
-    from telegram_mcp.disclosure.audit.chain import immediate_transaction
+    from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
 
     with immediate_transaction(conn):
         return append_event(conn, _KEY, event)
@@ -138,13 +138,13 @@ def test_administrative_events_use_the_closed_dotted_vocabulary(conn):
 def test_concurrent_appends_never_fork(tmp_path):
     import threading
 
-    from telegram_mcp.storage.db import open_db
-    from telegram_mcp.storage.migrations import migrate
+    from comms.transports.telegram.storage.db import open_db
+    from comms.transports.telegram.storage.migrations import migrate
 
     migrate(open_db(tmp_path / "meta.db"))
 
     def appender():
-        from telegram_mcp.disclosure.audit.chain import immediate_transaction
+        from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
 
         own = open_db(tmp_path / "meta.db")
         for _ in range(10):
@@ -171,7 +171,10 @@ def test_concurrent_appends_never_fork(tmp_path):
 def test_checkpoint_signs_the_current_head(conn):
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    from telegram_mcp.disclosure.audit.chain import verify_checkpoints, write_checkpoint
+    from comms.transports.telegram.disclosure.audit.chain import (
+        verify_checkpoints,
+        write_checkpoint,
+    )
 
     seed = bytes(range(32))
     appended = _append(conn, _event())
@@ -185,7 +188,10 @@ def test_checkpoint_signs_the_current_head(conn):
 def test_a_tampered_checkpoint_fails_verification(conn):
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    from telegram_mcp.disclosure.audit.chain import verify_checkpoints, write_checkpoint
+    from comms.transports.telegram.disclosure.audit.chain import (
+        verify_checkpoints,
+        write_checkpoint,
+    )
 
     seed = bytes(range(32))
     _append(conn, _event())
@@ -199,7 +205,7 @@ def test_a_tampered_checkpoint_fails_verification(conn):
 
 
 def test_cadence_respects_the_spec_bound(conn):
-    from telegram_mcp.disclosure.audit.chain import checkpoint_due
+    from comms.transports.telegram.disclosure.audit.chain import checkpoint_due
 
     # §26.5: at least every 500 events or 60 minutes, whichever comes first.
     assert checkpoint_due(conn, events_since=500, seconds_since=0)

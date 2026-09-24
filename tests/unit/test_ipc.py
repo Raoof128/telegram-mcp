@@ -12,14 +12,14 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from telegram_mcp.ipc.admin import (
+from comms.transports.telegram.ipc.admin import (
     ADMIN_COMMANDS,
     PRESENCE_GATED,
     AdminRouter,
     serve_admin,
     verify_peer,
 )
-from telegram_mcp.ipc.framing import (
+from comms.transports.telegram.ipc.framing import (
     MAX_FRAME_BYTES,
     FrameError,
     decode_json_frame,
@@ -27,20 +27,20 @@ from telegram_mcp.ipc.framing import (
     read_frame,
     write_frame,
 )
-from telegram_mcp.ipc.leases import (
+from comms.transports.telegram.ipc.leases import (
     LEASE_AUDIENCE,
     LeaseError,
     mint_lease,
     verify_lease,
 )
-from telegram_mcp.ipc.rendezvous import (
+from comms.transports.telegram.ipc.rendezvous import (
     RV_VERSION,
     RendezvousError,
     build_challenge,
     serve_rendezvous,
     transcript_digest,
 )
-from telegram_mcp.ipc.tunnel import (
+from comms.transports.telegram.ipc.tunnel import (
     TunnelPinError,
     add_pin,
     current_pin,

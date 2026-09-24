@@ -4,8 +4,8 @@ import json
 
 from starlette.testclient import TestClient
 
-from telegram_mcp.config import DemoConfig
-from telegram_mcp.server import create_app
+from comms.transports.telegram.config import DemoConfig
+from comms.transports.telegram.server import create_app
 
 BASE = "http://127.0.0.1:8766"
 MODERN_META = {

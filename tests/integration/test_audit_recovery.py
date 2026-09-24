@@ -2,7 +2,7 @@
 
 import pytest
 
-from telegram_mcp.disclosure.audit.anchor import (
+from comms.transports.telegram.disclosure.audit.anchor import (
     CLEAN,
     FAIL_CLOSED,
     RECOVERY_REQUIRED,
@@ -10,9 +10,9 @@ from telegram_mcp.disclosure.audit.anchor import (
     derive_integrity,
     repair_anchor,
 )
-from telegram_mcp.disclosure.verify import verify_persisted_receipt
-from telegram_mcp.keys.store import key_id, load_key
-from telegram_mcp.storage.settings import get_setting
+from comms.transports.telegram.disclosure.verify import verify_persisted_receipt
+from comms.transports.telegram.keys.store import key_id, load_key
+from comms.transports.telegram.storage.settings import get_setting
 from tests.coordinator_fixtures import build_coordinator
 
 
@@ -77,7 +77,7 @@ async def test_repair_refuses_when_the_chain_does_not_extend(tmp_path):
 
 
 async def test_a_persisted_receipt_rebuilds_and_verifies(tmp_path):
-    from telegram_mcp.disclosure.keys import publish_verification_key
+    from comms.transports.telegram.disclosure.keys import publish_verification_key
 
     coordinator, conn, adapter = build_coordinator(tmp_path)
     outcome = await coordinator.disclose(
@@ -105,7 +105,7 @@ async def test_a_persisted_receipt_rebuilds_and_verifies(tmp_path):
 
 
 async def test_a_rotated_client_credential_does_not_break_an_old_receipt(tmp_path):
-    from telegram_mcp.disclosure.keys import publish_verification_key
+    from comms.transports.telegram.disclosure.keys import publish_verification_key
 
     coordinator, conn, adapter = build_coordinator(tmp_path)
     outcome = await coordinator.disclose(

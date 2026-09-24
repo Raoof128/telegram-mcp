@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from telegram_mcp.config import DemoConfig, validate_environment
+from comms.transports.telegram.config import DemoConfig, validate_environment
 
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "::", "example.com", "localhost.evil"])

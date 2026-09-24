@@ -2,7 +2,7 @@
 
 import pytest
 
-from telegram_mcp.disclosure.egress import (
+from comms.transports.telegram.disclosure.egress import (
     effective_egress_level,
     intersect_profiles,
     transform_record,

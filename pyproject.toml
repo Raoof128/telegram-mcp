@@ -15,7 +15,8 @@ dependencies = [
 ]
 
 [project.scripts]
-telegram-mcp = "telegram_mcp.cli:main"
+telegram-mcp = "comms.transports.telegram.cli:main"
+comms = "comms.transports.telegram.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -44,7 +45,7 @@ module = "telethon.*"
 ignore_missing_imports = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/telegram_mcp"]
+packages = ["src/comms", "src/telegram_mcp"]
 
 [build-system]
 requires = ["hatchling==1.32.4"]

@@ -5,11 +5,11 @@ import time
 
 import pytest
 
-from telegram_mcp.ipc.admin import ADMIN_COMMANDS, PRESENCE_GATED, AdminRouter
-from telegram_mcp.keys.store import provision_missing, set_store_dir
-from telegram_mcp.runtime.composition import admin_handlers
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
+from comms.transports.telegram.ipc.admin import ADMIN_COMMANDS, PRESENCE_GATED, AdminRouter
+from comms.transports.telegram.keys.store import provision_missing, set_store_dir
+from comms.transports.telegram.runtime.composition import admin_handlers
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 from tests.authority_fixtures import seed_authority_rows
 from tests.telegram.fake_client import FakeClient
 from tests.unit.test_dialogs_and_discovery import _dialogs_result

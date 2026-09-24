@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from telegram_mcp.cli import main
-from telegram_mcp.ipc.admin import AdminRouter, serve_admin
+from comms.transports.telegram.cli import main
+from comms.transports.telegram.ipc.admin import AdminRouter, serve_admin
 
 VERBS = ("demo", "start", "stop", "status", "doctor", "admin", "keys", "pair", "rotate", "serve")
 
@@ -31,7 +31,7 @@ def _run(argv, monkeypatch):
 
 
 def test_status_shape_while_off(capsys):
-    from telegram_mcp.runtime.bootstrap import bootstrap_status
+    from comms.transports.telegram.runtime.bootstrap import bootstrap_status
 
     assert set(bootstrap_status()) >= {"state", "mode", "version"}
 
@@ -207,8 +207,8 @@ async def test_admin_verb_proxies_to_a_live_socket(monkeypatch, capsys, tmp_path
 
 async def test_stop_reaches_the_framed_control_channel(monkeypatch, tmp_path):
     """request_stop must speak frames: the socket has no raw sentinel."""
-    from telegram_mcp.runtime.bootstrap import request_stop
-    from telegram_mcp.runtime.lock import acquire_lock
+    from comms.transports.telegram.runtime.bootstrap import request_stop
+    from comms.transports.telegram.runtime.lock import acquire_lock
 
     monkeypatch.chdir(tmp_path)
     stops: list[dict] = []

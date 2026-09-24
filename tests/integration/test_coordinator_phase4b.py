@@ -4,14 +4,14 @@ import asyncio
 
 import pytest
 
-from telegram_mcp.disclosure.budget import GLOBAL, BucketKey, Usage, subject_digest
-from telegram_mcp.disclosure.coordinator import DisclosureOutcome, RetrievalRefusal
-from telegram_mcp.disclosure.seams import CoordinatorAuthority
-from telegram_mcp.keys.store import load_key
-from telegram_mcp.results import error_result
-from telegram_mcp.runtime.identity import resolve_principal
-from telegram_mcp.sensitive_dispatch import SensitiveDispatcher
-from telegram_mcp.storage.db import bind_cursor_store
+from comms.transports.telegram.disclosure.budget import GLOBAL, BucketKey, Usage, subject_digest
+from comms.transports.telegram.disclosure.coordinator import DisclosureOutcome, RetrievalRefusal
+from comms.transports.telegram.disclosure.seams import CoordinatorAuthority
+from comms.transports.telegram.keys.store import load_key
+from comms.transports.telegram.results import error_result
+from comms.transports.telegram.runtime.identity import resolve_principal
+from comms.transports.telegram.sensitive_dispatch import SensitiveDispatcher
+from comms.transports.telegram.storage.db import bind_cursor_store
 from tests.authority_fixtures import PROJECT_REF, seed_project_world
 from tests.coordinator_fixtures import build_coordinator
 
@@ -131,7 +131,7 @@ def test_error_results_carry_retry_data():
 
 
 def test_retryability_is_the_frozen_table_and_nothing_else():
-    from telegram_mcp.results import RETRYABILITY, _error_codes
+    from comms.transports.telegram.results import RETRYABILITY, _error_codes
 
     assert set(RETRYABILITY) == set(_error_codes())
     for code in (

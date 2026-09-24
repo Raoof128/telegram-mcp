@@ -1,5 +1,5 @@
-from telegram_mcp.runtime.identity import resolve_principal
-from telegram_mcp.storage.db import open_db
+from comms.transports.telegram.runtime.identity import resolve_principal
+from comms.transports.telegram.storage.db import open_db
 from tests.authority_fixtures import seed_authority_rows
 
 CLIENT = "tcl_" + "a" * 26

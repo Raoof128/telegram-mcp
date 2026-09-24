@@ -11,7 +11,7 @@ capacity, and that is what is asserted.
 
 import asyncio
 
-from telegram_mcp.disclosure.budget import (
+from comms.transports.telegram.disclosure.budget import (
     GLOBAL,
     BucketKey,
     BudgetError,
@@ -19,9 +19,9 @@ from telegram_mcp.disclosure.budget import (
     Usage,
     subject_digest,
 )
-from telegram_mcp.keys.store import provision_missing
-from telegram_mcp.storage.db import open_db
-from telegram_mcp.storage.migrations import migrate
+from comms.transports.telegram.keys.store import provision_missing
+from comms.transports.telegram.storage.db import open_db
+from comms.transports.telegram.storage.migrations import migrate
 
 
 async def test_concurrent_reservations_cannot_both_take_the_last_capacity(tmp_path):
