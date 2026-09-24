@@ -19,23 +19,8 @@ LATER_IN_PHASE_5 = {"auth revoke-this-session", "project drift", "policy export"
 # Named, each with its reason (design D9):
 #  tunnel rotate-binding -- Phase 6 (the CLI `rotate` already covers the pin)
 #  release verify        -- Phase 7
-#  consent approve       -- design rev 2 G7: spec line 927 makes it a MAY, a
-#     generic admin prompt would approve a disclosure blind, and a pending
-#     challenge exists only while its own prompt is in flight
-#     (prompter.py:146-150), so there is nothing orphaned to approve.
-DEFERRED = {"tunnel rotate-binding", "release verify", "consent approve"}
-
-
-class _Broker:
-    def pending_count(self):
-        return 0
-
-    def invalidate_where(self, predicate):
-        return 0
-
-
-class _Prompter:
-    connected = False
+# (`consent approve` / `consent status` are retired by comms spec v0.2: not routed.)
+DEFERRED = {"tunnel rotate-binding", "release verify"}
 
 
 @pytest.fixture
@@ -58,8 +43,6 @@ async def handlers(tmp_path):
         key_dir=store,
         anchor_path=tmp_path / "anchor" / "anchor.json",
         telegram=session,
-        broker=_Broker(),
-        prompter=_Prompter(),
         seeds=lambda ref: None,
         runtime_id=secrets.token_bytes(16),
         clock=time.time,

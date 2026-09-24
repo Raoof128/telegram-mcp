@@ -99,3 +99,17 @@ def test_the_legacy_package_is_only_a_forwarder():
     assert [a.name for a in imported.names] == ["main"]
     init = ast.parse((LEGACY / "__init__.py").read_text())
     assert [type(n).__name__ for n in init.body] == ["Expr"]  # docstring only
+
+
+CONSENT_WORDS = ("consent", "rendezvous", "pairing")
+
+
+def test_no_consent_modules_remain():
+    """comms spec v0.2 (5b-3 Task 9): the consent subsystem is deleted, not dormant."""
+    src = ROOT / "src" / "comms"
+    paths = [p for p in src.rglob("*.py") if "__pycache__" not in p.parts]
+    named = [p for p in paths if any(w in part for part in p.parts for w in CONSENT_WORDS)]
+    assert named == []
+    for path in paths:
+        imported = _imports(ast.parse(path.read_text(encoding="utf-8")))
+        assert not [m for m in imported if any(w in m for w in CONSENT_WORDS)], path

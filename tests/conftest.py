@@ -1,21 +1,10 @@
-"""Shared pytest configuration: host isolation, gating, and the agent bundle.
+"""Shared pytest configuration: host isolation and gating.
 
 Tests marked ``platform_gated`` mutate or interrogate the host (service
 accounts, launchd, Touch ID, real installs). They are skipped unless the
 operator asks for them with ``--run-platform-gated``, so the default suite
 stays headless and side-effect free.
-
-The consent-agent bundle fixtures live here rather than in
-``tests/agent/conftest.py`` because the Phase-2J join gate drives the same
-packaged binary, and two builds of it would be two different things under
-test. Nothing builds it unless a test asks for it by name.
 """
-
-import os
-import re
-import shutil
-import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -69,110 +58,6 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if marker in item.keywords:
                 item.add_marker(skip)
-
-
-SOURCE = Path("agent/consent-agent.swift")
-BUNDLE = Path("build/consent/TelegramMCPConsent.app")
-BINARY = BUNDLE / "Contents" / "MacOS" / "telegram-mcp-consent"
-PACKAGER = Path("scripts/package_agent.sh")
-
-
-@pytest.fixture(scope="session")
-def consent_agent_binary() -> Path:
-    if not SOURCE.exists():
-        pytest.skip(f"{SOURCE} is absent")
-    if BINARY.exists() and BINARY.stat().st_mtime >= SOURCE.stat().st_mtime:
-        return BINARY
-    if shutil.which("swiftc") is None:
-        pytest.skip("swiftc is unavailable; consent-agent shell tests need a macOS toolchain")
-    build = subprocess.run(  # noqa: PLW1510 -- returncode is asserted below with stderr
-        ["/bin/bash", str(PACKAGER)],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    assert build.returncode == 0, build.stdout + build.stderr
-    return BINARY
-
-
-SIGNED_BUNDLE_DIR = Path("build/consent-signed")
-SIGNED_BINARY = (
-    SIGNED_BUNDLE_DIR / "TelegramMCPConsent.app" / "Contents" / "MacOS" / "telegram-mcp-consent"
-)
-
-
-def discover_signing_identity() -> str | None:
-    """First valid codesigning identity on this host, or None.
-
-    Pairing needs a stable, certificate-backed identity; Developer ID is a
-    distribution concern and is not required for an agent that never leaves
-    this Mac. A free Apple Development certificate satisfies the rule.
-    """
-    if shutil.which("security") is None:
-        return None
-    found = subprocess.run(  # noqa: PLW1510 -- absence is a skip, not a failure
-        ["security", "find-identity", "-v", "-p", "codesigning"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    for line in found.stdout.splitlines():
-        match = re.search(r'"([^"]+)"', line)
-        if match:
-            return match.group(1)
-    return None
-
-
-@pytest.fixture(scope="session")
-def signed_agent_binary(consent_agent_binary: Path) -> Path:
-    """A second bundle signed with this host's certificate identity."""
-    identity = discover_signing_identity()
-    if identity is None:
-        pytest.skip("no codesigning identity on this host")
-    build = subprocess.run(  # noqa: PLW1510 -- returncode is asserted below
-        ["/bin/bash", str(PACKAGER)],
-        capture_output=True,
-        text=True,
-        timeout=600,
-        env={
-            **os.environ,
-            "TELEGRAM_MCP_SIGN_IDENTITY": identity,
-            "TELEGRAM_MCP_BUNDLE_DIR": str(SIGNED_BUNDLE_DIR),
-        },
-    )
-    assert build.returncode == 0, build.stdout + build.stderr
-    return SIGNED_BINARY
-
-
-@pytest.fixture(scope="session")
-def paired_agent_binary(signed_agent_binary: Path) -> Path:
-    """Ensure the signed bundle holds an Enclave approval key, once per run.
-
-    Pairing is host-mutating, so this fixture only ever runs behind
-    ``--run-platform-gated``. It generates nothing if the records already
-    exist, and it never imports a daemon pin: that public key belongs to a
-    real runtime, and pinning a test fixture's key into the operator's
-    keychain would be a lie about what is paired.
-    """
-    import json
-
-    status = subprocess.run(  # noqa: PLW1510 -- absence is handled below
-        [str(signed_agent_binary), "pairing-status"],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    records = json.loads(status.stdout).get("records", {})
-    if "approval" in records and "transport" in records:
-        return signed_agent_binary
-    generated = subprocess.run(  # noqa: PLW1510 -- returncode is asserted below
-        [str(signed_agent_binary), "pairing", "generate"],
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    assert generated.returncode == 0, generated.stdout + generated.stderr
-    return signed_agent_binary
 
 
 @pytest.fixture

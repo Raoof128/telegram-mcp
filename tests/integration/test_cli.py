@@ -18,7 +18,7 @@ import pytest
 from comms.transports.telegram.cli import main
 from comms.transports.telegram.ipc.admin import AdminRouter, serve_admin
 
-VERBS = ("demo", "start", "stop", "status", "doctor", "admin", "keys", "pair", "rotate", "serve")
+VERBS = ("demo", "start", "stop", "status", "doctor", "admin", "keys", "rotate", "serve")
 
 
 def _run(argv, monkeypatch):
@@ -78,7 +78,6 @@ def test_keys_provision_then_list(monkeypatch, capsys, tmp_path):
         "principal-key",
         "cursor-key",
         "privacy-key",
-        "challenge-key",
         "disclosure-key",
         "audit-checkpoint-key",
         "audit-chain-key",
@@ -92,52 +91,9 @@ def test_keys_provision_then_list(monkeypatch, capsys, tmp_path):
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
-def test_pair_export_import_and_verify_round_trip(monkeypatch, capsys, tmp_path):
-    store = tmp_path / "keys"
-    assert _run(["keys", "provision", "--store-dir", str(store)], monkeypatch) == 0
-    capsys.readouterr()
-    assert _run(["pair", "export", "challenge-key", "--store-dir", str(store)], monkeypatch) == 0
-    exported = json.loads(capsys.readouterr().out)["public_b64url"]
-    assert (
-        _run(
-            ["pair", "import", "agent-transport-key", exported, "--store-dir", str(store)],
-            monkeypatch,
-        )
-        == 0
-    )
-    fingerprint = json.loads(capsys.readouterr().out)["fingerprint"]
-    assert fingerprint.startswith("ed25519:")
-    assert (
-        _run(
-            ["pair", "verify", "agent-transport-key", fingerprint, "--store-dir", str(store)],
-            monkeypatch,
-        )
-        == 0
-    )
-    assert json.loads(capsys.readouterr().out)["match"] is True
-    assert (
-        _run(
-            [
-                "pair",
-                "verify",
-                "agent-transport-key",
-                "ed25519:" + "0" * 64,
-                "--store-dir",
-                str(store),
-            ],
-            monkeypatch,
-        )
-        == 0
-    )
-    assert json.loads(capsys.readouterr().out)["match"] is False
-
-
-def test_pair_import_without_a_value_is_a_usage_error(monkeypatch, tmp_path):
-    store = tmp_path / "keys"
-    assert _run(["keys", "provision", "--store-dir", str(store)], monkeypatch) == 0
-    assert (
-        _run(["pair", "import", "agent-transport-key", "--store-dir", str(store)], monkeypatch) == 2
-    )
+def test_the_pair_verb_is_retired(monkeypatch):
+    """comms spec v0.2: there is no consent agent to pair."""
+    assert _run(["pair", "export", "challenge-key", "--store-dir", "keys"], monkeypatch) == 2
 
 
 def test_rotate_pins_then_rotates_the_tunnel_binding(monkeypatch, capsys, tmp_path):

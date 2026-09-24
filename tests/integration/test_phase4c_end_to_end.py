@@ -1,4 +1,4 @@
-"""The three 4c tools through ingress, consent and coordinator on a fake Telegram."""
+"""The three 4c tools through ingress and coordinator on a fake Telegram."""
 
 import hashlib
 import logging
@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from telethon import errors
 from telethon.tl import types
 
-from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.canonical import jcs_dumps
 from comms.transports.telegram.storage.refstore import RefStore
 from tests.authority_fixtures import BETA_REF, PROJECT_REF, seed_second_project
 from tests.integration.test_phase4a_end_to_end import CODEX, call

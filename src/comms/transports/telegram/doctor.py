@@ -9,7 +9,7 @@ none of which exist to be verified yet. That failure is the correct answer,
 not a gap in the checker.
 
 The OFF probe is the design's core assertion: when the runtime is off there
-are no MCP ports listening, no admin socket, no consent socket, no tunnel
+are no MCP ports listening, no admin socket, no tunnel
 client and no runtime process.
 
 Host-mutating or host-interrogating probes (``dscl``, ``sudo -n -u``) run
@@ -19,8 +19,6 @@ side-effect free.
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import os
 import socket
 import sqlite3
@@ -32,10 +30,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-from comms.transports.telegram.consent.broker import ConsentBroker, ConsentError
-from comms.transports.telegram.consent.challenge import StubSigner, synthetic_exposure_digest
 from comms.transports.telegram.ipc.tunnel import TunnelPinError, current_pin
-from comms.transports.telegram.keys.pairing import export_public
 from comms.transports.telegram.keys.registry import KEY_REGISTRY
 from comms.transports.telegram.keys.store import (
     FILE_BACKED_KEYS,
@@ -46,7 +41,6 @@ from comms.transports.telegram.keys.store import (
 from comms.transports.telegram.runtime.bootstrap import (
     ADMIN_SOCK_NAME,
     CHATGPT_PORT,
-    CONSENT_SOCK_NAME,
     JOB_STRAY_MARKERS,
     LOCAL_PORT,
     RUNTIME_LABEL,
@@ -135,33 +129,16 @@ def _check_keys(ctx: DoctorContext) -> CheckResult:
     external = sorted(
         name
         for name, spec in KEY_REGISTRY.items()
-        if spec.required_phase == 2 and name not in FILE_BACKED_KEYS
+        if spec.required_phase == 2 and not spec.retired and name not in FILE_BACKED_KEYS
     )
+    # Retired by comms spec v0.2: expected absent, reported as retired, never missing.
+    retired = sorted(name for name, spec in KEY_REGISTRY.items() if spec.retired)
     return CheckResult(
         "keys.inventory",
         OK,
         f"{len(ids)} runtime keys verified with distinct ids",
-        {"externally_owned": external},
+        {"externally_owned": external, "retired": retired},
     )
-
-
-def _check_pairing(ctx: DoctorContext) -> CheckResult:
-    """The agent's two pins must both be present for consent to work."""
-    if ctx.store_dir is None:
-        return CheckResult("keys.pairing", SKIPPED, "no key store directory was supplied")
-    try:
-        set_store_dir(ctx.store_dir)
-    except KeyStoreError as exc:
-        return CheckResult("keys.pairing", FAIL, str(exc))
-    absent: list[str] = []
-    for name in ("agent-approval-key", "agent-transport-key"):
-        try:
-            export_public(name)
-        except KeyStoreError:
-            absent.append(name)
-    if absent:
-        return CheckResult("keys.pairing", WARN, f"unpaired agent keys: {', '.join(absent)}")
-    return CheckResult("keys.pairing", OK, "approval and transport publics are pinned")
 
 
 def _check_database(ctx: DoctorContext) -> CheckResult:
@@ -200,7 +177,7 @@ def _check_socket_permissions(ctx: DoctorContext) -> CheckResult:
         return CheckResult("sockets.permissions", OK, "runtime directory is absent (runtime OFF)")
     if stat.S_IMODE(directory.stat().st_mode) != 0o770:
         return CheckResult("sockets.permissions", FAIL, "runtime directory is not mode 0770")
-    for name in (ADMIN_SOCK_NAME, CONSENT_SOCK_NAME):
+    for name in (ADMIN_SOCK_NAME,):
         path = directory / name
         if path.exists() and stat.S_IMODE(path.stat().st_mode) != 0o660:
             return CheckResult("sockets.permissions", FAIL, f"{name} is not mode 0660")
@@ -218,55 +195,6 @@ def _check_tunnel_pin(ctx: DoctorContext) -> CheckResult:
         return CheckResult("tunnel.pin", WARN, "no tunnel client certificate is pinned")
     return CheckResult(
         "tunnel.pin", OK, "one live pin", {"expires_at": pin.expires_at, "spki": pin.spki}
-    )
-
-
-def _check_consent_selftest(ctx: DoctorContext) -> CheckResult:
-    async def run() -> str:
-        stub = StubSigner(seed=0x0D)
-        broker = ConsentBroker(
-            challenge_key=b"\x01" * 32, agent_verify=stub.verify, runtime_id=b"\x02" * 16
-        )
-        handle = await broker.issue(
-            tool="telegram_status",
-            request_hmac="ab" * 32,
-            principal="prn_" + "a" * 26,
-            client="tcl_" + "b" * 26,
-            account="tga_" + "c" * 26,
-            policy_epoch=1,
-            project_scope_digest="1" * 64,
-            security_epoch=1,
-            display_digest="2" * 64,
-            exposure_snapshot_digest=synthetic_exposure_digest(),
-        )
-        challenge = broker.challenge_bytes(handle)
-        envelope = {
-            "challenge_sha256": hashlib.sha256(challenge).hexdigest(),
-            "sig": stub.sign(challenge),
-            "key_id": stub.key_id,
-        }
-        tampered = dict(envelope, sig=stub.sign(challenge + b"x"))
-        try:
-            await broker.consume(handle, tampered)
-        except ConsentError:
-            pass
-        else:
-            return "a tampered approval was accepted"
-        await broker.consume(handle, envelope)
-        try:
-            await broker.consume(handle, envelope)
-        except ConsentError:
-            return ""
-        return "an approval was consumed twice"
-
-    try:
-        problem = asyncio.run(run())
-    except Exception as exc:  # noqa: BLE001 -- doctor reports, never raises
-        return CheckResult("consent.selftest", FAIL, f"self-test raised: {exc!r}")
-    if problem:
-        return CheckResult("consent.selftest", FAIL, problem)
-    return CheckResult(
-        "consent.selftest", OK, "challenge issued, tamper refused, exact-once consume"
     )
 
 
@@ -353,7 +281,7 @@ def _check_off_probe(ctx: DoctorContext) -> CheckResult:
         directory = Path(ctx.runtime_dir)
         sockets_present = [
             name
-            for name in (ADMIN_SOCK_NAME, CONSENT_SOCK_NAME)
+            for name in (ADMIN_SOCK_NAME,)
             if (directory / name).exists() or (directory / name).is_symlink()
         ]
     running = _runtime_processes()
@@ -393,11 +321,9 @@ _CHECK_FUNCTIONS = (
     _check_python,
     _check_mcp_sdk,
     _check_keys,
-    _check_pairing,
     _check_database,
     _check_socket_permissions,
     _check_tunnel_pin,
-    _check_consent_selftest,
     _check_service_accounts,
     _check_telegram_auth,
     _check_endpoint_credentials,
@@ -408,11 +334,9 @@ CHECKS: tuple[str, ...] = (
     "runtime.python",
     "runtime.mcp_sdk",
     "keys.inventory",
-    "keys.pairing",
     "db.integrity",
     "sockets.permissions",
     "tunnel.pin",
-    "consent.selftest",
     "service_accounts.separation",
     "telegram.auth_state",
     "mcp.endpoint_credentials",
@@ -426,10 +350,8 @@ PRODUCTION_REQUIRED: frozenset[str] = frozenset(
         "runtime.python",
         "runtime.mcp_sdk",
         "keys.inventory",
-        "keys.pairing",
         "db.integrity",
         "sockets.permissions",
-        "consent.selftest",
         "service_accounts.separation",
         "telegram.auth_state",
         "mcp.endpoint_credentials",

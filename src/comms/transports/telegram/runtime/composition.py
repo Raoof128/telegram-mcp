@@ -7,7 +7,6 @@ module imports a concrete adapter.
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import sqlite3
 import time
@@ -18,8 +17,6 @@ from pathlib import Path
 from typing import Any
 
 from comms.transports.telegram.authority.staging import StagingRegistry
-from comms.transports.telegram.consent.broker import ConsentBroker
-from comms.transports.telegram.consent.prompter import Prompter
 from comms.transports.telegram.disclosure.budget import BudgetLedger
 from comms.transports.telegram.disclosure.coordinator import DisclosureCoordinator
 from comms.transports.telegram.disclosure.keys import (
@@ -44,7 +41,6 @@ from comms.transports.telegram.ipc.handlers.projects import (
 )
 from comms.transports.telegram.ipc.handlers.scope import scope_commands, scope_handlers
 from comms.transports.telegram.ipc.leases import LeaseError, verify_lease
-from comms.transports.telegram.ipc.rendezvous import serve_rendezvous
 from comms.transports.telegram.keys.store import key_id, load_key, read_lease_seed, set_store_dir
 from comms.transports.telegram.runtime.identity import PrincipalContext, resolve_principal
 from comms.transports.telegram.runtime.ingress import create_ingress_app
@@ -62,7 +58,6 @@ __all__ = [
     "admin_handlers",
     "build_runtime",
     "build_telegram",
-    "serve_consent",
 ]
 
 
@@ -71,8 +66,6 @@ class RuntimeServices:
     ingress_app: Any
     admin_router: AdminRouter
     coordinator: DisclosureCoordinator
-    prompter: Prompter
-    broker: ConsentBroker
     runtime_id: bytes
 
 
@@ -109,8 +102,6 @@ def admin_handlers(
     key_dir: Path,
     anchor_path: Path,
     telegram: Any,
-    broker: Any,
-    prompter: Any,
     seeds: Callable[[str], bytes | None],
     runtime_id: bytes,
     clock: Callable[[], float],
@@ -134,13 +125,8 @@ def admin_handlers(
         "auth headers": auth_headers_handler(
             conn, seed_for=seeds, runtime_id=runtime_id, clock=clock
         ),
-        **audit_handlers(
-            conn,
-            sink=sink,
-            checkpoint_key=checkpoint_key,
-            on_security_change=lambda: broker.invalidate_where(lambda _p: True),
-        ),
-        **inspect_handlers(conn, lineage=NoRestoreLineage(), broker=broker, prompter=prompter),
+        **audit_handlers(conn, sink=sink, checkpoint_key=checkpoint_key),
+        **inspect_handlers(conn, lineage=NoRestoreLineage()),
     }
     if telegram is not None:
         handlers.update(auth_handlers(conn, telegram))
@@ -156,8 +142,6 @@ def build_runtime(
     key_dir: Path,
     anchor_path: Path,
     runtime_id: bytes,
-    agent_verify: Callable[[bytes, bytes], bool],
-    pinned_key_id: str | None = None,
     host: str = "127.0.0.1",
     port: int = 8766,
     limits: Mapping[str, int] | None = None,
@@ -166,13 +150,6 @@ def build_runtime(
 ) -> RuntimeServices:
     set_store_dir(key_dir)
     privacy_key = load_key("privacy-key")
-    broker = ConsentBroker(
-        challenge_key=load_key("challenge-key"),
-        agent_verify=agent_verify,
-        runtime_id=runtime_id,
-        pinned_key_id=pinned_key_id,
-    )
-    prompter = Prompter()
     authority = CoordinatorAuthority(
         conn,
         privacy_key=privacy_key,
@@ -245,8 +222,6 @@ def build_runtime(
         key_dir=key_dir,
         anchor_path=anchor_path,
         telegram=telegram,
-        broker=broker,
-        prompter=prompter,
         seeds=seeds.get,
         runtime_id=runtime_id,
         clock=clock,
@@ -255,8 +230,6 @@ def build_runtime(
         ingress_app=app,
         admin_router=AdminRouter(handlers),
         coordinator=coordinator,
-        prompter=prompter,
-        broker=broker,
         runtime_id=runtime_id,
     )
 
@@ -273,24 +246,4 @@ def build_telegram(
         TelegramConfig(api_id, session_dir, test_dc),
         api_hash=api_hash,
         client_factory=client_factory,
-    )
-
-
-async def serve_consent(
-    services: RuntimeServices, socket_path: Path, *, agent_transport_public: bytes
-) -> asyncio.Server:
-    """The live RV-1 socket; each authenticated session feeds the prompter."""
-
-    async def on_session(
-        session: Any, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
-        await services.prompter.attach(reader, writer)
-
-    return await serve_rendezvous(
-        socket_path,
-        challenge_key=load_key("challenge-key"),
-        runtime_id=services.runtime_id,
-        daemon_key_id=key_id("challenge-key"),
-        agent_transport_public=agent_transport_public,
-        on_session=on_session,
     )

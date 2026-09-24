@@ -1,4 +1,4 @@
-"""Task 8: lease wire edges, admin socket behavior, RV-1 rendezvous handshake."""
+"""Task 8: lease wire edges, admin socket behavior, tunnel pins."""
 
 import asyncio
 import base64
@@ -10,7 +10,6 @@ import stat
 from pathlib import Path
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from comms.transports.telegram.ipc.admin import (
     ADMIN_COMMANDS,
@@ -24,20 +23,12 @@ from comms.transports.telegram.ipc.framing import (
     decode_json_frame,
     encode_json_frame,
     read_frame,
-    write_frame,
 )
 from comms.transports.telegram.ipc.leases import (
     LEASE_AUDIENCE,
     LeaseError,
     mint_lease,
     verify_lease,
-)
-from comms.transports.telegram.ipc.rendezvous import (
-    RV_VERSION,
-    RendezvousError,
-    build_challenge,
-    serve_rendezvous,
-    transcript_digest,
 )
 from comms.transports.telegram.ipc.tunnel import (
     TunnelPinError,
@@ -245,8 +236,6 @@ def run_dir(tmp_path, monkeypatch):
 
 CHALLENGE_KEY = b"\x01" * 32
 RUNTIME_ID = b"\x02" * 16
-DAEMON_KEY_ID = "ed25519:sha256:" + "a" * 64
-AGENT_KEY_ID = "ed25519:sha256:" + "b" * 64
 
 
 def _router(**over):
@@ -367,7 +356,9 @@ async def test_duplicate_admin_keys_never_dispatch(run_dir):
 
 def test_every_spec_command_is_routed_and_unknown_names_are_refused():
     router, _ = _router()
-    assert len(ADMIN_COMMANDS) == 51
+    assert len(ADMIN_COMMANDS) == 49  # §33's 51 less the two consent commands (comms spec v0.2)
+    for retired in ("consent status", "consent approve"):
+        assert router.dispatch({"cmd": retired})["code"] == "UNKNOWN_COMMAND"
     for command in ADMIN_COMMANDS:
         response = router.dispatch({"cmd": command, "args": {}})
         assert response["ok"] is True or response["code"] == "NOT_AVAILABLE_IN_PHASE"
@@ -407,154 +398,6 @@ def test_verify_peer_accepts_the_running_euid_only_by_default():
     assert verify_peer(os.geteuid(), os.getegid()) is True
     assert verify_peer(os.geteuid() + 12345, os.getegid() + 12345) is False
     assert verify_peer(os.geteuid() + 12345, 5150, allow_gids=(5150,)) is True
-
-
-# --- RV-1 rendezvous --------------------------------------------------------
-
-
-async def _handshake_client(socket_path, *, transport_key, agent_key_id=AGENT_KEY_ID, **over):
-    reader, writer = await asyncio.open_unix_connection(str(socket_path))
-    hello = {
-        "type": "HELLO",
-        "version": RV_VERSION,
-        "agent_key_id": agent_key_id,
-        "agent_nonce": _b64(b"\x09" * 16),
-        "expected_runtime_id": RUNTIME_ID.hex(),
-    }
-    hello.update(over)
-    await write_frame(writer, encode_json_frame(hello))
-    raw = await read_frame(reader, idle_s=5)
-    if not raw:
-        writer.close()
-        raise RendezvousError("daemon closed before CHALLENGE")
-    challenge = decode_json_frame(raw)
-    digest = transcript_digest(
-        runtime_id=challenge["runtime_id"],
-        agent_key_id=hello["agent_key_id"],
-        agent_nonce=challenge["agent_nonce"],
-        daemon_nonce=challenge["daemon_nonce"],
-        daemon_key_id=challenge["daemon_key_id"],
-    )
-    await write_frame(
-        writer,
-        encode_json_frame(
-            {
-                "type": "READY",
-                "agent_nonce": challenge["agent_nonce"],
-                "daemon_nonce": challenge["daemon_nonce"],
-                "sig": _b64(transport_key.sign(digest)),
-            }
-        ),
-    )
-    return challenge, reader, writer
-
-
-async def test_rendezvous_completes_with_the_paired_transport_key(run_dir):
-    transport = Ed25519PrivateKey.from_private_bytes(b"\x05" * 32)
-    seen = []
-    socket_path = run_dir / "consent.sock"
-    server = await serve_rendezvous(
-        socket_path,
-        challenge_key=CHALLENGE_KEY,
-        runtime_id=RUNTIME_ID,
-        daemon_key_id=DAEMON_KEY_ID,
-        agent_transport_public=transport.public_key().public_bytes_raw(),
-        on_session=lambda session, reader, writer: seen.append(session),
-    )
-    try:
-        challenge, _reader, writer = await _handshake_client(socket_path, transport_key=transport)
-        assert challenge["version"] == RV_VERSION
-        assert challenge["runtime_id"] == RUNTIME_ID.hex()
-        await asyncio.sleep(0.05)
-        writer.close()
-        assert len(seen) == 1
-        assert seen[0].agent_key_id == AGENT_KEY_ID
-        assert stat.S_IMODE(socket_path.stat().st_mode) == 0o660
-    finally:
-        server.close()
-        await server.wait_closed()
-
-
-async def test_rendezvous_refuses_a_wrong_transport_key_and_a_stale_runtime(run_dir):
-    paired = Ed25519PrivateKey.from_private_bytes(b"\x05" * 32)
-    impostor = Ed25519PrivateKey.from_private_bytes(b"\x06" * 32)
-    seen = []
-    socket_path = run_dir / "consent.sock"
-    server = await serve_rendezvous(
-        socket_path,
-        challenge_key=CHALLENGE_KEY,
-        runtime_id=RUNTIME_ID,
-        daemon_key_id=DAEMON_KEY_ID,
-        agent_transport_public=paired.public_key().public_bytes_raw(),
-        on_session=lambda session, reader, writer: seen.append(session),
-    )
-    try:
-        _challenge, reader, writer = await _handshake_client(socket_path, transport_key=impostor)
-        assert await read_frame(reader, idle_s=5) == b""
-        writer.close()
-        assert seen == []
-        with pytest.raises(RendezvousError):
-            await _handshake_client(socket_path, transport_key=paired, expected_runtime_id="0" * 32)
-        assert seen == []
-    finally:
-        server.close()
-        await server.wait_closed()
-
-
-async def test_rendezvous_refuses_unknown_hello_fields_and_bad_versions(run_dir):
-    paired = Ed25519PrivateKey.from_private_bytes(b"\x05" * 32)
-    socket_path = run_dir / "consent.sock"
-    server = await serve_rendezvous(
-        socket_path,
-        challenge_key=CHALLENGE_KEY,
-        runtime_id=RUNTIME_ID,
-        daemon_key_id=DAEMON_KEY_ID,
-        agent_transport_public=paired.public_key().public_bytes_raw(),
-    )
-    try:
-        for over in (
-            {"version": "rv-2"},
-            {"agent_key_id": "ed25519:" + "b" * 64},  # missing the sha256 segment
-            {"agent_nonce": "short"},
-            {"unexpected": 1},
-            {"type": "READY"},
-        ):
-            with pytest.raises(RendezvousError):
-                await _handshake_client(socket_path, transport_key=paired, **over)
-    finally:
-        server.close()
-        await server.wait_closed()
-
-
-def test_daemon_challenge_signature_covers_the_whole_transcript():
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-
-    challenge = build_challenge(
-        challenge_key=CHALLENGE_KEY,
-        runtime_id=RUNTIME_ID,
-        daemon_key_id=DAEMON_KEY_ID,
-        agent_key_id=AGENT_KEY_ID,
-        agent_nonce=_b64(b"\x09" * 16),
-        daemon_nonce=_b64(b"\x0a" * 16),
-    )
-    public = Ed25519PrivateKey.from_private_bytes(CHALLENGE_KEY).public_key().public_bytes_raw()
-    digest = transcript_digest(
-        runtime_id=RUNTIME_ID.hex(),
-        agent_key_id=AGENT_KEY_ID,
-        agent_nonce=challenge["agent_nonce"],
-        daemon_nonce=challenge["daemon_nonce"],
-        daemon_key_id=DAEMON_KEY_ID,
-    )
-    sig = base64.urlsafe_b64decode(challenge["sig"] + "=" * (-len(challenge["sig"]) % 4))
-    Ed25519PublicKey.from_public_bytes(public).verify(sig, digest)
-    other = transcript_digest(
-        runtime_id=RUNTIME_ID.hex(),
-        agent_key_id=AGENT_KEY_ID,
-        agent_nonce=challenge["agent_nonce"],
-        daemon_nonce=challenge["daemon_nonce"],
-        daemon_key_id="ed25519:sha256:" + "c" * 64,
-    )
-    assert other != digest
 
 
 # --- tunnel pins ------------------------------------------------------------
@@ -611,50 +454,3 @@ def test_frame_helpers_reject_oversized_and_non_object_payloads():
         decode_json_frame(b"[1,2,3]")
     with pytest.raises(FrameError):
         decode_json_frame(b"\xff")
-
-
-async def test_only_one_agent_session_is_live_at_a_time(run_dir):
-    """A copy of the transport key cannot displace an established agent."""
-    paired = Ed25519PrivateKey.from_private_bytes(b"\x05" * 32)
-    socket_path = run_dir / "consent.sock"
-    holding = asyncio.Event()
-    release = asyncio.Event()
-
-    async def hold(session, reader, writer):
-        holding.set()
-        await release.wait()
-
-    server = await serve_rendezvous(
-        socket_path,
-        challenge_key=CHALLENGE_KEY,
-        runtime_id=RUNTIME_ID,
-        daemon_key_id=DAEMON_KEY_ID,
-        agent_transport_public=paired.public_key().public_bytes_raw(),
-        on_session=hold,
-    )
-    try:
-        _challenge, first_reader, first_writer = await _handshake_client(
-            socket_path, transport_key=paired
-        )
-        await asyncio.wait_for(holding.wait(), timeout=5)
-
-        # a second connection, with the very same key, is closed unserved
-        with pytest.raises(RendezvousError):
-            await _handshake_client(socket_path, transport_key=paired)
-
-        release.set()
-        first_writer.close()
-        await asyncio.sleep(0.05)
-
-        # once the first agent is gone, the socket serves again
-        holding.clear()
-        release.clear()
-        _again, reader, writer = await _handshake_client(socket_path, transport_key=paired)
-        await asyncio.wait_for(holding.wait(), timeout=5)
-        release.set()
-        writer.close()
-        assert first_reader is not reader
-    finally:
-        release.set()
-        server.close()
-        await server.wait_closed()

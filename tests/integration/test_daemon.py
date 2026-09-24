@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 from comms.transports.telegram.ipc.framing import (
     decode_json_frame,
@@ -14,7 +12,6 @@ from comms.transports.telegram.ipc.framing import (
     read_frame,
     write_frame,
 )
-from comms.transports.telegram.keys.pairing import import_peer_pin
 from comms.transports.telegram.keys.store import provision_missing, set_store_dir
 from comms.transports.telegram.runtime.daemon import DaemonConfig, DaemonError, run_daemon
 from tests.telegram.fake_client import FakeClient
@@ -39,18 +36,10 @@ def _port():
         return sock.getsockname()[1]
 
 
-def _pin(tmp_path):
+def _provision(tmp_path):
+    # No agent pins: comms spec v0.2 has no consent agent to pair.
     provision_missing(tmp_path / "keys", phases=(2, 3))
     set_store_dir(tmp_path / "keys")
-    der = (
-        ec.generate_private_key(ec.SECP256R1())
-        .public_key()
-        .public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
-    )
-    import_peer_pin("agent-approval-key", der)
-    import_peer_pin(
-        "agent-transport-key", ed25519.Ed25519PrivateKey.generate().public_key().public_bytes_raw()
-    )
 
 
 async def _admin(cmd):
@@ -63,7 +52,7 @@ async def _admin(cmd):
 
 async def test_an_unreachable_telegram_does_not_stop_the_daemon(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    _pin(tmp_path)
+    _provision(tmp_path)
 
     class Down(FakeClient):
         async def connect(self):
@@ -96,7 +85,7 @@ async def test_production_shape_socket_is_group_0660_and_needs_the_installer(tmp
     import stat
 
     monkeypatch.chdir(tmp_path)
-    _pin(tmp_path)
+    _provision(tmp_path)
     group = grp.getgrgid(os.getgid()).gr_name  # a group this test process really is in
     config = DaemonConfig(
         runtime_dir=Path("run"),
@@ -154,20 +143,9 @@ def test_the_installed_runtime_directory_has_the_production_boundary():
     assert stat.S_IMODE(st.st_mode) & 0o007 == 0  # nothing for others
 
 
-async def test_the_daemon_refuses_to_start_unpaired(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    provision_missing(tmp_path / "keys", phases=(2, 3))
-    with pytest.raises(DaemonError, match="pair"):
-        await run_daemon(
-            _config(tmp_path),
-            api_hash_reader=lambda: "0" * 32,
-            client_factory=lambda *a, **k: FakeClient(),
-        )
-
-
 async def test_the_daemon_serves_admin_and_stops_cleanly(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    _pin(tmp_path)
+    _provision(tmp_path)
     stop = asyncio.Event()
     fake = FakeClient(authorized=False)
     daemon = asyncio.create_task(

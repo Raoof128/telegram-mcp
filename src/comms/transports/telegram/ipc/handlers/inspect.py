@@ -51,8 +51,6 @@ def inspect_handlers(
     conn: sqlite3.Connection,
     *,
     lineage: RestoreLineageLookup,
-    broker: Any,
-    prompter: Any,
     clock: Callable[[], float] = time.time,
 ) -> dict[str, Handler]:
     def _ref(args: dict[str, Any]) -> str:
@@ -158,14 +156,9 @@ def inspect_handlers(
             rows.append(row)
         return {"window_minutes": minutes, "clients": rows}
 
-    def consent(args: dict[str, Any]) -> dict[str, Any]:
-        _body(args, set())
-        return {"agent_connected": bool(prompter.connected), "pending": int(broker.pending_count())}
-
     return {
         "disclosure show": show,
         "disclosure verify": verify,
         "disclosure key": key,
         "exposure status": exposure,
-        "consent status": consent,
     }

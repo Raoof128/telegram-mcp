@@ -10,7 +10,7 @@ import hashlib
 
 import pytest
 
-from comms.transports.telegram.consent.challenge import jcs_dumps
+from comms.transports.telegram.canonical import jcs_dumps
 from comms.transports.telegram.disclosure.budget import Usage, buckets_for
 from comms.transports.telegram.disclosure.coverage import build_coverage
 from tests.authority_fixtures import PROJECT_REF

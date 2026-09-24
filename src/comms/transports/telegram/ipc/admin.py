@@ -70,6 +70,8 @@ SOCKET_DIR_MODE = 0o770
 SOCKET_MODE = 0o660
 
 # Spec §33 operator CLI surface, verbatim minus the "telegram-mcp " prefix.
+# `consent status` and `consent approve` were retired by comms spec v0.2 and are
+# tombstoned: they answer UNKNOWN_COMMAND and are never reassigned.
 ADMIN_COMMANDS: tuple[str, ...] = (
     "auth login",
     "auth status",
@@ -78,8 +80,6 @@ ADMIN_COMMANDS: tuple[str, ...] = (
     "client rotate",
     "client disable",
     "auth headers",
-    "consent status",
-    "consent approve",
     "tunnel rotate-binding",
     "auth revoke-this-session",
     "scope discover",

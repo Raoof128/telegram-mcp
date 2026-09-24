@@ -1,10 +1,10 @@
-"""Interactive launcher: orchestrate three launchd jobs, never spawn siblings.
+"""Interactive launcher: orchestrate two launchd jobs, never spawn siblings.
 
-The operator-owned ``telegram-mcp`` process drives three independent
-launchd jobs via a :class:`JobControl` seam:
+The operator-owned ``telegram-mcp`` process drives two independent launchd
+jobs via a :class:`JobControl` seam (the consent-agent job was retired by
+comms spec v0.2):
 
 - runtime as ``telegram-mcpd`` via ``system/<label>``,
-- consent agent in the GUI session via ``gui/$UID/<label>``,
 - tunnel as ``telegram-mcp-tunnel`` via ``system/<label>`` (ChatGPT modes only).
 
 Escalation is interactive sudo to ``launchctl kickstart/stop`` per job
@@ -34,8 +34,6 @@ from comms.transports.telegram import __version__
 
 __all__ = [
     "ADMIN_SOCK_NAME",
-    "AGENT_LABEL",
-    "CONSENT_SOCK_NAME",
     "LOCK_FILENAME",
     "RUNTIME_LABEL",
     "TUNNEL_LABEL",
@@ -54,10 +52,8 @@ __all__ = [
 
 LOCK_FILENAME = "runtime.lock"
 ADMIN_SOCK_NAME = "admin.sock"
-CONSENT_SOCK_NAME = "consent.sock"
 
 RUNTIME_LABEL = "telegram-mcpd"
-AGENT_LABEL = "telegram-mcp-agent"
 TUNNEL_LABEL = "telegram-mcp-tunnel"
 
 LOCAL_PORT = 8766
@@ -91,8 +87,6 @@ class LaunchctlJobControl:
     """
 
     def _domain(self, label: str) -> str:
-        if label == AGENT_LABEL:
-            return f"gui/{os.getuid()}/{label}"
         return f"system/{label}"
 
     def start_job(self, label: str) -> None:
@@ -126,10 +120,7 @@ class LaunchctlJobControl:
 
         OPERATOR-PENDING: never run from automated tests.
         """
-        if label == AGENT_LABEL:
-            subprocess.run(["kill", "-TERM", str(pid)], check=True)
-        else:
-            subprocess.run(["sudo", "kill", "-TERM", str(pid)], check=True)
+        subprocess.run(["sudo", "kill", "-TERM", str(pid)], check=True)
 
 
 class FakeJobControl:
@@ -199,12 +190,11 @@ def bootstrap_status(
         "version": __version__,
         "pid": None,
         "ports": (),
-        "jobs": {RUNTIME_LABEL: "unknown", AGENT_LABEL: "unknown", TUNNEL_LABEL: "unknown"},
+        "jobs": {RUNTIME_LABEL: "unknown", TUNNEL_LABEL: "unknown"},
     }
     if job_control is not None:
         report["jobs"] = {
             RUNTIME_LABEL: job_control.job_state(RUNTIME_LABEL),
-            AGENT_LABEL: job_control.job_state(AGENT_LABEL),
             TUNNEL_LABEL: job_control.job_state(TUNNEL_LABEL),
         }
     if not lock_path.exists() or not probe_live_owner(lock_path):
@@ -250,20 +240,17 @@ class ProcessEntry:
 
 # Stray-process markers per job: a process is a stray of a job only when
 # the marker is an *exact element* of its argv vector AND its UID matches
-# the job's UID exactly. Substring binary names never match. The agent and
-# tunnel exact argv vectors are pinned with the Task 8 / Plan 2b plists;
-# until then the label-named binary is the marker (fail closed on doubt).
+# the job's UID exactly. Substring binary names never match. The tunnel's
+# exact argv vector is pinned with its plist; until then the label-named
+# binary is the marker (fail closed on doubt).
 JOB_STRAY_MARKERS: dict[str, str] = {
     RUNTIME_LABEL: "telegram-mcpd",
-    AGENT_LABEL: "telegram-mcp-agent",
     TUNNEL_LABEL: "telegram-mcp-tunnel",
 }
 
 
 def _default_uid_of(label: str) -> int | None:
     """Resolve the UID a job's strays must run as. None skips the sweep."""
-    if label == AGENT_LABEL:
-        return os.getuid()
     try:
         import pwd
 
@@ -311,13 +298,13 @@ def sweep_strays(
 
     Match rule is exact argv element + exact UID only; our own PID is never
     matched. Kills go through the job's own escalation (sudo for the system
-    jobs, plain kill for the GUI agent). Runtime + agent always swept; the
-    tunnel only in ChatGPT modes. Returns terminated PIDs.
+    jobs). The runtime is always swept; the tunnel only in ChatGPT modes.
+    Returns terminated PIDs.
     """
     ports_for_mode(mode)
     table_fn = list_processes or _list_processes_ps
     uid_fn = uid_of or _default_uid_of
-    labels = [RUNTIME_LABEL, AGENT_LABEL]
+    labels = [RUNTIME_LABEL]
     if mode in ("chatgpt", "all"):
         labels.append(TUNNEL_LABEL)
     try:
@@ -366,14 +353,14 @@ def start_all(
     list_processes: Callable[[], list[ProcessEntry]] | None = None,
     uid_of: Callable[[str], int | None] | None = None,
 ) -> dict[str, Any]:
-    """Pre-start sweep, then kickstart runtime, agent, and tunnel (ChatGPT modes).
+    """Pre-start sweep, then kickstart the runtime and the tunnel (ChatGPT modes).
 
     Tunnel start happens strictly after READY is observed.
     """
     ports = ports_for_mode(mode)
     # Pre-start sweep: unload dead jobs (anything not already stopped),
     # then terminate stray processes holding ports/sockets outside launchd.
-    for label in (RUNTIME_LABEL, AGENT_LABEL, TUNNEL_LABEL):
+    for label in (RUNTIME_LABEL, TUNNEL_LABEL):
         if job_control.job_state(label) != "stopped":
             job_control.stop_job(label)
     sweep_strays(mode, job_control=job_control, list_processes=list_processes, uid_of=uid_of)
@@ -381,7 +368,6 @@ def start_all(
     ready = wait_ready() if wait_ready is not None else _wait_until_ready(runtime_dir)
     if not ready:
         raise RuntimeError("runtime did not reach READY")
-    job_control.start_job(AGENT_LABEL)
     if mode in ("chatgpt", "all"):
         job_control.start_job(TUNNEL_LABEL)
     return {"state": "READY", "mode": mode, "ports": ports}
@@ -393,7 +379,7 @@ def stop_all(
     runtime_dir: str | Path | None = None,
     stop_timeout: float = 5.0,
 ) -> dict[str, Any]:
-    """Stop order: tunnel intake off -> runtime drain -> agent bootout.
+    """Stop order: tunnel intake off -> runtime drain.
 
     No-op success while OFF, where OFF is lock authority
     (``bootstrap_status``), never the job-state view.
@@ -402,11 +388,10 @@ def stop_all(
         return {"state": "OFF", "stopped": []}
     states = {
         RUNTIME_LABEL: job_control.job_state(RUNTIME_LABEL),
-        AGENT_LABEL: job_control.job_state(AGENT_LABEL),
         TUNNEL_LABEL: job_control.job_state(TUNNEL_LABEL),
     }
     stopped: list[str] = []
-    for label in (TUNNEL_LABEL, RUNTIME_LABEL, AGENT_LABEL):
+    for label in (TUNNEL_LABEL, RUNTIME_LABEL):
         if states[label] == "stopped":
             continue
         if label == RUNTIME_LABEL:
@@ -418,13 +403,10 @@ def stop_all(
         job_control.stop_job(label)
         stopped.append(label)
     directory = _runtime_dir(runtime_dir)
-    for name in (ADMIN_SOCK_NAME, CONSENT_SOCK_NAME):
-        try:
-            (directory / name).unlink()
-        except FileNotFoundError:
-            pass
-        except OSError:
-            pass
+    try:
+        (directory / ADMIN_SOCK_NAME).unlink()
+    except OSError:
+        pass
     return {"state": "OFF", "stopped": stopped}
 
 

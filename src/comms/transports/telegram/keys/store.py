@@ -55,14 +55,13 @@ ERR_CLIENT = "invalid client reference"
 
 # Rows provisioned as private files by ``provision_missing``: the Phase-2
 # file-backed runtime-account secrets. Tunnel references come from install,
-# agent keys live in the keychain/Enclave (daemon keeps pins only), and
-# per-client lease seeds are minted on demand via ``provision_lease_seed``.
+# per-client lease seeds are minted on demand via ``provision_lease_seed``,
+# and the retired consent rows (comms spec v0.2) are never provisioned.
 _FILE_BACKED_ROWS = frozenset(
     {
         "principal-key",
         "cursor-key",
         "privacy-key",
-        "challenge-key",
         # Phase 3: the rows that sign proofs, sign chain heads and MAC events.
         "disclosure-key",
         "audit-checkpoint-key",
@@ -160,7 +159,7 @@ def provision_missing(store_dir: str | Path, *, phases: tuple[int, ...] = (2,)) 
     created: list[str] = []
     for name in KEY_REGISTRY:
         spec = KEY_REGISTRY[name]
-        if spec.required_phase not in wanted or name not in _FILE_BACKED_ROWS:
+        if spec.retired or spec.required_phase not in wanted or name not in _FILE_BACKED_ROWS:
             continue
         dest = root / name
         if dest.exists():

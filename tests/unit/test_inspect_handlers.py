@@ -23,15 +23,6 @@ CLIENT = "tcl_" + "a" * 26
 REF = "tdr_" + "a" * 26
 
 
-class Broker:
-    def pending_count(self):
-        return 2
-
-
-class Prompter:
-    connected = True
-
-
 class Unreconstructable:
     def affecting(self, conn, disclosure_ref):
         return LineageVerdict("payload_unreconstructable")
@@ -46,9 +37,7 @@ def conn(tmp_path):
 
 
 def _h(conn, lineage=None):
-    return inspect_handlers(
-        conn, lineage=lineage or NoRestoreLineage(), broker=Broker(), prompter=Prompter()
-    )
+    return inspect_handlers(conn, lineage=lineage or NoRestoreLineage())
 
 
 def test_show_is_privacy_minimised_and_reports_signature_state(conn):
@@ -151,7 +140,3 @@ def _global_digest():
     from comms.transports.telegram.disclosure.budget import GLOBAL, subject_digest
 
     return subject_digest(GLOBAL)
-
-
-def test_consent_status(conn):
-    assert _h(conn)["consent status"]({}) == {"agent_connected": True, "pending": 2}

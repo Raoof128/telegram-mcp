@@ -4,6 +4,10 @@ Twelve spec purposes plus one implementation row (``agent-transport-key``,
 origin ``impl``). Phase-2 provisioning creates only the file-backed rows it
 requires; Phase-3 rows (disclosure/audit/backup) are registry-only
 placeholders — their private material must not be generated early.
+
+Comms spec v0.2 retired the three consent keys. Their rows stay, marked
+``retired``: nothing provisions or inventories them, and the names are never
+reused (5b-3 design §2.5).
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ class KeySpec:
     persistent: bool
     required_phase: int
     origin: str  # "spec" | "impl"
+    retired: bool = False
 
     def __post_init__(self) -> None:
         if self.origin not in _VALID_ORIGINS:
@@ -38,17 +43,21 @@ KEY_REGISTRY: dict[str, KeySpec] = {
     "principal-key": KeySpec("HMAC-SHA-256", "runtime account", True, 2, "spec"),
     "cursor-key": KeySpec("HMAC-SHA-256", "runtime account", True, 2, "spec"),
     "privacy-key": KeySpec("HMAC-SHA-256", "runtime account", True, 2, "spec"),
-    "challenge-key": KeySpec("Ed25519", "runtime account", True, 2, "spec"),
+    "challenge-key": KeySpec("Ed25519", "runtime account", True, 2, "spec", retired=True),
     # Per-client lease-seed template row (files are per-client, on demand).
     "lease-seed": KeySpec("HMAC-SHA-256", "runtime account", True, 2, "spec"),
     # Tunnel references: provisioned by install, never by the file store.
     "tunnel-tls-key": KeySpec("X.509/SPKI", "respective service accounts", True, 2, "spec"),
     "tunnel-mtls-key": KeySpec("X.509/SPKI", "respective service accounts", True, 2, "spec"),
     # Agent approval key: P-256 Secure Enclave, device-bound, never here.
-    "agent-approval-key": KeySpec("P-256 Secure Enclave", "operator", True, 2, "spec"),
+    "agent-approval-key": KeySpec(
+        "P-256 Secure Enclave", "operator", True, 2, "spec", retired=True
+    ),
     # Implementation row beyond the twelve spec purposes: Ed25519 software
     # key in the operator keychain; the daemon stores only the pinned public.
-    "agent-transport-key": KeySpec("Ed25519 software", "operator keychain", True, 2, "impl"),
+    "agent-transport-key": KeySpec(
+        "Ed25519 software", "operator keychain", True, 2, "impl", retired=True
+    ),
     # Phase-3 registry-only rows: no private material before Phase 3.
     "disclosure-key": KeySpec("Ed25519", "runtime account", False, 3, "spec"),
     "audit-checkpoint-key": KeySpec("Ed25519", "runtime account", False, 3, "spec"),
