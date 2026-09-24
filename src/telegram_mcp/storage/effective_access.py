@@ -13,10 +13,11 @@ from telegram_mcp.authority.policy import (
     PeerFacts,
     evaluate_with_trace,
 )
+from telegram_mcp.authority.staging import Binding
 from telegram_mcp.consent.challenge import jcs_dumps
 from telegram_mcp.storage.authority_view import load_security, load_view, owner_account
 
-__all__ = ["base_digest", "explain", "snapshot"]
+__all__ = ["base_digest", "current_binding", "explain", "known_refs", "snapshot"]
 
 
 def _inputs(
@@ -113,3 +114,28 @@ def base_digest(conn: sqlite3.Connection) -> str:
         "snapshot": rows_digest(snapshot(conn)),
     }
     return hashlib.sha256(jcs_dumps(body)).hexdigest()
+
+
+def known_refs(conn: sqlite3.Connection) -> set[str]:
+    refs: set[str] = set()
+    for sql in (
+        "SELECT project_ref FROM projects",
+        "SELECT peer_ref FROM peers",
+        "SELECT client_ref FROM mcp_clients",
+    ):
+        refs.update(r[0] for r in conn.execute(sql))
+    return refs
+
+
+def current_binding(conn: sqlite3.Connection, peer_uid: int | None) -> Binding:
+    principal = conn.execute(
+        "SELECT id, principal_ref FROM principals ORDER BY id LIMIT 1"
+    ).fetchone()
+    account = owner_account(conn, principal_id=int(principal[0])) if principal else None
+    if principal is None or account is None:
+        raise ValueError("log in first: no account exists")
+    account_ref = conn.execute(
+        "SELECT account_ref FROM accounts WHERE id = ?", (account,)
+    ).fetchone()[0]
+    security_epoch, _locked = load_security(conn)
+    return Binding(peer_uid, principal[1], account_ref, security_epoch)

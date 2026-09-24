@@ -21,8 +21,16 @@ from telegram_mcp.authority.policy import (
     evaluate_with_trace,
 )
 from telegram_mcp.consent.challenge import jcs_dumps
+from telegram_mcp.opaque import validate_ref_format
 
-__all__ = ["AccessRow", "diff_rows", "effective_rows", "rows_digest", "trace_digest"]
+__all__ = [
+    "AccessRow",
+    "diff_rows",
+    "effective_rows",
+    "normalize_new_refs",
+    "rows_digest",
+    "trace_digest",
+]
 
 
 def trace_digest(trace: Iterable[TraceStep]) -> str:
@@ -141,3 +149,34 @@ def diff_rows(
         "removed": [old[k].to_json() for k in sorted(old.keys() - new.keys())],
         "changed": changed,
     }
+
+
+def normalize_new_refs(diff: Mapping[str, Any], known: set[str]) -> dict[str, Any]:
+    """Replace refs minted inside the transaction with ``new:<prefix>``, then re-sort.
+
+    A simulated ``project create`` mints one ``tpr_`` and the real commit
+    mints another, so equality is semantic. One command mints at most one
+    ref per prefix, so ``new:tpr_`` is unambiguous within one diff.
+    """
+
+    def fix(value: Any) -> Any:
+        if isinstance(value, str) and value not in known:
+            try:
+                prefix = validate_ref_format(value)
+            except ValueError:
+                return value
+            return "new:" + prefix
+        if isinstance(value, list):
+            return [fix(v) for v in value]
+        if isinstance(value, dict):
+            return {k: fix(v) for k, v in value.items()}
+        return value
+
+    out = {key: fix(list(entries)) for key, entries in diff.items()}
+    for key in ("added", "removed"):
+        out[key] = sorted(
+            out[key],
+            key=lambda r: (r["client_ref"], r["project_ref"], r["peer_ref"], r["operation"]),
+        )
+    out["changed"] = sorted(out["changed"], key=lambda c: c["key"])
+    return out

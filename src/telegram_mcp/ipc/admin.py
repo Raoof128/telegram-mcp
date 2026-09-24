@@ -29,6 +29,7 @@ import os
 import socket
 import stat
 import sys
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ADMIN_COMMANDS",
+    "ADMIN_PEER",
     "CONTROL_REQUESTS",
     "AdminRouter",
     "PeerCredentials",
@@ -173,6 +175,12 @@ class PeerCredentials:
 
     uid: int
     gid: int
+
+
+# The authenticated admin peer for the request being dispatched (Phase-5
+# design §2.3: staged changes are bound to it). Set by serve_admin around
+# each request; None for in-process callers.
+ADMIN_PEER: ContextVar[PeerCredentials | None] = ContextVar("admin_peer", default=None)
 
 
 def getpeereid(fd: int) -> PeerCredentials:
@@ -395,7 +403,11 @@ async def serve_admin(
                     token = await approver(command, args)
                     if token is not None:
                         request = {**request, "args": {**args, "presence": {"token": token}}}
-                await write_frame(writer, encode_json_frame(await router.adispatch(request)))
+                peer_token = ADMIN_PEER.set(creds)
+                try:
+                    await write_frame(writer, encode_json_frame(await router.adispatch(request)))
+                finally:
+                    ADMIN_PEER.reset(peer_token)
         finally:
             writer.close()
 
