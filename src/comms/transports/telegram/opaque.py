@@ -1,8 +1,7 @@
 """Neutral opaque-reference minter/validator (single copy).
 
-Both the consent broker (``tgu_`` handles, Task 3) and the authority refs
-(``tpr_``/``tcl_``/…, Task 6) import from this module — no second copy may
-exist anywhere. Rule: ``prefix + 26 chars [a-z2-7]`` from 130 CSPRNG bits,
+The authority refs (``tpr_``/``tcl_``/…, Task 6) and the receipt minter
+import from this module — no second copy may exist anywhere. Rule: ``prefix + 26 chars [a-z2-7]`` from 130 CSPRNG bits,
 non-sequential.
 """
 
@@ -16,7 +15,7 @@ __all__ = ["mint_opaque_ref", "validate_ref_format"]
 
 # Lowercase unpadded Base32 body: exactly 26 chars = 130 bits.
 _BODY_RE = re.compile(r"[a-z2-7]{26}\Z")
-# Prefixes are lowercase alpha segments ending in "_", e.g. "tgu_", "tpr_".
+# Prefixes are lowercase alpha segments ending in "_", e.g. "tpr_", "tdr_".
 _REF_RE = re.compile(r"([a-z]+_)[a-z2-7]{26}\Z")
 
 
@@ -31,7 +30,7 @@ def mint_opaque_ref(prefix: str) -> str:
 
 
 def validate_ref_format(ref: str) -> str:
-    """Validate shape; return the prefix (e.g. ``"tgu_"``) or raise ``ValueError``."""
+    """Validate shape; return the prefix (e.g. ``"tpr_"``) or raise ``ValueError``."""
     match = _REF_RE.fullmatch(ref)
     if match is None:
         raise ValueError("invalid opaque-ref format")

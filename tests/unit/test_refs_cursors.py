@@ -116,7 +116,7 @@ def test_ref_shape_and_uniqueness():
 
 
 def test_every_spec_prefix_validates_and_returns_its_prefix():
-    assert len(REF_PREFIXES) == 10
+    assert len(REF_PREFIXES) == 9  # §11.1's ten less `tgu_`, retired by comms spec v0.2
     for prefix in REF_PREFIXES:
         assert validate_ref_format(mint_opaque_ref(prefix)) == prefix
 

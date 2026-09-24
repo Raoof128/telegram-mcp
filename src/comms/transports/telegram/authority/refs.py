@@ -15,7 +15,8 @@ from comms.transports.telegram.opaque import validate_ref_format as _validate_sh
 __all__ = ["REF_PREFIXES", "validate_ref_format"]
 
 # Spec §11.1 table, in table order: account, project, peer, message, cursor,
-# principal, MCP client, disclosure receipt, consent challenge, local selector.
+# principal, MCP client, disclosure receipt, local selector. The consent-challenge
+# prefix `tgu_` is retired by comms spec v0.2 and tombstoned: it never validates.
 REF_PREFIXES: tuple[str, ...] = (
     "tga_",
     "tpr_",
@@ -25,7 +26,6 @@ REF_PREFIXES: tuple[str, ...] = (
     "prn_",
     "tcl_",
     "tdr_",
-    "tgu_",
     "tgl_",
 )
 

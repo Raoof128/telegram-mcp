@@ -56,8 +56,8 @@ Nothing here has ever touched Telegram; the Test DC harness is owner-run.
   skipped; it never reports success. `doctor --production` failing in this
   phase is correct behaviour, not a bug.
 - **No test-only flags in production paths.** Headless testing goes through
-  separate `selftest-` subcommands or injected seams, never a branch inside a
-  real path. Tests assert this against the agent source.
+  separate `selftest-` subcommands or injected seams (such as the
+  coordinator's `crash_at`), never a branch inside a real path.
 - **One copy of each shared rule.** The strict JSON decoder, the JCS encoder,
   the frame codec and the opaque-ref minter each exist once and are imported;
   a second copy is the defect.
@@ -83,15 +83,14 @@ uv build
 Host-touching tests are opt-in and never run by default:
 
 ```bash
-uv run pytest -q --run-platform-gated             # real pairing, Touch ID, host probes
+uv run pytest -q --run-platform-gated             # service accounts, host probes
 uv run pytest tests/telegram/test_testdc.py --run-telegram-testdc -q -s   # Test DC (TG_TESTDC_* + Keychain)
-bash scripts/package_agent.sh                     # rebuild the consent-agent bundle
 ```
 
 The smoke is not the suite. The suite proves each unit; the smoke drives the
 shipped artifacts — the demo server over a real TCP socket, the schema on
-disk, real Unix sockets, the installed CLI, the real agent against the real
-broker — and prints one ledger. Both must pass before any claim of done.
+disk, real Unix sockets, the installed CLI, the real ingress into the real
+coordinator — and prints one ledger. Both must pass before any claim of done.
 
 ## Map
 
@@ -104,16 +103,14 @@ until 5b-2; `src/telegram_mcp/` is only the legacy CLI forwarder.
 | Ten frozen tool contracts | `contracts/*.json`, loaded by `contract.py` |
 | MCP surface | `server.py`, `dispatch.py`, `validation.py`, `results.py` |
 | Runtime lifecycle, lock, launcher | `runtime/` |
-| Keys, pairing pins | `keys/` |
-| Consent challenge wire, broker, gate | `consent/` |
+| Keys (consent keys retired, not erased) | `keys/` |
 | Authority, refs, cursors, epochs | `authority/` |
 | Schema, migrations, settings | `storage/` |
-| Admin socket, leases, RV-1, tunnel pins | `ipc/` |
+| Admin socket (peer-credential authority), leases, tunnel pins | `ipc/` |
 | Disclosure coordinator, budgets, receipts, audit chain | `disclosure/` |
 | Bounded formal model | `formal/`, `SECURITY-MANIFEST.json` |
 | Telegram adapter (only Telethon importer), reads, daemon | `telegram/`, `runtime/daemon.py` |
 | Health checks | `doctor.py` |
-| Swift consent agent | `agent/consent-agent.swift` |
 | Plans and design | `docs/superpowers/` |
 | Evidence, gates, deviations | `docs/verification/` |
 
@@ -121,20 +118,20 @@ until 5b-2; `src/telegram_mcp/` is only the legacy CLI forwarder.
 
 - **TG-JCS-v1**: sorted ASCII keys, `,`/`:` separators, literal UTF-8, escape
   only `"`/`\`/U+0000–U+001F. Floats, lone surrogates and non-ASCII keys are
-  fatal. Byte-equality vectors: `tests/fixtures/consent/jcs_vectors.json`.
-- **Challenge / ApprovalEnvelope / display digest** — spec §9.8 and the
-  Phase-2 design §4. `display_digest` is
-  `SHA256("telegram-mcp-display-v1" || JCS(payload))`.
-- **RV-1 rendezvous**: HELLO → CHALLENGE → READY over a transcript digest,
-  5-second deadline, agent authenticated by its *transport* key.
-- **Prompt frames**: `PROMPT` / `APPROVAL` / `DENIAL`, documented in
-  `tests/agent/stub_broker.py`.
+  fatal. One copy: `canonical.py`. Byte-equality vectors:
+  `tests/fixtures/canonical/jcs_vectors.json`.
+- **Receipt proofs** `tg-mcp-disclosure/v1` (historical, consent fields) and
+  `tg-mcp-disclosure/v2` (owner-direct, `soft_threshold_exceeded`), selected by
+  the stored `proof_version` — `docs/comms-spec-v0.2.md`.
+- **Call binding**: `SHA256("comms-call-binding/v1\0" || JCS({args, nonce, tool}))`.
 - **`tgml1` bearer leases** — spec §9.7.1, exactly.
 - **Key ids** are `<kind>:sha256:<64 hex>`, recomputed on load, never stored.
 
-If a wire changes, the Phase-2J join gate
-(`tests/integration/test_join_gate.py`) is the thing that proves both halves
-still agree. It drives the real broker against the real packaged agent.
+**Tombstoned** (comms spec v0.2): the consent challenge, `ApprovalEnvelope`,
+the display digest, RV-1, the `PROMPT` / `APPROVAL` / `DENIAL` frames, the
+admin-approval domains, `tgu_`, `PRESENCE_REQUIRED`, and the consent keys.
+They never come back under a new meaning; `tests/security/test_tombstones.py`
+and `test_comms_protocol_frozen.py` pin that.
 
 ## Conventions worth knowing
 
@@ -144,14 +141,13 @@ still agree. It drives the real broker against the real packaged agent.
   validation is the house style, with a `# noqa: TRY004 -- …` and a reason.
 - AF_UNIX paths cap near 104 bytes, so socket tests `chdir` into `tmp_path`
   and use a relative directory.
-- The consent agent is built and packaged by a fixture; tests point at the
-  bundle binary, never a loose build. The default bundle is ad-hoc signed,
-  because pairing must refuse it.
 
 ## Host state (this Mac)
 
-A real Secure Enclave approval key and a transport key are paired to the
-certificate-signed bundle; no daemon pin is present, because no runtime has
-been provisioned. Service accounts, `/private/var/run/telegram-mcp` and the
+A real Secure Enclave approval key and a transport key are still paired to the
+old certificate-signed consent bundle. Comms v0.2 retired both; deleting them
+and uninstalling the bundle is an owner-approved runbook step
+(`docs/comms-spec-v0.2.md`), never automated. No daemon pin is present,
+because no runtime has been provisioned. Service accounts, `/private/var/run/telegram-mcp` and the
 tunnel certificates have **not** been installed — both installers are
 idempotent and print their plan with `--dry-run`.

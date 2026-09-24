@@ -5,7 +5,7 @@
   "canonicalisation": {
     "scheme": "TG-JCS-v1",
     "basis": "RFC 8785 restricted profile",
-    "implementation": "comms.transports.telegram.consent.challenge.jcs_dumps",
+    "implementation": "comms.transports.telegram.canonical.jcs_dumps",
     "note": "ASCII keys only; floats, lone surrogates and non-ASCII keys are fatal"
   },
   "formal_model": {
@@ -30,14 +30,14 @@
     "external_anchor_note": "spec §12.2 reviewed fallback, chosen over the macOS System Keychain baseline because the runtime is a non-login service account"
   },
   "claim_boundary": {
-    "receipt_proves": "the gateway committed and accounted a disclosure under the named authority, consent, provenance, egress and coverage state",
+    "receipt_proves": "the gateway committed and accounted a disclosure under the named authority, provenance, egress and coverage state; v2 receipts record owner-direct authorization and whether the soft threshold was exceeded, v1 receipts the consent that authorised them",
     "receipt_does_not_prove": [
       "that a remote client received the response",
       "a long-term cryptographic commitment to exact private message bytes"
     ],
     "exposure_budget_bound": "limits burst rate within the rolling window, not lifetime exposure",
     "audit_chain_bound": "detects database-only tampering; not resistance to an attacker holding both the daemon account and the anchor",
-    "third_parties": "participants in the disclosed conversations do not consent, cannot see a prompt and cannot object; out of scope for V0.1.10"
+    "third_parties": "participants in the disclosed conversations do not consent and cannot object; out of scope for v0.1.10 and comms v0.2"
   },
   "production_claim": false,
   "gates_passed": []
