@@ -48,6 +48,8 @@ async def test_the_client_is_built_exactly_as_section_36_requires(tmp_path):
         "request_retries": 0,
         "flood_sleep_threshold": 0,
         "raise_last_call_error": True,
+        "auto_reconnect": False,  # comms v0.3 C14 (A21)
+        "connection_retries": 0,
     }
     assert stat.S_IMODE(os.stat(tmp_path / "session").st_mode) == 0o700
     await session.stop()

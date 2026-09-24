@@ -16,17 +16,19 @@ import contextlib
 import fcntl
 import os
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from telethon import TelegramClient, errors, utils
 from telethon import password as srp
 from telethon.tl import functions, types
 
+from comms.core.providers.capability import Capability
 from comms.transports.telegram.telegram.deadline import (
     Deadline,
     DeadlineExceeded,
@@ -39,12 +41,16 @@ from comms.transports.telegram.telegram.errors import GatewayError
 __all__ = [
     "ADMIN_RPCS",
     "OPERATIONS",
+    "READ_RPCS",
     "REVIEWED_REQUESTS",
+    "SESSION_RPCS",
+    "WRITE_RPCS",
     "DialogView",
     "MessageView",
     "SearchPage",
     "TelegramConfig",
     "TelethonSession",
+    "capability_operation",
     "qualified",
     "translate",
 ]
@@ -78,8 +84,101 @@ OPERATIONS: dict[str, frozenset[str]] = {
         }
     ),
 }
+# comms v0.3 C14 (A21): the request classes each capability may put on the wire for the user
+# actor, in three disjoint sets. Each capability is its own operation, so the recorder allows
+# exactly that capability's classes and nothing else. Classified in telegram-rpc-review.md.
+READ_RPCS: Mapping[Capability, frozenset[str]] = MappingProxyType(
+    {
+        Capability.HISTORY_READ: frozenset(
+            {
+                "messages.GetHistoryRequest",
+                "messages.GetMessagesRequest",
+                "channels.GetMessagesRequest",
+                "messages.GetRepliesRequest",
+            }
+        ),
+        Capability.HISTORY_SEARCH: frozenset({"messages.SearchRequest"}),
+        Capability.MEMBER_LIST: frozenset(
+            {"channels.GetParticipantsRequest", "messages.GetFullChatRequest"}
+        ),
+        Capability.MEMBER_GET: frozenset(
+            {"channels.GetParticipantRequest", "messages.GetFullChatRequest"}
+        ),
+        Capability.ADMIN_LIST: frozenset(
+            {"channels.GetParticipantsRequest", "messages.GetFullChatRequest"}
+        ),
+        Capability.ADMIN_LOG_READ: frozenset({"channels.GetAdminLogRequest"}),
+        Capability.INVITE_LIST: frozenset({"messages.GetExportedChatInvitesRequest"}),
+        Capability.JOIN_REQUEST_LIST: frozenset({"messages.GetChatInviteImportersRequest"}),
+        Capability.TOPIC_LIST: frozenset({"messages.GetForumTopicsRequest"}),
+    }
+)
+WRITE_RPCS: Mapping[Capability, frozenset[str]] = MappingProxyType(
+    {
+        Capability.MESSAGE_SEND: frozenset({"messages.SendMessageRequest"}),
+        Capability.MESSAGE_EDIT: frozenset({"messages.EditMessageRequest"}),
+        Capability.MESSAGE_DELETE: frozenset(
+            {"messages.DeleteMessagesRequest", "channels.DeleteMessagesRequest"}
+        ),
+        Capability.MESSAGE_FORWARD: frozenset({"messages.ForwardMessagesRequest"}),
+        Capability.MESSAGE_PIN: frozenset({"messages.UpdatePinnedMessageRequest"}),
+    }
+)
+_BAN = frozenset({"channels.EditBannedRequest"})
+_EDIT_INVITE = frozenset({"messages.EditExportedChatInviteRequest"})
+_JOIN_REQUEST = frozenset({"messages.HideChatJoinRequestRequest"})
+_TOPIC_EDIT = frozenset({"messages.EditForumTopicRequest"})
+_ADMIN_RIGHTS = frozenset({"channels.EditAdminRequest", "messages.EditChatAdminRequest"})
+ADMIN_RPCS: Mapping[Capability, frozenset[str]] = MappingProxyType(
+    {
+        Capability.MEMBER_ADD: frozenset(
+            {"messages.AddChatUserRequest", "channels.InviteToChannelRequest"}
+        ),
+        Capability.MEMBER_REMOVE: frozenset({"messages.DeleteChatUserRequest", *_BAN}),
+        Capability.MEMBER_BAN: _BAN,
+        Capability.MEMBER_UNBAN: _BAN,
+        Capability.MEMBER_RESTRICT: _BAN,
+        Capability.ADMIN_PROMOTE: _ADMIN_RIGHTS,
+        Capability.ADMIN_DEMOTE: _ADMIN_RIGHTS,
+        Capability.INVITE_CREATE: frozenset({"messages.ExportChatInviteRequest"}),
+        Capability.INVITE_EDIT: _EDIT_INVITE,
+        Capability.INVITE_REVOKE: _EDIT_INVITE,
+        Capability.JOIN_REQUEST_APPROVE: _JOIN_REQUEST,
+        Capability.JOIN_REQUEST_REJECT: _JOIN_REQUEST,
+        Capability.CHAT_SET_TITLE: frozenset(
+            {"messages.EditChatTitleRequest", "channels.EditTitleRequest"}
+        ),
+        Capability.CHAT_SET_DESCRIPTION: frozenset({"messages.EditChatAboutRequest"}),
+        Capability.CHAT_SET_PHOTO: frozenset(
+            {"messages.EditChatPhotoRequest", "channels.EditPhotoRequest"}
+        ),
+        Capability.CHAT_SET_PERMISSIONS: frozenset({"messages.EditChatDefaultBannedRightsRequest"}),
+        Capability.TOPIC_CREATE: frozenset({"messages.CreateForumTopicRequest"}),
+        Capability.TOPIC_EDIT: _TOPIC_EDIT,
+        Capability.TOPIC_CLOSE: _TOPIC_EDIT,
+        Capability.TOPIC_REOPEN: _TOPIC_EDIT,
+        Capability.GROUP_CREATE: frozenset(
+            {"channels.CreateChannelRequest", "messages.CreateChatRequest"}
+        ),
+        Capability.GROUP_DELETE: frozenset(
+            {"channels.DeleteChannelRequest", "messages.DeleteChatRequest"}
+        ),
+        Capability.GROUP_MIGRATE: frozenset({"messages.MigrateChatRequest"}),
+    }
+)
+
+
+def capability_operation(capability: Capability) -> str:
+    """The recorder operation for one capability's RPCs (``cap.<capability id>``)."""
+    return f"cap.{capability.value}"
+
+
+for _rpcs in (READ_RPCS, WRITE_RPCS, ADMIN_RPCS):
+    for _cap, _names in _rpcs.items():
+        OPERATIONS[capability_operation(_cap)] = _names
 REVIEWED_REQUESTS: frozenset[str] = frozenset().union(*OPERATIONS.values())
-ADMIN_RPCS: frozenset[str] = OPERATIONS["admin.revoke"]
+# comms v0.3 B14: the session's one self-administration RPC (not a capability).
+SESSION_RPCS: frozenset[str] = OPERATIONS["admin.revoke"]
 
 
 def qualified(request: Any) -> str:
@@ -157,6 +256,7 @@ _UNAVAILABLE = (
     errors.AuthKeyNotFound,  # the server's -404: transient, never a durable state (B15)
     ConnectionError,
     OSError,
+    EOFError,  # asyncio.IncompleteReadError: the link dropped mid-read
 )
 _SESSION_NAME = "primary"
 
@@ -245,6 +345,8 @@ class TelethonSession:
             request_retries=0,
             flood_sleep_threshold=0,
             raise_last_call_error=True,
+            auto_reconnect=False,  # A21: Telethon's reconnect re-sends in-flight requests
+            connection_retries=0,
         )
         if self._config.test_dc is not None:
             dc_id, ip, port = self._config.test_dc
@@ -366,6 +468,8 @@ class TelethonSession:
             raise
         except BaseException as exc:  # noqa: BLE001 -- mapped to a frozen code
             gateway = translate(exc)
+            if isinstance(exc, OSError | EOFError):
+                self.connected = False  # auto_reconnect is off: the keeper reconnects explicitly
             if operation != "admin.status":
                 if gateway.code == "SESSION_REVOKED":
                     self.revoked = True

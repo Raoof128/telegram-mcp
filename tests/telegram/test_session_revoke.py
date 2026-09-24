@@ -15,8 +15,8 @@ from comms.transports.telegram.telegram import admin_rpc
 from comms.transports.telegram.telegram.deadline import Deadline, WorkBudget
 from comms.transports.telegram.telegram.errors import GatewayError
 from comms.transports.telegram.telegram.telethon_adapter import (
-    ADMIN_RPCS,
     OPERATIONS,
+    SESSION_RPCS,
     TelegramConfig,
     TelethonSession,
 )
@@ -168,10 +168,10 @@ def test_admin_rpc_imported_only_by_the_auth_handler():
 
 
 async def test_runtime_recorder_never_sees_admin_rpcs_on_read_paths(env):
-    assert ADMIN_RPCS == frozenset({"auth.LogOutRequest"})
+    assert SESSION_RPCS == frozenset({"auth.LogOutRequest"})
     for operation, allowed in OPERATIONS.items():
         if operation != "admin.revoke":
-            assert not (allowed & ADMIN_RPCS), operation
+            assert not (allowed & SESSION_RPCS), operation
     with pytest.raises(GatewayError, match="INTERNAL_ERROR"):
         await env["session"]._call_reviewed(
             functions.auth.LogOutRequest(),
