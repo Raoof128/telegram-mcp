@@ -174,6 +174,7 @@ def test_counts_per_phase_reported(env):
         "legacy_message_refs",
         "comms_chain",  # B18
         "campaign_bodies",  # B19
+        "inbound_bodies",  # Part C exit follow-up (A15)
         "identities",  # B20
         "public_keys",
         "secrets",

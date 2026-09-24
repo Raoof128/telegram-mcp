@@ -33,6 +33,7 @@ RETENTION_PHASES = (
     "legacy_message_refs",
     "comms_chain",
     "campaign_bodies",
+    "inbound_bodies",  # Part C exit follow-up (A15)
     "identities",
     "public_keys",
     "secrets",

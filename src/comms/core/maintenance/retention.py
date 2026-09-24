@@ -43,6 +43,7 @@ __all__ = [
     "RetentionFailed",
     "RetentionPolicy",
     "RetentionReport",
+    "purge_inbound",
     "purge_retired_keys",
     "redact_identities",
     "run_retention",
@@ -53,6 +54,7 @@ CRASH_POINTS = (
     "after_legacy",
     "after_comms_chain",
     "after_bodies",
+    "after_inbound",
     "after_identities",
     "after_keys",
 )
@@ -151,6 +153,11 @@ def run_retention(
         )
     crash("after_bodies")
     with write_tx(comms_conn):
+        phases["inbound_bodies"] = purge_inbound(
+            comms_conn, cutoff=before(policy.campaign_body_days)
+        )
+    crash("after_inbound")
+    with write_tx(comms_conn):
         phases["identities"] = redact_identities(
             comms_conn, cutoff=before(policy.identity_retention_days)
         )
@@ -169,6 +176,19 @@ def run_retention(
 # A job in one of these states may still be delivered, retried or resolved.
 _UNRESOLVED = ", ".join(f"'{s}'" for s in UNRESOLVED_STATES)
 _ENDPOINTS = ("destinations", "contact_points")
+
+
+def purge_inbound(conn: Any, *, cutoff: datetime) -> int:
+    """Phase 5b (A15's body rule): retained inbound bodies older than the body window — Bot API
+    updates, MTProto updates, and completed webhook bodies. An unfinished inbox row is never
+    purged: its fan-out has not run. Caller's transaction."""
+    limit = timeutil.iso(cutoff)
+    removed = conn.execute("DELETE FROM bot_updates WHERE received_at < ?", (limit,)).rowcount
+    removed += conn.execute("DELETE FROM user_updates WHERE received_at < ?", (limit,)).rowcount
+    removed += conn.execute(
+        "DELETE FROM webhook_inbox WHERE completed_at IS NOT NULL AND completed_at < ?", (limit,)
+    ).rowcount
+    return int(removed)
 
 
 def redact_identities(conn: Any, *, cutoff: datetime) -> int:
