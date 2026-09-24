@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import fcntl
+import inspect
 import os
 import stat
 from collections.abc import Callable, Iterator, Mapping
@@ -37,6 +38,7 @@ from comms.transports.telegram.telegram.deadline import (
     WorkBudgetExceeded,
 )
 from comms.transports.telegram.telegram.errors import GatewayError
+from comms.transports.telegram.telegram.rights import SelfRights
 from comms.transports.telegram.telegram.send_attempt import SendAttempt
 
 __all__ = [
@@ -272,6 +274,54 @@ _SEND_REFUSED = (
     errors.MessageEmptyError,
     errors.MessageTooLongError,
 )
+
+
+_ALL_ADMIN_RIGHTS = frozenset(
+    name for name in inspect.signature(types.ChatAdminRights.__init__).parameters if name != "self"
+)
+
+
+def _flags(tl: Any) -> frozenset[str]:
+    """The true boolean flags of a rights object (``ChatAdminRights``/``ChatBannedRights``)."""
+    if tl is None:
+        return frozenset()
+    return frozenset(k for k, v in tl.to_dict().items() if v is True)
+
+
+def _channel_rights(result: Any, channel_id: int) -> SelfRights:
+    channel = next((c for c in result.chats if getattr(c, "id", None) == channel_id), None)
+    if not isinstance(channel, types.Channel):
+        raise GatewayError("NOT_ACCESSIBLE")
+    kind: Any = "megagroup" if channel.megagroup else "broadcast"
+    forum = bool(channel.forum)
+    defaults = _flags(channel.default_banned_rights)
+    part = result.participant
+    if isinstance(part, types.ChannelParticipantCreator):
+        return SelfRights(kind, "creator", _ALL_ADMIN_RIGHTS, frozenset(), forum)
+    if isinstance(part, types.ChannelParticipantAdmin):
+        return SelfRights(kind, "admin", _flags(part.admin_rights), frozenset(), forum)
+    if isinstance(part, types.ChannelParticipantBanned):
+        own = _flags(part.banned_rights)
+        status: Any = "banned" if "view_messages" in own else "restricted"
+        return SelfRights(kind, status, frozenset(), own | defaults, forum)
+    if isinstance(part, types.ChannelParticipantLeft):
+        return SelfRights(kind, "left", frozenset(), frozenset(), forum)
+    return SelfRights(kind, "member", frozenset(), defaults, forum)
+
+
+def _chat_rights(result: Any, chat_id: int) -> SelfRights:
+    chat = next((c for c in result.chats if getattr(c, "id", None) == chat_id), None)
+    if isinstance(chat, types.ChatForbidden):
+        return SelfRights("chat", "banned")
+    if not isinstance(chat, types.Chat):
+        raise GatewayError("NOT_ACCESSIBLE")
+    if chat.left or chat.deactivated:
+        return SelfRights("chat", "left")
+    if chat.creator:
+        return SelfRights("chat", "creator", _ALL_ADMIN_RIGHTS)
+    if chat.admin_rights is not None:
+        return SelfRights("chat", "admin", _flags(chat.admin_rights))
+    return SelfRights("chat", "member", frozenset(), _flags(chat.default_banned_rights))
 
 
 def _sent_message_id(result: Any, random_id: int) -> int | None:
@@ -539,6 +589,32 @@ class TelethonSession:
             ambiguous = exc.code in ("TELEGRAM_UNAVAILABLE", "DEADLINE_EXCEEDED")
             return SendAttempt("ambiguous" if ambiguous else "failed")
         return SendAttempt("sent", message_id=_sent_message_id(result, random_id))
+
+    async def self_rights(self, peer_type: str, peer_id: int, *, timeout: float) -> SelfRights:
+        """The account's own standing in a group (C17), one read RPC: ``channels.getParticipant
+        (self)`` for a channel or supergroup, ``messages.getFullChat`` for a basic group."""
+        if peer_type == "channel":
+            request = functions.channels.GetParticipantRequest(
+                self.input_peer("channel", peer_id), types.InputUserSelf()
+            )
+            try:
+                result = await self.call_capability(
+                    Capability.MEMBER_GET,
+                    request,
+                    timeout=timeout,
+                    passthrough=(errors.UserNotParticipantError,),
+                )
+            except errors.UserNotParticipantError:
+                return SelfRights("megagroup", "left")
+            return _channel_rights(result, peer_id)
+        if peer_type == "chat":
+            result = await self.call_capability(
+                Capability.MEMBER_GET,
+                functions.messages.GetFullChatRequest(peer_id),
+                timeout=timeout,
+            )
+            return _chat_rights(result, peer_id)
+        raise GatewayError("NOT_ACCESSIBLE")
 
     # -- login and status (admin plane): raw reviewed requests only -----------
 

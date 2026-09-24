@@ -24,11 +24,11 @@ from comms.core.providers.protocols import CapabilitySnapshot, ProviderTarget
 from comms.core.providers.semantics import SUPPORT
 from comms.transports.telegram.bot.classify import LookupFailed, lookup
 from comms.transports.telegram.bot.http import BotApi, BotRefused
+from comms.transports.telegram.capabilities import TELEGRAM_CAPABILITIES
 
 __all__ = ["TELEGRAM_CAPABILITIES", "BotCapability"]
 
 ACTOR = "telegram_bot"
-TELEGRAM_CAPABILITIES = tuple(c for c in C if set(SUPPORT[c]) & {"telegram_bot", "telegram_user"})
 _BOT = frozenset(c for c in TELEGRAM_CAPABILITIES if ACTOR in SUPPORT[c])
 _MESSAGES = frozenset({C.MESSAGE_SEND, C.MESSAGE_EDIT, C.MESSAGE_FORWARD})
 _PRESENT = frozenset({C.MEMBER_GET, C.ADMIN_LIST})
