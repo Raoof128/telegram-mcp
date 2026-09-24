@@ -11,7 +11,7 @@ create a new one. Errors carry fixed messages and never an identity.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from comms.core import refs, timeutil
@@ -175,7 +175,8 @@ def add_contact_point(
     return ref
 
 
-def set_enabled(conn: Any, ref: str, enabled: bool) -> None:
+def set_enabled(conn: Any, ref: str, enabled: bool, *, now: datetime | None = None) -> None:
+    """Enable or disable a directory row; disabling an endpoint records when (B20)."""
     kind = _kind(ref, {"location", "destination", "recipient", "contact_point"})
     table = _TABLE[kind]
     with write_tx(conn):
@@ -208,6 +209,9 @@ def set_enabled(conn: Any, ref: str, enabled: bool) -> None:
             f"UPDATE {table} SET enabled = ? WHERE id = ?",
             (1 if enabled else 0, row_id),
         )
+        if kind in ("destination", "contact_point"):
+            stamp = None if enabled else timeutil.iso(now or datetime.now(UTC))
+            conn.execute(f"UPDATE {table} SET disabled_at = ? WHERE id = ?", (stamp, row_id))
 
 
 def opt_out(conn: Any, contact_point_ref: str, *, now: datetime) -> None:

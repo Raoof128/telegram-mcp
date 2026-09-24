@@ -81,7 +81,9 @@ def env(tmp_path):
 
 def _run(env, **days):
     policy = RetentionPolicy(**{**KEEP_ALL.__dict__, **days})
-    return run_retention(env["conn"], env["legacy"], policy, env["writer"], now=NOW)
+    return run_retention(
+        env["conn"], env["legacy"], policy, env["writer"], now=NOW, store=env["store"]
+    )
 
 
 def _count(env, table):
@@ -172,6 +174,9 @@ def test_counts_per_phase_reported(env):
         "legacy_message_refs",
         "comms_chain",  # B18
         "campaign_bodies",  # B19
+        "identities",  # B20
+        "public_keys",
+        "secrets",
     }
     assert report.phases["legacy_exposure"] == 1
     assert report.outcome == "ok"

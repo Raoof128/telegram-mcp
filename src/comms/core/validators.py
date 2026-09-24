@@ -11,8 +11,19 @@ from collections.abc import Callable
 from typing import Any
 
 from comms.core import refs, timeutil
+from comms.core.opaque import validate_ref_format
 
-__all__ = ["Validator", "count", "digest", "key_id", "one_of", "ref", "time"]
+__all__ = [
+    "Validator",
+    "count",
+    "digest",
+    "key_id",
+    "nullable",
+    "one_of",
+    "opaque_ref",
+    "ref",
+    "time",
+]
 
 Validator = Callable[[Any], bool]
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
@@ -50,5 +61,18 @@ def time(value: Any) -> bool:
     try:
         timeutil.parse(value)
     except ValueError:
+        return False
+    return True
+
+
+def nullable(validator: Validator) -> Validator:
+    return lambda value: value is None or validator(value)
+
+
+def opaque_ref(value: Any) -> bool:
+    """Any ``<prefix>_<26 base32>`` ref, whatever its kind (e.g. a legacy checkpoint ref)."""
+    try:
+        validate_ref_format(value)
+    except (TypeError, ValueError):
         return False
     return True

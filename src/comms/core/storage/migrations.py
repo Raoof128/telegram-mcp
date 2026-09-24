@@ -273,6 +273,27 @@ DROP TRIGGER audit_events_append_only_d;
 CREATE TRIGGER audit_events_delete_only_behind_root BEFORE DELETE ON audit_events
   WHEN (SELECT value FROM maintenance_flags WHERE name = 'truncating') IS NOT 1
   BEGIN SELECT RAISE(ABORT, 'audit is append-only: deletes only by truncation behind a root'); END;
+-- A15 (Task B20): directory identities of endpoints disabled past the retention window are
+-- replaced by 'redacted:<delivery_identities.id>' (unique per row); nothing else may change.
+ALTER TABLE destinations ADD COLUMN disabled_at TEXT;
+ALTER TABLE contact_points ADD COLUMN disabled_at TEXT;
+DROP TRIGGER delivery_identities_immutable;
+CREATE TRIGGER delivery_identities_immutable BEFORE UPDATE ON delivery_identities
+  WHEN NOT (NEW.id IS OLD.id AND NEW.transport IS OLD.transport AND NEW.identity = 'redacted:' || OLD.id
+    AND OLD.identity NOT LIKE 'redacted:%')
+  BEGIN SELECT RAISE(ABORT, 'delivery identity is immutable'); END;
+DROP TRIGGER destinations_identity_immutable;
+CREATE TRIGGER destinations_identity_immutable BEFORE UPDATE OF transport, platform_identity, identity_id, location_id, ref
+  ON destinations WHEN NOT (NEW.transport IS OLD.transport AND NEW.identity_id IS OLD.identity_id
+    AND NEW.location_id IS OLD.location_id AND NEW.ref IS OLD.ref
+    AND NEW.platform_identity = 'redacted:' || OLD.identity_id)
+  BEGIN SELECT RAISE(ABORT, 'destination identity is immutable'); END;
+DROP TRIGGER contact_points_identity_immutable;
+CREATE TRIGGER contact_points_identity_immutable BEFORE UPDATE OF transport, platform_identity, identity_id, recipient_id, ref
+  ON contact_points WHEN NOT (NEW.transport IS OLD.transport AND NEW.identity_id IS OLD.identity_id
+    AND NEW.recipient_id IS OLD.recipient_id AND NEW.ref IS OLD.ref
+    AND NEW.platform_identity = 'redacted:' || OLD.identity_id)
+  BEGIN SELECT RAISE(ABORT, 'contact point identity is immutable'); END;
 -- A15 (Task B19): campaign-body redaction. The only edit a frozen generation or job ever
 -- accepts is its body going (content -> '{}', payload -> NULL) with redacted_at set once;
 -- every digest stays. delivery_jobs is rebuilt to relax its payload CHECKs for that case.

@@ -31,11 +31,18 @@ from comms.core.audit.integrity import require_not_degraded
 from comms.core.audit.retention_root import choose_root
 from comms.core.audit.verify_all import LegacyVerify
 from comms.core.audit.writer import AuditWriter
-from comms.core.keys.slots import registry_public_for
-from comms.core.maintenance.redaction import redact_campaign_bodies
+from comms.core.keys.slots import KeySlotStore, registry_public_for
+from comms.core.maintenance.redaction import UNRESOLVED_STATES, redact_campaign_bodies
 from comms.core.storage.db import write_tx
 
-__all__ = ["LegacyRetention", "RetentionPolicy", "RetentionReport", "run_retention"]
+__all__ = [
+    "LegacyRetention",
+    "RetentionPolicy",
+    "RetentionReport",
+    "purge_retired_keys",
+    "redact_identities",
+    "run_retention",
+]
 
 
 @dataclass(frozen=True)
@@ -72,6 +79,7 @@ def run_retention(
     writer: AuditWriter,
     *,
     now: datetime,
+    store: KeySlotStore,
 ) -> RetentionReport:
     require_not_degraded(comms_conn)
     if writer.conn is not comms_conn:
@@ -102,14 +110,99 @@ def run_retention(
         phases["campaign_bodies"] = redact_campaign_bodies(
             comms_conn, cutoff=before(policy.campaign_body_days), now=now
         )
-    return RetentionReport(
-        phases=phases,
-        roots={
-            "legacy": root["checkpoint_ref"] if root is not None else None,
-            "comms": comms_root,
-        },
-        outcome="ok",
-    )
+    with write_tx(comms_conn):
+        phases["identities"] = redact_identities(
+            comms_conn, cutoff=before(policy.identity_retention_days)
+        )
+    phases.update(purge_retired_keys(comms_conn, store))
+    roots = {"legacy": root["checkpoint_ref"] if root is not None else None, "comms": comms_root}
+    with writer.transaction() as tx:
+        tx.append(
+            "maintenance.retention_purge",
+            payload={**phases, "comms_root": roots["comms"], "legacy_root": roots["legacy"]},
+        )
+    return RetentionReport(phases=phases, roots=roots, outcome="ok")
+
+
+# A job in one of these states may still be delivered, retried or resolved.
+_UNRESOLVED = ", ".join(f"'{s}'" for s in UNRESOLVED_STATES)
+_ENDPOINTS = ("destinations", "contact_points")
+
+
+def redact_identities(conn: Any, *, cutoff: datetime) -> int:
+    """Phase 6 (B20): identities whose every endpoint was disabled before the cutoff.
+
+    The identity and its endpoints' ``platform_identity`` become ``redacted:<id>`` (unique
+    per row); never while an unresolved job references the identity. Caller's transaction.
+    """
+    limit = timeutil.iso(cutoff)
+    rows = conn.execute(
+        "SELECT i.id FROM delivery_identities i WHERE i.identity NOT LIKE 'redacted:%'"
+        " AND EXISTS (SELECT 1 FROM destinations WHERE identity_id = i.id"
+        "   UNION ALL SELECT 1 FROM contact_points WHERE identity_id = i.id)"
+        " AND NOT EXISTS (SELECT 1 FROM destinations WHERE identity_id = i.id"
+        "   AND (enabled = 1 OR disabled_at IS NULL OR disabled_at >= ?))"
+        " AND NOT EXISTS (SELECT 1 FROM contact_points WHERE identity_id = i.id"
+        "   AND (enabled = 1 OR disabled_at IS NULL OR disabled_at >= ?))"
+        f" AND NOT EXISTS (SELECT 1 FROM delivery_jobs WHERE identity_id = i.id AND state IN ({_UNRESOLVED}))",
+        (limit, limit),
+    ).fetchall()
+    for (identity_id,) in rows:
+        marker = f"redacted:{identity_id}"
+        conn.execute(
+            "UPDATE delivery_identities SET identity = ? WHERE id = ?", (marker, identity_id)
+        )
+        for table in _ENDPOINTS:
+            conn.execute(
+                f"UPDATE {table} SET platform_identity = ? WHERE identity_id = ?",
+                (marker, identity_id),
+            )
+    return len(rows)
+
+
+def purge_retired_keys(conn: Any, store: KeySlotStore) -> dict[str, int]:
+    """Phase 7 (B20): retired key material nothing retained still needs.
+
+    - a retired checkpoint signer's public half, once no retained checkpoint names it;
+    - a retired ``audit-chain-key`` secret, once its epoch is truncated (G8);
+    - a retired ``campaign-commit-key`` secret, once no generation's commitment names it.
+
+    Rows are marked ``DESTROYED`` in one transaction; the files are unlinked only after it
+    commits, so a rollback never loses a secret.
+    """
+    with write_tx(conn):
+        public = conn.execute(
+            "DELETE FROM verification_keys WHERE purpose = 'audit-checkpoint-key'"
+            " AND trust_state <> 'ACTIVE'"
+            " AND key_id NOT IN (SELECT signing_key_id FROM audit_checkpoints)"
+        ).rowcount
+        oldest = conn.execute("SELECT min(chain_epoch) FROM audit_events").fetchone()[0]
+        doomed = []
+        if oldest is not None:
+            doomed += [
+                ("audit-chain-key", int(r[0]))
+                for r in conn.execute(
+                    "SELECT version FROM key_slots WHERE purpose = 'audit-chain-key'"
+                    " AND state = 'RETIRED' AND version < ?",
+                    (int(oldest),),
+                )
+            ]
+        doomed += [
+            ("campaign-commit-key", int(r[0]))
+            for r in conn.execute(
+                "SELECT version FROM key_slots WHERE purpose = 'campaign-commit-key' AND state = 'RETIRED'"
+                " AND key_id NOT IN (SELECT campaign_commit_key_id FROM generations"
+                "   WHERE campaign_commit_key_id IS NOT NULL)"
+            )
+        ]
+        for purpose, version in doomed:
+            conn.execute(
+                "UPDATE key_slots SET state = 'DESTROYED' WHERE purpose = ? AND version = ?",
+                (purpose, version),
+            )
+    for purpose, version in doomed:
+        store.destroy(purpose, version)
+    return {"public_keys": int(public), "secrets": len(doomed)}
 
 
 def _truncate_comms(conn: Any, cutoff: datetime) -> tuple[str | None, int]:

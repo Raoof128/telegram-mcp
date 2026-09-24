@@ -12,10 +12,31 @@ from typing import Any
 from comms.core import domains
 from comms.core.campaigns.events import EVENT_TYPES
 from comms.core.keys.purposes import PURPOSES
-from comms.core.validators import Validator, count, digest, key_id, one_of, ref
+from comms.core.validators import (
+    Validator,
+    count,
+    digest,
+    key_id,
+    nullable,
+    one_of,
+    opaque_ref,
+    ref,
+)
 
-__all__ = ["AUDIT_EVENT_SPECS", "SUBJECT_KINDS", "validate_audit_event"]
+__all__ = ["AUDIT_EVENT_SPECS", "RETENTION_PHASES", "SUBJECT_KINDS", "validate_audit_event"]
 
+# The retention runner's phases, in order (design §B.8); the purge event counts each.
+RETENTION_PHASES = (
+    "legacy_exposure",
+    "legacy_chain",
+    "legacy_receipts",
+    "legacy_message_refs",
+    "comms_chain",
+    "campaign_bodies",
+    "identities",
+    "public_keys",
+    "secrets",
+)
 _CREDENTIALS = {name for name, p in PURPOSES.items() if p.rotation == "staged"}
 
 AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
@@ -58,6 +79,11 @@ AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
         "outcome": one_of({"pending", "confirmed", "failed", "unknown", "aborted"}),
         "security_epoch": count(1),
     },
+    "maintenance.retention_purge": {
+        **{phase: count(0) for phase in RETENTION_PHASES},
+        "comms_root": nullable(ref("audit_checkpoint")),
+        "legacy_root": nullable(opaque_ref),
+    },
     "admin.key_rotation": {
         "purpose": one_of(set(PURPOSES)),
         "old_version": count(0),
@@ -77,6 +103,7 @@ SUBJECT_KINDS: dict[str, str | None] = {
     "admin.credential_rotation_rolled_back": None,
     "admin.credential_revoked": None,
     "admin.session_revoke": None,
+    "maintenance.retention_purge": None,
     "admin.key_rotation": None,
 }
 

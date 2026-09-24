@@ -51,16 +51,18 @@ def world(tmp_path):
 
 def _run(world, days=10):
     policy = RetentionPolicy(**{**KEEP, "audit_events_days": days})
-    return run_retention(world["conn"], world["legacy"], policy, world["writer"], now=NOW)
+    return run_retention(
+        world["conn"], world["legacy"], policy, world["writer"], now=NOW, store=world["store"]
+    )
 
 
 def _seqs(world):
-    return [
-        tuple(r)
-        for r in world["conn"].execute(
-            "SELECT chain_epoch, chain_seq FROM audit_events ORDER BY 1, 2"
-        )
-    ]
+    """Retained events, apart from the maintenance event each retention run appends (B20)."""
+    rows = world["conn"].execute(
+        "SELECT chain_epoch, chain_seq FROM audit_events"
+        " WHERE kind <> 'maintenance.retention_purge' ORDER BY 1, 2"
+    )
+    return [tuple(r) for r in rows]
 
 
 def test_deletes_only_events_strictly_before_the_root_row(world):
