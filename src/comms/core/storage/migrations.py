@@ -348,6 +348,17 @@ CREATE TRIGGER jobs_binding_frozen BEFORE UPDATE OF ref, generation_id, transpor
     AND NEW.payload_digest IS OLD.payload_digest AND NEW.skip_reason IS OLD.skip_reason
     AND OLD.redacted_at IS NULL AND NEW.redacted_at IS NOT NULL AND NEW.payload IS NULL)
   BEGIN SELECT RAISE(ABORT, 'job binding is frozen'); END;
+-- A24 (Task C12): Bot API updates. One row: the update mode (polling or webhook, never both)
+-- and the next getUpdates offset, which only moves forward and commits with each ingest.
+CREATE TABLE bot_update_offset (id INTEGER PRIMARY KEY CHECK (id = 1),
+  mode TEXT NOT NULL CHECK (mode IN ('polling','webhook')),
+  next_offset INTEGER NOT NULL CHECK (next_offset >= 0), updated_at TEXT NOT NULL);
+CREATE TRIGGER bot_update_offset_forward_only BEFORE UPDATE OF next_offset ON bot_update_offset
+  WHEN NEW.next_offset < OLD.next_offset
+  BEGIN SELECT RAISE(ABORT, 'the update offset only moves forward'); END;
+CREATE TABLE bot_updates (update_id INTEGER PRIMARY KEY CHECK (update_id >= 0), chat_id INTEGER,
+  kind TEXT NOT NULL, payload TEXT NOT NULL, received_at TEXT NOT NULL);
+CREATE INDEX bot_updates_chat ON bot_updates (chat_id, update_id);
 """
 SCHEMA_V3: tuple[str, ...] = _statements(_SCHEMA_V3_SQL)
 

@@ -133,6 +133,27 @@
       "sha256": "58157822e1a3a796fa85997c6df6f1eea5e4d3bcc1e26b4534165a819586b968",
       "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
     },
+    "telegram_bot/getUpdates_409_webhook_active.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "d46729d6d84dca474cb7bc9158be1853f891700522d791dceb23a48994c135a1",
+      "source": "https://core.telegram.org/bots/api#getupdates — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getUpdates_empty.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "1376b52edc71c22d7041028588dedff73b90bd9326e64b7aef54388f91c970d2",
+      "source": "https://core.telegram.org/bots/api#getupdates — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getUpdates_two.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "b826c16ba5a56dc140b7d1833cef47e5adf4dc21368f5690f5a6aae79bcf736d",
+      "source": "https://core.telegram.org/bots/api#getupdates — hand-built from the documented types, not a live capture"
+    },
     "telegram_bot/join_400_hide_requester_missing.json": {
       "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
       "captured": "2026-09-25",
