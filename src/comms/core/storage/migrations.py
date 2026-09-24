@@ -453,7 +453,8 @@ CREATE TABLE mutations (id INTEGER PRIMARY KEY, op_ref TEXT NOT NULL UNIQUE,
   retry_class TEXT NOT NULL, ambiguity_policy TEXT NOT NULL CHECK (ambiguity_policy IN ('retry_same_key','resolve_only')),
   state TEXT NOT NULL CHECK (state IN ('IN_FLIGHT','SUCCEEDED','FAILED','OUTCOME_UNKNOWN')),
   audit_status TEXT NOT NULL DEFAULT 'ANCHORED' CHECK (audit_status IN ('ANCHORED','DEGRADED')),
-  provider_request_key TEXT, provider_code TEXT, result_digest TEXT, created_at TEXT NOT NULL, finished_at TEXT,
+  provider_request_key TEXT, provider_code TEXT, result TEXT, result_digest TEXT,
+  retried INTEGER NOT NULL DEFAULT 0 CHECK (retried IN (0,1)), created_at TEXT NOT NULL, finished_at TEXT,
   UNIQUE (authenticated_client, request_id));
 CREATE TABLE mutation_steps (id INTEGER PRIMARY KEY, mutation_id INTEGER NOT NULL REFERENCES mutations(id) ON DELETE RESTRICT,
   step_no INTEGER NOT NULL CHECK (step_no >= 1), capability TEXT NOT NULL,
@@ -472,6 +473,8 @@ CREATE TRIGGER mutations_state_forward BEFORE UPDATE OF state ON mutations
 CREATE TRIGGER mutations_request_key_set_once BEFORE UPDATE OF provider_request_key ON mutations
   WHEN OLD.provider_request_key IS NOT NULL AND NEW.provider_request_key IS NOT OLD.provider_request_key
   BEGIN SELECT RAISE(ABORT, 'the provider request key is set once'); END;
+CREATE TRIGGER mutations_retried_once BEFORE UPDATE OF retried ON mutations WHEN OLD.retried = 1 AND NEW.retried <> 1
+  BEGIN SELECT RAISE(ABORT, 'a mutation is re-invoked at most once'); END;
 CREATE TRIGGER mutations_never_deleted BEFORE DELETE ON mutations
   BEGIN SELECT RAISE(ABORT, 'mutations are kept'); END;
 CREATE TRIGGER mutation_steps_binding_immutable BEFORE UPDATE OF mutation_id, step_no, capability ON mutation_steps

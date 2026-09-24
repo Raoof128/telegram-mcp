@@ -6,12 +6,14 @@ validator. Later tasks register their kinds here, never elsewhere.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
 from comms.core import domains
 from comms.core.campaigns.events import EVENT_TYPES
 from comms.core.keys.purposes import PURPOSES
+from comms.core.providers.capability import Capability
 from comms.core.validators import (
     Validator,
     count,
@@ -39,6 +41,16 @@ RETENTION_PHASES = (
     "secrets",
 )
 _CREDENTIALS = {name for name, p in PURPOSES.items() if p.rotation == "staged"}
+_ACTORS = {"telegram_bot", "telegram_user", "whatsapp_cloud", "whatsapp_webhooks"}
+
+
+def _matches(pattern: str) -> Validator:
+    compiled = re.compile(pattern)
+    return lambda value: isinstance(value, str) and compiled.fullmatch(value) is not None
+
+
+_TOOL = _matches(r"comms_[a-z0-9_]{1,64}")
+_CODE = _matches(r"[A-Z][A-Z_]{0,39}")
 
 AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
     "campaign_event": {"event_type": one_of(EVENT_TYPES)},
@@ -104,6 +116,22 @@ AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
         "new_version": count(1),
         "key_id": key_id,
     },
+    # D4 (A28, A41): every write request, its saga steps and its outcome.
+    "admin.mutation_started": {
+        "tool": _TOOL,
+        "scope": one_of({"local", "provider"}),
+        "actor": nullable(one_of(_ACTORS)),
+    },
+    "admin.mutation_step": {
+        "step_no": count(1),
+        "capability": one_of({c.value for c in Capability}),
+        "state": one_of({"SUCCEEDED", "FAILED", "OUTCOME_UNKNOWN"}),
+        "provider_code": nullable(_CODE),
+    },
+    "admin.mutation_finished": {
+        "state": one_of({"SUCCEEDED", "FAILED", "OUTCOME_UNKNOWN"}),
+        "provider_code": nullable(_CODE),
+    },
 }
 # The ref kind each event's subject must carry (None: the event has no subject).
 SUBJECT_KINDS: dict[str, str | None] = {
@@ -123,6 +151,9 @@ SUBJECT_KINDS: dict[str, str | None] = {
     "admin.backup_adopt": None,
     "admin.backup_export": None,
     "admin.key_rotation": None,
+    "admin.mutation_started": "operation",
+    "admin.mutation_step": "operation",
+    "admin.mutation_finished": "operation",
 }
 
 
