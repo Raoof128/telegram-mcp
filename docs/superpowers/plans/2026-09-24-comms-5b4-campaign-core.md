@@ -396,6 +396,11 @@ CREATE TRIGGER provider_events_only_pending_resolves BEFORE UPDATE ON provider_e
   BEGIN SELECT RAISE(ABORT, 'provider event is frozen'); END;
 CREATE TRIGGER provider_events_no_delete BEFORE DELETE ON provider_events
   BEGIN SELECT RAISE(ABORT, 'provider event is frozen'); END;
+-- Endpoints are disabled, never deleted (§2): job origins name them by ref, not by FK.
+CREATE TRIGGER destinations_never_deleted BEFORE DELETE ON destinations
+  BEGIN SELECT RAISE(ABORT, 'endpoints are disabled, never deleted'); END;
+CREATE TRIGGER contact_points_never_deleted BEFORE DELETE ON contact_points
+  BEGIN SELECT RAISE(ABORT, 'endpoints are disabled, never deleted'); END;
 CREATE TRIGGER campaign_events_append_only_u BEFORE UPDATE ON campaign_events
   BEGIN SELECT RAISE(ABORT, 'event log is append-only'); END;
 CREATE TRIGGER campaign_events_append_only_d BEFORE DELETE ON campaign_events

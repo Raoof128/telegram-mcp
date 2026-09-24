@@ -11,7 +11,7 @@ from typing import Any
 
 from comms.core.storage.db import write_tx
 
-__all__ = ["MIGRATIONS", "Migration", "migrate"]
+__all__ = ["MIGRATIONS", "SCHEMA_V1", "Migration", "migrate"]
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,171 @@ class Migration:
     statements: tuple[str, ...]
 
 
-MIGRATIONS: tuple[Migration, ...] = ()
+_SCHEMA_V1_SQL = """
+CREATE TABLE locations (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)), created_at TEXT NOT NULL);
+CREATE TABLE recipients (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)), created_at TEXT NOT NULL);
+CREATE TABLE delivery_identities (id INTEGER PRIMARY KEY,
+  transport TEXT NOT NULL CHECK (transport IN ('telegram','whatsapp')), identity TEXT NOT NULL,
+  UNIQUE (transport, identity));
+CREATE TABLE destinations (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE,
+  location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  transport TEXT NOT NULL CHECK (transport = 'telegram'), platform_identity TEXT NOT NULL,
+  identity_id INTEGER NOT NULL REFERENCES delivery_identities(id) ON DELETE RESTRICT,
+  display_name TEXT NOT NULL, capabilities TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)), created_at TEXT NOT NULL);
+CREATE INDEX destinations_location ON destinations (location_id);
+CREATE UNIQUE INDEX destinations_one_enabled_per_identity ON destinations (identity_id) WHERE enabled = 1;
+CREATE TABLE contact_points (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE,
+  recipient_id INTEGER NOT NULL REFERENCES recipients(id) ON DELETE RESTRICT,
+  transport TEXT NOT NULL CHECK (transport IN ('telegram','whatsapp')), platform_identity TEXT NOT NULL,
+  identity_id INTEGER NOT NULL REFERENCES delivery_identities(id) ON DELETE RESTRICT,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)), opted_out_at TEXT, created_at TEXT NOT NULL);
+CREATE INDEX contact_points_recipient ON contact_points (recipient_id);
+CREATE UNIQUE INDEX contact_points_one_enabled_per_transport ON contact_points (recipient_id, transport) WHERE enabled = 1;
+CREATE UNIQUE INDEX contact_points_one_enabled_per_identity ON contact_points (identity_id) WHERE enabled = 1;
+CREATE TABLE location_members (location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+  recipient_id INTEGER NOT NULL REFERENCES recipients(id) ON DELETE RESTRICT, PRIMARY KEY (location_id, recipient_id));
+CREATE INDEX location_members_recipient ON location_members (recipient_id);
+CREATE TABLE audiences (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE, name TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE audience_members (id INTEGER PRIMARY KEY,
+  audience_id INTEGER NOT NULL REFERENCES audiences(id) ON DELETE RESTRICT,
+  member_location_id INTEGER REFERENCES locations(id) ON DELETE RESTRICT,
+  member_audience_id INTEGER REFERENCES audiences(id) ON DELETE RESTRICT,
+  member_destination_id INTEGER REFERENCES destinations(id) ON DELETE RESTRICT,
+  member_recipient_id INTEGER REFERENCES recipients(id) ON DELETE RESTRICT,
+  CHECK ((member_location_id IS NOT NULL) + (member_audience_id IS NOT NULL)
+       + (member_destination_id IS NOT NULL) + (member_recipient_id IS NOT NULL) = 1),
+  CHECK (member_audience_id IS NULL OR member_audience_id <> audience_id));
+CREATE UNIQUE INDEX audience_members_unique ON audience_members (audience_id,
+  IFNULL(member_location_id,0), IFNULL(member_audience_id,0), IFNULL(member_destination_id,0), IFNULL(member_recipient_id,0));
+CREATE TABLE campaigns (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('DRAFT','READY','SCHEDULED','SENDING','COMPLETE','CANCELLED')),
+  content TEXT NOT NULL, targets TEXT NOT NULL, options TEXT NOT NULL,
+  summary TEXT CHECK (summary IS NULL OR summary IN ('IN_PROGRESS','INDETERMINATE','SENT','PARTIAL','CANCELLED','FAILED')),
+  current_generation_id INTEGER REFERENCES generations(id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  CHECK ((summary IS NULL) = (current_generation_id IS NULL)));
+CREATE TABLE generations (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE,
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL, send_at TEXT NOT NULL, content TEXT NOT NULL,
+  snapshot_digest TEXT NOT NULL CHECK (length(snapshot_digest) = 64),
+  status TEXT NOT NULL CHECK (status IN ('active','discarded')));
+CREATE INDEX generations_campaign ON generations (campaign_id);
+CREATE TABLE delivery_jobs (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE,
+  generation_id INTEGER NOT NULL REFERENCES generations(id) ON DELETE RESTRICT,
+  transport TEXT NOT NULL CHECK (transport IN ('telegram','whatsapp')),
+  identity_id INTEGER NOT NULL REFERENCES delivery_identities(id) ON DELETE RESTRICT,
+  idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) = 64),
+  payload BLOB, payload_digest TEXT, skip_reason TEXT,
+  state TEXT NOT NULL CHECK (state IN ('PENDING','IN_FLIGHT','ACCEPTED','DELIVERED','FAILED_TRANSIENT',
+    'FAILED_PERMANENT','OUTCOME_UNKNOWN','CANCELLED','SKIPPED_PLATFORM_POLICY','SKIPPED_REVALIDATION')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  UNIQUE (generation_id, transport, identity_id),
+  CHECK ((payload IS NULL) = (payload_digest IS NULL)),
+  CHECK ((payload IS NULL) = (skip_reason IS NOT NULL)),
+  CHECK ((state = 'SKIPPED_PLATFORM_POLICY') = (payload IS NULL)),
+  CHECK (payload_digest IS NULL OR (length(payload_digest) = 64 AND payload_digest NOT GLOB '*[^0-9a-f]*')));
+CREATE TABLE job_origins (id INTEGER PRIMARY KEY,
+  job_id INTEGER NOT NULL REFERENCES delivery_jobs(id) ON DELETE RESTRICT,
+  endpoint_ref TEXT NOT NULL, path TEXT NOT NULL,          -- TG-JCS-v1 array of refs, target first, endpoint last
+  CHECK (json_valid(path) AND json_type(path) = 'array' AND json_array_length(path) >= 1),
+  CHECK (json_extract(path, '$[#-1]') = endpoint_ref));
+CREATE INDEX job_origins_job ON job_origins (job_id);
+CREATE TABLE delivery_attempts (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE,
+  job_id INTEGER NOT NULL REFERENCES delivery_jobs(id) ON DELETE RESTRICT,
+  attempt_no INTEGER NOT NULL CHECK (attempt_no >= 1), started_at TEXT NOT NULL, finished_at TEXT,
+  outcome TEXT CHECK (outcome IS NULL OR outcome IN ('ACCEPTED','DELIVERED','FAILED_TRANSIENT','FAILED_PERMANENT','OUTCOME_UNKNOWN')),
+  provider_message_ref TEXT, UNIQUE (job_id, attempt_no),
+  CHECK ((finished_at IS NULL) = (outcome IS NULL)));
+CREATE INDEX delivery_attempts_provider_ref ON delivery_attempts (provider_message_ref) WHERE provider_message_ref IS NOT NULL;
+CREATE TABLE provider_events (id INTEGER PRIMARY KEY,
+  transport TEXT NOT NULL CHECK (transport IN ('telegram','whatsapp')), provider_event_ref TEXT NOT NULL,
+  provider_message_ref TEXT NOT NULL,
+  job_id INTEGER REFERENCES delivery_jobs(id) ON DELETE RESTRICT,
+  attempt_id INTEGER REFERENCES delivery_attempts(id) ON DELETE RESTRICT,
+  reported_status TEXT NOT NULL CHECK (reported_status IN ('ACCEPTED','DELIVERED','FAILED_PERMANENT')),
+  disposition TEXT NOT NULL CHECK (disposition IN ('applied','recorded','refused','pending_match')),
+  received_at TEXT NOT NULL, UNIQUE (transport, provider_event_ref),
+  CHECK (disposition <> 'pending_match' OR attempt_id IS NULL),
+  CHECK (disposition NOT IN ('applied','recorded') OR attempt_id IS NOT NULL));
+CREATE INDEX provider_events_pending ON provider_events (transport, provider_message_ref) WHERE disposition = 'pending_match';
+CREATE TABLE campaign_events (event_seq INTEGER PRIMARY KEY AUTOINCREMENT, event_ref TEXT NOT NULL UNIQUE,
+  campaign_ref TEXT, event_type TEXT NOT NULL, ts TEXT NOT NULL, payload TEXT NOT NULL);
+-- Transport agreement (G14): an endpoint or job must name its identity's transport.
+CREATE TRIGGER destinations_transport_matches_identity BEFORE INSERT ON destinations
+  WHEN (SELECT transport FROM delivery_identities WHERE id = NEW.identity_id) IS NOT NEW.transport
+  BEGIN SELECT RAISE(ABORT, 'endpoint transport mismatch'); END;
+CREATE TRIGGER contact_points_transport_matches_identity BEFORE INSERT ON contact_points
+  WHEN (SELECT transport FROM delivery_identities WHERE id = NEW.identity_id) IS NOT NEW.transport
+  BEGIN SELECT RAISE(ABORT, 'endpoint transport mismatch'); END;
+CREATE TRIGGER delivery_jobs_transport_matches_identity BEFORE INSERT ON delivery_jobs
+  WHEN (SELECT transport FROM delivery_identities WHERE id = NEW.identity_id) IS NOT NEW.transport
+  BEGIN SELECT RAISE(ABORT, 'job transport mismatch'); END;
+-- An origin's endpoint must resolve to its job's (transport, identity) (G14).
+CREATE TRIGGER job_origins_endpoint_matches_job BEFORE INSERT ON job_origins
+  WHEN NOT EXISTS (SELECT 1 FROM delivery_jobs j WHERE j.id = NEW.job_id AND (
+    EXISTS (SELECT 1 FROM destinations d WHERE d.ref = NEW.endpoint_ref AND d.identity_id = j.identity_id AND d.transport = j.transport)
+    OR EXISTS (SELECT 1 FROM contact_points c WHERE c.ref = NEW.endpoint_ref AND c.identity_id = j.identity_id AND c.transport = j.transport)))
+  BEGIN SELECT RAISE(ABORT, 'origin endpoint does not match its job'); END;
+-- The current generation belongs to its campaign and is active (G16).
+CREATE TRIGGER campaigns_insert_has_no_generation BEFORE INSERT ON campaigns
+  WHEN NEW.current_generation_id IS NOT NULL BEGIN SELECT RAISE(ABORT, 'generation belongs to another campaign'); END;
+CREATE TRIGGER campaigns_generation_owned BEFORE UPDATE OF current_generation_id ON campaigns
+  WHEN NEW.current_generation_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM generations g
+    WHERE g.id = NEW.current_generation_id AND g.campaign_id = NEW.id AND g.status = 'active')
+  BEGIN SELECT RAISE(ABORT, 'generation belongs to another campaign'); END;
+-- Immutability (R11, §7.1).
+CREATE TRIGGER destinations_identity_immutable BEFORE UPDATE OF transport, platform_identity, identity_id, location_id, ref
+  ON destinations BEGIN SELECT RAISE(ABORT, 'destination identity is immutable'); END;
+CREATE TRIGGER contact_points_identity_immutable BEFORE UPDATE OF transport, platform_identity, identity_id, recipient_id, ref
+  ON contact_points BEGIN SELECT RAISE(ABORT, 'contact point identity is immutable'); END;
+CREATE TRIGGER delivery_identities_immutable BEFORE UPDATE ON delivery_identities
+  BEGIN SELECT RAISE(ABORT, 'delivery identity is immutable'); END;
+CREATE TRIGGER generations_frozen BEFORE UPDATE OF ref, campaign_id, created_at, send_at, content, snapshot_digest
+  ON generations BEGIN SELECT RAISE(ABORT, 'generation is frozen'); END;
+CREATE TRIGGER generations_status_one_way BEFORE UPDATE OF status ON generations
+  WHEN NOT (OLD.status = 'active' AND NEW.status = 'discarded')
+  BEGIN SELECT RAISE(ABORT, 'generation is frozen'); END;
+CREATE TRIGGER jobs_binding_frozen BEFORE UPDATE OF ref, generation_id, transport, identity_id,
+  idempotency_key, payload, payload_digest, skip_reason ON delivery_jobs
+  BEGIN SELECT RAISE(ABORT, 'job binding is frozen'); END;
+CREATE TRIGGER job_origins_frozen_u BEFORE UPDATE ON job_origins BEGIN SELECT RAISE(ABORT, 'origins are frozen'); END;
+CREATE TRIGGER job_origins_frozen_d BEFORE DELETE ON job_origins BEGIN SELECT RAISE(ABORT, 'origins are frozen'); END;
+CREATE TRIGGER attempts_binding_frozen BEFORE UPDATE OF ref, job_id, attempt_no, started_at ON delivery_attempts
+  BEGIN SELECT RAISE(ABORT, 'attempt binding is frozen'); END;
+CREATE TRIGGER attempts_provider_ref_set_once BEFORE UPDATE OF provider_message_ref ON delivery_attempts
+  WHEN OLD.provider_message_ref IS NOT NULL BEGIN SELECT RAISE(ABORT, 'provider reference is frozen'); END;
+CREATE TRIGGER provider_events_only_pending_resolves BEFORE UPDATE ON provider_events
+  WHEN OLD.disposition <> 'pending_match' OR NEW.transport IS NOT OLD.transport
+    OR NEW.provider_event_ref IS NOT OLD.provider_event_ref OR NEW.provider_message_ref IS NOT OLD.provider_message_ref
+    OR NEW.reported_status IS NOT OLD.reported_status OR NEW.received_at IS NOT OLD.received_at
+  BEGIN SELECT RAISE(ABORT, 'provider event is frozen'); END;
+CREATE TRIGGER provider_events_no_delete BEFORE DELETE ON provider_events
+  BEGIN SELECT RAISE(ABORT, 'provider event is frozen'); END;
+-- Endpoints are disabled, never deleted (§2): job origins name them by ref, not by FK.
+CREATE TRIGGER destinations_never_deleted BEFORE DELETE ON destinations
+  BEGIN SELECT RAISE(ABORT, 'endpoints are disabled, never deleted'); END;
+CREATE TRIGGER contact_points_never_deleted BEFORE DELETE ON contact_points
+  BEGIN SELECT RAISE(ABORT, 'endpoints are disabled, never deleted'); END;
+CREATE TRIGGER campaign_events_append_only_u BEFORE UPDATE ON campaign_events
+  BEGIN SELECT RAISE(ABORT, 'event log is append-only'); END;
+CREATE TRIGGER campaign_events_append_only_d BEFORE DELETE ON campaign_events
+  BEGIN SELECT RAISE(ABORT, 'event log is append-only'); END;
+"""
+
+
+def _statements(sql: str) -> tuple[str, ...]:
+    """One statement per entry: whole-line comments dropped, then split on ";\n" (trigger
+    bodies are single-line, so their inner ";" is never followed by a newline)."""
+    lines = [line for line in sql.splitlines() if not line.lstrip().startswith("--")]
+    return tuple(part.strip() for part in "\n".join(lines).split(";\n") if part.strip())
+
+
+SCHEMA_V1: tuple[str, ...] = _statements(_SCHEMA_V1_SQL)
+
+MIGRATIONS: tuple[Migration, ...] = (Migration(1, SCHEMA_V1),)
 
 
 def migrate(conn: Any, migrations: tuple[Migration, ...] = MIGRATIONS) -> int:
