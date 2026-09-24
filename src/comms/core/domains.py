@@ -23,3 +23,4 @@ RECIPIENTS = b"comms-campaign-recipients/v1\0"  # §9, S5
 AUDIT_CHAIN = b"comms-audit-chain/v1\0"  # comms v0.3 A7
 AUDIT_GENESIS = b"comms-audit-genesis/v1\0"  # comms v0.3 A7
 AUDIT_CHECKPOINT = b"comms-audit-checkpoint/v1\0"  # comms v0.3 A7
+AUDIT_HEAD_ANCHOR = b"comms/audit-head-anchor/v1\0"  # comms v0.3 A8

@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from comms.core.audit.anchor import AnchorProfile
 from comms.core.audit.chain import ChainError, ChainProfile
 from comms.core.opaque import mint_opaque_ref
 
@@ -20,6 +21,7 @@ __all__ = [
     "EVENT_COLUMNS",
     "EVENT_DOMAIN",
     "GENESIS_DOMAIN",
+    "LEGACY_ANCHOR",
     "LEGACY_TELEGRAM",
 ]
 
@@ -27,6 +29,9 @@ __all__ = [
 EVENT_DOMAIN = b"telegram-mcp-audit-v1"
 GENESIS_DOMAIN = b"telegram-mcp-audit-genesis-v1"
 CHECKPOINT_DOMAIN = b"telegram-mcp-checkpoint-v1"
+ANCHOR_DOMAIN = b"telegram-mcp-anchor-v1"
+
+LEGACY_ANCHOR = AnchorProfile("legacy_telegram", ANCHOR_DOMAIN)
 
 EVENT_COLUMNS = (
     "event_id",

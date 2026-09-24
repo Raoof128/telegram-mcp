@@ -32,6 +32,7 @@ ADDED_IN_V03 = Counter(  # comms/core/domains.py, comms v0.3 Part A
         "b'comms-audit-chain/v1\\x00'": 1,
         "b'comms-audit-genesis/v1\\x00'": 1,
         "b'comms-audit-checkpoint/v1\\x00'": 1,
+        "b'comms/audit-head-anchor/v1\\x00'": 1,
     }
 )
 
@@ -41,7 +42,7 @@ def _constants(path: Path) -> list[str]:
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
             text = node.value.decode("latin-1") if isinstance(node.value, bytes) else node.value
-            if text.startswith("comms-"):
+            if text.startswith(("comms-", "comms/")):  # widened for comms/audit-head-anchor (A6)
                 found.append(repr(node.value))
     return found
 
