@@ -11,7 +11,15 @@ from typing import Any
 
 from comms.core.storage.db import write_tx
 
-__all__ = ["MIGRATIONS", "SCHEMA_V1", "SCHEMA_V2", "SCHEMA_V3", "Migration", "migrate"]
+__all__ = [
+    "MIGRATIONS",
+    "SCHEMA_V1",
+    "SCHEMA_V2",
+    "SCHEMA_V3",
+    "SCHEMA_V4",
+    "Migration",
+    "migrate",
+]
 
 
 @dataclass(frozen=True)
@@ -409,10 +417,26 @@ CREATE TRIGGER attempts_outcome_code_set_once BEFORE UPDATE OF outcome_code ON d
 """
 SCHEMA_V3: tuple[str, ...] = _statements(_SCHEMA_V3_SQL)
 
+# comms v0.3 Part D: assembled across Part D's tasks before the single merge.
+_SCHEMA_V4_SQL = """
+-- D1 (design D.4): a group is one Telegram group or channel destination, one to one.
+CREATE TABLE groups (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE,
+  destination_id INTEGER NOT NULL UNIQUE REFERENCES destinations(id) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL);
+CREATE TRIGGER groups_are_group_destinations BEFORE INSERT ON groups
+  WHEN (SELECT platform_identity FROM destinations WHERE id = NEW.destination_id) NOT GLOB 'group:*'
+    AND (SELECT platform_identity FROM destinations WHERE id = NEW.destination_id) NOT GLOB 'channel:*'
+  BEGIN SELECT RAISE(ABORT, 'not a group destination'); END;
+CREATE TRIGGER groups_binding_immutable BEFORE UPDATE ON groups
+  BEGIN SELECT RAISE(ABORT, 'a group mapping is immutable'); END;
+"""
+SCHEMA_V4: tuple[str, ...] = _statements(_SCHEMA_V4_SQL)
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, SCHEMA_V1),
     Migration(2, SCHEMA_V2),
     Migration(3, SCHEMA_V3, rebuild=True),
+    Migration(4, SCHEMA_V4),
 )
 
 

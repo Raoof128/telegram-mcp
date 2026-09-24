@@ -37,9 +37,10 @@ def _event(conn, seq, epoch=1):
 
 
 def test_migrate_is_v2_and_rerunnable(conn):
-    # v3 (B8) builds on v2; each migration is rerunnable and the chain ends at the last one.
-    assert migrate(conn, MIGRATIONS) == MIGRATIONS[-1].version == 3
-    assert migrate(conn, MIGRATIONS) == 3
+    # v3 (B8) and v4 (D1) build on v2; each migration is rerunnable and the chain ends at the last.
+    last = MIGRATIONS[-1].version
+    assert last >= 3 and migrate(conn, MIGRATIONS) == last
+    assert migrate(conn, MIGRATIONS) == last
 
 
 def test_audit_tables_match_the_comms_profile_columns(conn):

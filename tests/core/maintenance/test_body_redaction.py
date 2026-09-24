@@ -75,7 +75,7 @@ def test_v3_rebuild_preserves_every_row_index_and_trigger(tmp_path):
         t: conn.execute(f"SELECT {cols} FROM {t} ORDER BY 1").fetchall() for t, cols in PRESERVED
     }
     before_objects = _objects(conn)
-    assert migrate(conn, MIGRATIONS) == 3
+    assert migrate(conn, MIGRATIONS[:3]) == 3  # exactly the v3 rebuild
     for table, cols in PRESERVED:
         assert conn.execute(f"SELECT {cols} FROM {table} ORDER BY 1").fetchall() == before[table], (
             table
