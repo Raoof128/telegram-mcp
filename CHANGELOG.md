@@ -404,3 +404,11 @@
   - Branch review, then the merge decision.
   - The 5b plan.
   - No production claim.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms consolidation design (5b-0).
+- **Summary:** Telegram and WhatsApp merge into `comms` through staged phases; only 5b-3 changes semantics, and only 5d adds live sends.
+- **Files changed:** `docs/superpowers/specs/2026-09-24-comms-consolidation-design.md`, `AGENT.md`, this file.
+- **Verification:** Both baselines were measured, and the identifiers were grep-confirmed.
+- **Follow-ups:** the 5b-1 plan.

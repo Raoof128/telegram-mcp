@@ -484,3 +484,22 @@ Follow the user's engineering lifecycle: design/security analysis, implementatio
   - The merge decision (owner).
   - The 5b plan.
   - No production claim.
+
+### 2026-09-24 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms consolidation design (the Phase 5b-0 contract and the 5b→5e sequence). Design only.
+- **Summary:** The owner decided that this repo becomes `comms`, merging Telegram and WhatsApp.
+  - **Owner decisions:** WhatsVault moves in (git subtree, full history, pinned `b6fd51a`); no Touch ID anywhere, effective only at 5b-3; Telegram sends by bot or user session per destination; WhatsApp sends through the Cloud API.
+  - **Sequence:** 5b-1 rename/restructure (mechanical) → 5b-2 WhatsVault import (intact) → 5b-3 comms spec v0.2 (the only semantic change) → 5b-4 campaign core on fakes → 5c lifecycle/audit hardening → 5d real sends → 5e operator and AI surfaces.
+  - **Owner amendments:** all seven folded in (thin `telegram_mcp` forwarder; static and dynamic core→transport guard; no-squash subtree with tree-hash proof; SQLCipher native provenance; governance precedence; presence frozen through 5b-2; out-of-repo operations outside every gate).
+  - **Added:** AST equivalence modulo import paths as 5b-1's proof of "no semantic diff".
+- **Files changed:** `docs/superpowers/specs/2026-09-24-comms-consolidation-design.md`, `AGENT.md`, `CHANGELOG.md`.
+- **Verification:**
+  - Baselines measured: Telegram 1493 passed / 10 skipped plus smoke 60 at `255b8e8`; WhatsVault 539 passed at `b6fd51a` (the result dots were counted, because its config hides the summary line).
+  - WhatsVault CI covers Python 3.12 on macOS.
+  - Every protocol constant named in §2.1 was grep-confirmed.
+  - Only the console script and `python -m telegram_mcp.cli` reference the module path.
+- **Follow-ups:**
+  - The 5b-1 plan.
+  - The out-of-repo steps (GitHub rename, archive, folder and memory move) come up for separate approval.
+  - No production claim.
