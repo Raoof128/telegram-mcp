@@ -14,12 +14,13 @@ import hmac
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-from comms.core import domains, refs
+from comms.core import domains, refs, timeutil
 from comms.core.canonical import jcs_dumps
 from comms.core.keys import ids
 
@@ -34,6 +35,7 @@ __all__ = [
     "genesis_mac",
     "head",
     "insert_checkpoint",
+    "seal_and_open_epoch",
     "verify_chain",
     "verify_checkpoints",
 ]
@@ -132,23 +134,19 @@ def head(conn: Any, profile: ChainProfile) -> dict[str, Any] | None:
     return dict(zip(("chain_epoch", "chain_seq", "event_id", "event_mac"), row, strict=True))
 
 
-def append_event(
-    conn: Any, profile: ChainProfile, chain_key: bytes, event: Mapping[str, Any]
+def _insert(
+    conn: Any,
+    profile: ChainProfile,
+    chain_key: bytes,
+    event: Mapping[str, Any],
+    *,
+    chain_epoch: int,
+    chain_seq: int,
+    prev: str,
 ) -> dict[str, Any]:
-    """Append one event inside the caller's open transaction."""
-    _require_tx(conn)
     if any(c not in event for c in profile.event_columns):
         raise ChainError("event is missing required columns")
     profile.validate_event(event)
-    current = head(conn, profile)
-    if current is None:
-        chain_epoch, chain_seq, prev = 1, 1, genesis_mac(profile, 1)
-    else:
-        chain_epoch, chain_seq, prev = (
-            current["chain_epoch"],
-            current["chain_seq"] + 1,
-            current["event_mac"],
-        )
     mac = event_mac(
         profile,
         chain_key,
@@ -170,6 +168,91 @@ def append_event(
         "prev_event_mac": prev,
         "event_mac": mac,
     }
+
+
+def append_event(
+    conn: Any, profile: ChainProfile, chain_key: bytes, event: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Append one event inside the caller's open transaction."""
+    _require_tx(conn)
+    current = head(conn, profile)
+    if current is None:
+        return _insert(
+            conn,
+            profile,
+            chain_key,
+            event,
+            chain_epoch=1,
+            chain_seq=1,
+            prev=genesis_mac(profile, 1),
+        )
+    return _insert(
+        conn,
+        profile,
+        chain_key,
+        event,
+        chain_epoch=current["chain_epoch"],
+        chain_seq=current["chain_seq"] + 1,
+        prev=current["event_mac"],
+    )
+
+
+def seal_and_open_epoch(
+    conn: Any,
+    profile: ChainProfile,
+    *,
+    old_key: bytes,
+    new_key: bytes,
+    checkpoint_key: bytes,
+    first_event: Mapping[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    """Seal the current epoch and open the next, inside the caller's transaction (design §B.1).
+
+    The head must verify under ``old_key``. A signed ``EPOCH_SEAL`` checkpoint is written
+    at that head, then ``first_event`` becomes ``(epoch + 1, seq 1)``, linked to the next
+    epoch's genesis and MACed under ``new_key``. Nothing commits here.
+    """
+    _require_tx(conn)
+    if hmac.compare_digest(old_key, new_key):
+        raise ChainError("the new key must differ from the old key")
+    current = head(conn, profile)
+    if current is None:
+        raise ChainError("cannot seal an empty chain")
+    names = (*profile.event_columns, *CHAIN_COLUMNS)
+    row = conn.execute(
+        f"SELECT {', '.join(names)} FROM {profile.events_table}"
+        " WHERE chain_epoch = ? AND chain_seq = ?",
+        (current["chain_epoch"], current["chain_seq"]),
+    ).fetchone()
+    record = dict(zip(names, row, strict=True))
+    recomputed = event_mac(
+        profile,
+        old_key,
+        chain_epoch=record["chain_epoch"],
+        chain_seq=record["chain_seq"],
+        prev_event_mac=record["prev_event_mac"],
+        event=record,
+    )
+    if not hmac.compare_digest(recomputed, record["event_mac"]):
+        raise ChainError("the head does not verify under the old key")
+    insert_checkpoint(
+        conn,
+        profile,
+        checkpoint_key,
+        now=timeutil.iso(now),
+        reason="EPOCH_SEAL" if profile.checkpoint_has_reason else None,
+    )
+    epoch = current["chain_epoch"] + 1
+    return _insert(
+        conn,
+        profile,
+        new_key,
+        first_event,
+        chain_epoch=epoch,
+        chain_seq=1,
+        prev=genesis_mac(profile, epoch),
+    )
 
 
 def verify_chain(
