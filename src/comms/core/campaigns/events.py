@@ -19,6 +19,7 @@ from comms.core.canonical import jcs_dumps
 from comms.core.validators import Validator, count, digest, one_of, ref, time
 
 __all__ = [
+    "COMMITTED_EVENT_TYPES",
     "EVENT_FIELDS",
     "EVENT_TYPES",
     "LIFECYCLES",
@@ -28,6 +29,8 @@ __all__ = [
     "journal_digest",
 ]
 
+# The freeze events: their chain event carries the keyed campaign commitment (A12).
+COMMITTED_EVENT_TYPES = frozenset({"campaign.send_started", "campaign.scheduled"})
 EVENT_TYPES = frozenset(
     {
         "campaign.created",
@@ -106,11 +109,14 @@ def append_event(
     *,
     now: datetime,
     audit: Any = None,
+    commitment: Mapping[str, str] | None = None,
 ) -> str:
     """Append one event inside the caller's open transaction; return its ``cev_`` ref.
 
     With ``audit`` (an ``AuditTx``), the same transaction appends the bound chain event
-    ``campaign_event`` whose subject is this row's ref and complete-row digest.
+    ``campaign_event`` whose subject is this row's ref and complete-row digest. A freeze
+    event (``COMMITTED_EVENT_TYPES``) instead appends ``campaign_event_committed``, which
+    also carries the keyed campaign commitment (A12) and never the snapshot digest.
     """
     if not conn.in_transaction:
         raise RuntimeError("events are appended inside the state change's transaction")
@@ -143,10 +149,13 @@ def append_event(
         ),
     )
     if audit is not None:
+        committed = event_type in COMMITTED_EVENT_TYPES
+        if committed != (commitment is not None):
+            raise ValueError("a freeze event carries exactly its campaign commitment")
         audit.append(
-            "campaign_event",
+            "campaign_event_committed" if committed else "campaign_event",
             subject_ref=row["event_ref"],
             subject_digest=event_digest,
-            payload={"event_type": event_type},
+            payload={"event_type": event_type, **(commitment or {})},
         )
     return str(row["event_ref"])

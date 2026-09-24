@@ -11,7 +11,7 @@ from typing import Any
 
 from comms.core.storage.db import write_tx
 
-__all__ = ["MIGRATIONS", "SCHEMA_V1", "SCHEMA_V2", "Migration", "migrate"]
+__all__ = ["MIGRATIONS", "SCHEMA_V1", "SCHEMA_V2", "SCHEMA_V3", "Migration", "migrate"]
 
 
 @dataclass(frozen=True)
@@ -249,7 +249,23 @@ ALTER TABLE campaign_events ADD COLUMN event_digest TEXT;
 """
 SCHEMA_V2: tuple[str, ...] = _statements(_SCHEMA_V2_SQL)
 
-MIGRATIONS: tuple[Migration, ...] = (Migration(1, SCHEMA_V1), Migration(2, SCHEMA_V2))
+# comms v0.3 A12 (Task B8): the keyed campaign commitment on each generation. NULL only for
+# a generation frozen without the audit writer (the 5b-4 unit harness), which never
+# reaches the chain.
+_SCHEMA_V3_SQL = """
+ALTER TABLE generations ADD COLUMN campaign_commitment TEXT
+  CHECK (campaign_commitment IS NULL OR length(campaign_commitment) = 64);
+ALTER TABLE generations ADD COLUMN campaign_commit_key_id TEXT;
+CREATE TRIGGER generations_commitment_immutable BEFORE UPDATE OF campaign_commitment, campaign_commit_key_id
+  ON generations BEGIN SELECT RAISE(ABORT, 'a campaign commitment is immutable'); END;
+"""
+SCHEMA_V3: tuple[str, ...] = _statements(_SCHEMA_V3_SQL)
+
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration(1, SCHEMA_V1),
+    Migration(2, SCHEMA_V2),
+    Migration(3, SCHEMA_V3),
+)
 
 
 def migrate(conn: Any, migrations: tuple[Migration, ...] = MIGRATIONS) -> int:

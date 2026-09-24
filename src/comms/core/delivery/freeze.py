@@ -20,6 +20,7 @@ from comms.core.campaigns.drafts import LifecycleError, load, targets_of
 from comms.core.campaigns.events import append_event
 from comms.core.campaigns.resolve import Candidate, Targets, resolve_targets
 from comms.core.canonical import jcs_dumps
+from comms.core.delivery.commitment import CommitContext, campaign_commitment
 from comms.core.delivery.reducer import Evidence, reduce
 from comms.core.delivery.transport import (
     DeliveryIntent,
@@ -165,9 +166,13 @@ def _freeze(
     now: datetime,
     send_at: datetime,
     lifecycle: str,
+    audited: CommitContext | None = None,
 ) -> str:
     stamp, at = timeutil.iso(now), timeutil.iso(send_at)
-    with write_tx(conn):
+    if audited is not None and audited.writer.conn is not conn:
+        raise ValueError("the audit writer must own this connection")
+    transaction = audited.writer.transaction() if audited is not None else write_tx(conn)
+    with transaction as audit:
         campaign = load(conn, cmp)
         if campaign["lifecycle"] != "READY":
             raise LifecycleError("campaign is not ready")
@@ -221,10 +226,21 @@ def _freeze(
                 for p in planned
             ],
         )
+        commitment = campaign_commitment(audited.key, gen, digest) if audited is not None else None
         gen_id = conn.execute(
             "INSERT INTO generations (ref, campaign_id, created_at, send_at, content,"
-            " snapshot_digest, status) VALUES (?, ?, ?, ?, ?, ?, 'active')",
-            (gen, campaign["id"], stamp, at, jcs_dumps(content).decode(), digest),
+            " snapshot_digest, status, campaign_commitment, campaign_commit_key_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)",
+            (
+                gen,
+                campaign["id"],
+                stamp,
+                at,
+                jcs_dumps(content).decode(),
+                digest,
+                commitment,
+                audited.key_id if audited is not None else None,
+            ),
         ).lastrowid
         for p in planned:
             job_id = conn.execute(
@@ -270,20 +286,62 @@ def _freeze(
         if lifecycle == "SCHEDULED":
             event_payload["send_at"] = at
         event = "campaign.send_started" if lifecycle == "SENDING" else "campaign.scheduled"
-        append_event(conn, event, cmp, event_payload, now=now)
+        if audited is None:
+            append_event(conn, event, cmp, event_payload, now=now)
+        else:
+            append_event(
+                conn,
+                event,
+                cmp,
+                event_payload,
+                now=now,
+                audit=audit,
+                commitment={
+                    "commitment": commitment or "",
+                    "commit_key_id": audited.key_id,
+                    "generation": gen,
+                },
+            )
     return gen
 
 
-def send(conn: Any, cmp: str, transports: Mapping[str, DeliveryTransport], *, now: datetime) -> str:
-    """READY → SENDING with a new generation whose send time is now."""
-    return _freeze(conn, cmp, transports, now=now, send_at=now, lifecycle="SENDING")
+def send(
+    conn: Any,
+    cmp: str,
+    transports: Mapping[str, DeliveryTransport],
+    *,
+    now: datetime,
+    audited: CommitContext | None = None,
+) -> str:
+    """READY → SENDING with a new generation whose send time is now.
+
+    With ``audited`` the freeze is one audited transaction and its chain event carries the
+    keyed campaign commitment (A12); the service layer always passes it.
+    """
+    return _freeze(
+        conn, cmp, transports, now=now, send_at=now, lifecycle="SENDING", audited=audited
+    )
 
 
 def schedule(
-    conn: Any, cmp: str, at: datetime, transports: Mapping[str, DeliveryTransport], *, now: datetime
+    conn: Any,
+    cmp: str,
+    at: datetime,
+    transports: Mapping[str, DeliveryTransport],
+    *,
+    now: datetime,
+    audited: CommitContext | None = None,
 ) -> str:
     """READY → SCHEDULED; jobs and content are frozen now, for ``at`` (UTC)."""
-    return _freeze(conn, cmp, transports, now=now, send_at=timeutil.utc(at), lifecycle="SCHEDULED")
+    return _freeze(
+        conn,
+        cmp,
+        transports,
+        now=now,
+        send_at=timeutil.utc(at),
+        lifecycle="SCHEDULED",
+        audited=audited,
+    )
 
 
 def _retire_scheduled(conn: Any, campaign: Mapping[str, Any], *, now: datetime) -> tuple[str, int]:

@@ -12,7 +12,7 @@ from typing import Any
 from comms.core import domains
 from comms.core.campaigns.events import EVENT_TYPES
 from comms.core.keys.purposes import PURPOSES
-from comms.core.validators import Validator, count, digest, key_id, one_of
+from comms.core.validators import Validator, count, digest, key_id, one_of, ref
 
 __all__ = ["AUDIT_EVENT_SPECS", "SUBJECT_KINDS", "validate_audit_event"]
 
@@ -29,6 +29,12 @@ AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
         "comms_audit_key_id": key_id,
     },
     "system.legacy_client_auth_revoked": {"revoked_count": count(0), "security_epoch": count(1)},
+    "campaign_event_committed": {
+        "event_type": one_of({"campaign.send_started", "campaign.scheduled"}),
+        "commitment": digest,
+        "commit_key_id": key_id,
+        "generation": ref("generation"),
+    },
     "admin.key_rotation": {
         "purpose": one_of(set(PURPOSES)),
         "old_version": count(0),
@@ -42,6 +48,7 @@ SUBJECT_KINDS: dict[str, str | None] = {
     "system.test_marker": None,
     "system.audit_cutover": "cutover",
     "system.legacy_client_auth_revoked": "cutover",
+    "campaign_event_committed": "event",
     "admin.key_rotation": None,
 }
 

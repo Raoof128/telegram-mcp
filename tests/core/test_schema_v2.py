@@ -37,8 +37,9 @@ def _event(conn, seq, epoch=1):
 
 
 def test_migrate_is_v2_and_rerunnable(conn):
-    assert migrate(conn, MIGRATIONS) == 2
-    assert migrate(conn, MIGRATIONS) == 2
+    # v3 (B8) builds on v2; each migration is rerunnable and the chain ends at the last one.
+    assert migrate(conn, MIGRATIONS) == MIGRATIONS[-1].version == 3
+    assert migrate(conn, MIGRATIONS) == 3
 
 
 def test_audit_tables_match_the_comms_profile_columns(conn):
@@ -137,7 +138,7 @@ def test_v1_campaign_rows_survive_v2(tmp_path):
         t: conn.execute(f"SELECT * FROM {t}").fetchall()
         for t in ("campaigns", "generations", "delivery_jobs", "job_origins", "campaign_events")
     }
-    assert migrate(conn, MIGRATIONS) == 2
+    assert migrate(conn, MIGRATIONS[:2]) == 2  # exactly v2: v3 widens generations (B8)
     for table, rows in before.items():
         after = conn.execute(f"SELECT * FROM {table}").fetchall()
         if table == "campaign_events":

@@ -36,6 +36,7 @@ ADDED_IN_V03 = Counter(  # comms/core/domains.py, comms v0.3 Part A
         "b'comms-audit-checkpoint/v1\\x00'": 1,
         "b'comms/audit-head-anchor/v1\\x00'": 1,
         "b'comms-campaign-event/v1\\x00'": 1,
+        "b'comms-campaign-commit/v1\\x00'": 1,
     }
 )
 
