@@ -58,7 +58,6 @@ from comms.transports.telegram.storage.settings import get_setting
 __all__ = [
     "DISCLOSURE_STEPS",
     "AuthorityRefusal",
-    "ConsentRefusal",
     "DisclosureCoordinator",
     "DisclosureOutcome",
     "RetrievalAdapter",
@@ -105,14 +104,6 @@ class RetrievalRefusal(Exception):
 
 class AuthorityRefusal(Exception):
     """A seam refused before retrieval, with a frozen §27.1 code."""
-
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.code = code
-
-
-class ConsentRefusal(Exception):
-    """Consent could not be obtained, with a frozen §27.1 code."""
 
     def __init__(self, code: str) -> None:
         super().__init__(code)

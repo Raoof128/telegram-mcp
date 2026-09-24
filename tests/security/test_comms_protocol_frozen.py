@@ -19,7 +19,12 @@ FIXTURE = ROOT / "tests" / "fixtures" / "migration" / "protocol_constants.json"
 # identifiers and tombstone retired ones, each named here. Anything else that
 # changes the multiset is drift and fails.
 ADDED_IN_V0_2 = Counter({"'tg-mcp-disclosure/v2'": 1})
-TOMBSTONED_IN_V0_2: Counter[str] = Counter()  # filled when consent is deleted (5b-3 Task 9)
+# Occurrences removed with consent. Tombstoned permanently: never reassigned.
+TOMBSTONED_IN_V0_2 = Counter(
+    {
+        "'tg-mcp-exposure-snapshot/v1'": 1,  # disclosure/exposure.py (5b-3 Task 6)
+    }
+)
 
 
 def test_protocol_constants_are_the_baseline_multiset():

@@ -1,30 +1,14 @@
 # tests/unit/test_exposure_and_display.py
-"""Exposure snapshot digest and the five-field consent display (§9.8 step 6)."""
+"""The five-field consent display (§9.8 step 6); removed with the consent package in Task 9."""
 
 import pytest
 
 from comms.transports.telegram.consent.display import ACTION_DISPLAY, build_display
 from comms.transports.telegram.disclosure.budget import GLOBAL, PROJECT, BucketKey, Usage
-from comms.transports.telegram.disclosure.exposure import exposure_digest, exposure_snapshot
 from comms.transports.telegram.disclosure.measure import RECORD_ELEMENT
 
 G = BucketKey(1, GLOBAL, "a" * 64)
 P = BucketKey(1, PROJECT, "b" * 64)
-
-
-def test_snapshot_is_order_independent_and_names_every_bucket():
-    one = exposure_snapshot("normal", {G: Usage(3, 300), P: Usage(2, 200)})
-    two = exposure_snapshot("normal", {P: Usage(2, 200), G: Usage(3, 300)})
-    assert one == two
-    assert [b["kind"] for b in one["buckets"]] == [GLOBAL, PROJECT]
-    assert one["schema"] == "tg-mcp-exposure-snapshot/v1" and one["mode"] == "projected"
-
-
-def test_digest_moves_with_quantity_and_with_tier():
-    base = exposure_digest("normal", {G: Usage(3, 300)})
-    assert exposure_digest("normal", {G: Usage(3, 301)}) != base
-    assert exposure_digest("elevated", {G: Usage(3, 300)}) != base
-    assert len(base) == 64
 
 
 def test_every_sensitive_tool_has_an_action_label():

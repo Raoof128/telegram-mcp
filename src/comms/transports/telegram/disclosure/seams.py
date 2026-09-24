@@ -1,17 +1,16 @@
 """The real coordinator seams (Phase-4 design §2.3).
 
 ``CoordinatorAuthority`` answers the coordinator's authority questions from
-live SQLite, fresh at step 2 and again at step 8. ``CoordinatorConsent``
-(Task 6) drives the Phase-2 broker through the daemon-side prompter.
+live SQLite, fresh at step 2 and again before and after retrieval. There is
+no consent seam (comms spec v0.2): the owner approves outside the gateway.
 
 In 4b the two catalogue tools and the four project tools (``list_chats``,
 ``resolve_peer``, ``get_messages``, ``get_unread``) are served. The other
-three refuse with ``POLICY_UNCONFIGURED`` before any prompt.
+three refuse with ``POLICY_UNCONFIGURED`` before any retrieval.
 """
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import hashlib
 import hmac
@@ -43,10 +42,6 @@ from comms.transports.telegram.authority.policy import (
     readable_members,
 )
 from comms.transports.telegram.canonical import jcs_dumps
-from comms.transports.telegram.consent.broker import ConsentBroker, ConsentError, ConsumedChallenge
-from comms.transports.telegram.consent.challenge import display_digest
-from comms.transports.telegram.consent.display import build_display
-from comms.transports.telegram.consent.prompter import PromptDenied, Prompter, PromptUnavailable
 from comms.transports.telegram.disclosure.bounds import NAME_MAX, clamp, worst_case
 from comms.transports.telegram.disclosure.budget import (
     GLOBAL,
@@ -55,9 +50,8 @@ from comms.transports.telegram.disclosure.budget import (
     Usage,
     subject_digest,
 )
-from comms.transports.telegram.disclosure.coordinator import AuthorityRefusal, ConsentRefusal
+from comms.transports.telegram.disclosure.coordinator import AuthorityRefusal
 from comms.transports.telegram.disclosure.egress import transform_record
-from comms.transports.telegram.disclosure.exposure import exposure_digest
 from comms.transports.telegram.disclosure.search_authority import (
     SEARCH_TOOLS,
     SearchAuthority,
@@ -77,9 +71,7 @@ __all__ = [
     "SERVED_TOOLS",
     "CatalogueSnapshot",
     "CoordinatorAuthority",
-    "CoordinatorConsent",
     "FrozenRequest",
-    "IssuedConsent",
     "OwnerScope",
     "ProjectSnapshot",
     "VisibleProject",
@@ -647,98 +639,3 @@ class CoordinatorAuthority:
                 for message in out["messages"]
             ]
         return out  # catalogue and chat records carry no text field
-
-
-@dataclass(frozen=True)
-class IssuedConsent:
-    handle: str
-    display: dict[str, Any]
-
-
-def _global(buckets: Mapping[BucketKey, Usage]) -> Usage:
-    for key, usage in buckets.items():
-        if key.kind == GLOBAL:
-            return usage
-    return Usage(0, 0)
-
-
-class CoordinatorConsent:
-    """Issue, prompt, consume: the coordinator's consent seam over real parts."""
-
-    def __init__(self, broker: ConsentBroker, prompter: Prompter, *, wait_s: float = 45.0) -> None:
-        self._broker = broker
-        self._prompter = prompter
-        self._wait_s = wait_s
-
-    async def issue(
-        self,
-        *,
-        tool_name: str,
-        snapshot: Any,
-        request: Any,
-        tier: str,
-        projected: Mapping[BucketKey, Usage],
-        worst_case: Mapping[BucketKey, Usage],
-    ) -> IssuedConsent:
-        after = _global(projected)
-        increment = _global(worst_case)
-        display = build_display(
-            tool_name=tool_name,
-            client_kind=snapshot.client_kind,
-            project_names=list(getattr(snapshot, "project_names", ())),
-            peer_name=getattr(snapshot, "peer_name", None),
-            egress_level=snapshot.egress_level,
-            tier=tier,
-            current=Usage(after.records - increment.records, after.bytes - increment.bytes),
-            projected=after,
-        )
-        try:
-            handle = await self._broker.issue(
-                tool=tool_name,
-                request_hmac=request.canonical_request_hmac,
-                principal=snapshot.principal_ref,
-                client=snapshot.client_ref,
-                account=snapshot.account_ref,
-                policy_epoch=snapshot.policy_epoch,
-                project_scope_digest=snapshot.scope_hex,
-                security_epoch=snapshot.security_epoch,
-                display_digest=display_digest(display),
-                exposure_snapshot_digest=exposure_digest(tier, projected),
-            )
-        except ConsentError as exc:
-            raise ConsentRefusal(exc.dispatch_code) from None
-        return IssuedConsent(handle=handle, display=display)
-
-    async def consume(self, issued: IssuedConsent) -> ConsumedChallenge | None:
-        handle = issued.handle
-        try:
-            envelope = await self._prompter.prompt(
-                handle=handle,
-                challenge=self._broker.challenge_bytes(handle),
-                signature=self._broker.daemon_signature(handle),
-                display=issued.display,
-                timeout=self._wait_s,
-            )
-        except PromptUnavailable:
-            self._broker.invalidate(handle)
-            raise ConsentRefusal("CONSENT_UNAVAILABLE") from None
-        except PromptDenied:
-            self._broker.invalidate(handle)
-            return None
-        except asyncio.CancelledError:
-            self._broker.invalidate(handle)
-            raise
-        try:
-            return await self._broker.consume(handle, envelope)
-        except ConsentError as exc:
-            self._broker.invalidate(handle)
-            if exc.dispatch_code == "CONSENT_DENIED":
-                return None
-            raise ConsentRefusal(exc.dispatch_code) from None
-
-    def snapshot_matches(
-        self, approval: ConsumedChallenge, *, tier: str, projected: Mapping[BucketKey, Usage]
-    ) -> bool:
-        return hmac.compare_digest(
-            approval.exposure_snapshot_digest, exposure_digest(tier, projected)
-        )
