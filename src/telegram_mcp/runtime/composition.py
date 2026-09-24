@@ -8,7 +8,6 @@ module imports a concrete adapter.
 from __future__ import annotations
 
 import asyncio
-import base64
 import functools
 import sqlite3
 import time
@@ -18,22 +17,26 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
+from telegram_mcp.authority.staging import StagingRegistry
 from telegram_mcp.consent.admin_approval import AdminApprover
 from telegram_mcp.consent.broker import ConsentBroker
 from telegram_mcp.consent.prompter import Prompter
 from telegram_mcp.disclosure.budget import BudgetLedger
 from telegram_mcp.disclosure.coordinator import DisclosureCoordinator
-from telegram_mcp.disclosure.keys import current_verification_key, publish_verification_key
+from telegram_mcp.disclosure.keys import current_verification_key, ensure_current_published
+from telegram_mcp.disclosure.lineage import NoRestoreLineage
 from telegram_mcp.disclosure.seams import CoordinatorAuthority, CoordinatorConsent
 from telegram_mcp.http_guards import DEFAULT_LIMITS, RateLimiter
 from telegram_mcp.ipc.admin import AdminRouter
+from telegram_mcp.ipc.handlers._wrapper import AuditSink
+from telegram_mcp.ipc.handlers.audit import audit_handlers
 from telegram_mcp.ipc.handlers.auth import auth_handlers
-from telegram_mcp.ipc.handlers.clients import client_handlers
+from telegram_mcp.ipc.handlers.clients import CLIENT_COMMANDS, client_handlers
+from telegram_mcp.ipc.handlers.inspect import inspect_handlers
 from telegram_mcp.ipc.handlers.leases import auth_headers_handler
-from telegram_mcp.ipc.handlers.projects import project_handlers
-from telegram_mcp.ipc.handlers.scope import scope_handlers
+from telegram_mcp.ipc.handlers.policy import policy_handlers
+from telegram_mcp.ipc.handlers.projects import PROJECT_COMMANDS, member_commands, project_handlers
+from telegram_mcp.ipc.handlers.scope import scope_commands, scope_handlers
 from telegram_mcp.ipc.leases import LeaseError, verify_lease
 from telegram_mcp.ipc.rendezvous import serve_rendezvous
 from telegram_mcp.keys.store import key_id, load_key, read_lease_seed, set_store_dir
@@ -48,7 +51,13 @@ from telegram_mcp.telegram.reads import TelegramReads
 from telegram_mcp.telegram.service import RoutedRetrieval
 from telegram_mcp.telegram.telethon_adapter import TelegramConfig, TelethonSession
 
-__all__ = ["RuntimeServices", "build_runtime", "build_telegram", "serve_consent"]
+__all__ = [
+    "RuntimeServices",
+    "admin_handlers",
+    "build_runtime",
+    "build_telegram",
+    "serve_consent",
+]
 
 
 @dataclass
@@ -73,25 +82,67 @@ class _Seeds:
 
 
 def _disclosure_public(conn: sqlite3.Connection) -> tuple[str, str]:
-    """Publish the disclosure key's public half once; return it for status."""
-    raw = (
-        Ed25519PrivateKey.from_private_bytes(load_key("disclosure-key"))
-        .public_key()
-        .public_bytes_raw()
+    ident = ensure_current_published(
+        conn,
+        purpose="disclosure_proof",
+        private_seed=load_key("disclosure-key"),
+        now=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
-    public = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-    ident = key_id("disclosure-key")
     current = current_verification_key(conn, "disclosure_proof")
     if current is None or current["key_id"] != ident:
-        publish_verification_key(
+        raise RuntimeError("disclosure key publication did not take effect")  # fail closed
+    return ident, current["public_key_b64url"]
+
+
+def _iso_now() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def admin_handlers(
+    conn: sqlite3.Connection,
+    *,
+    key_dir: Path,
+    anchor_path: Path,
+    telegram: Any,
+    broker: Any,
+    prompter: Any,
+    seeds: Callable[[str], bytes | None],
+    runtime_id: bytes,
+    clock: Callable[[], float],
+) -> dict[str, Callable[[dict[str, Any]], Any]]:
+    """The one assembly point for the admin handler map (Phase-5 design §2)."""
+    sink = AuditSink(load_key("audit-chain-key"), anchor_path, _iso_now)
+    checkpoint_key = load_key("audit-checkpoint-key")
+    ensure_current_published(
+        conn, purpose="audit_checkpoint", private_seed=checkpoint_key, now=_iso_now()
+    )
+    discovery = DiscoveryStore()
+    members = DiscoveryStore()  # one store: minted by `project members`, used by remove-peer
+    simulatable: dict[str, Any] = {
+        **PROJECT_COMMANDS,
+        **CLIENT_COMMANDS,
+        **member_commands(members),
+    }
+    handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
+        **project_handlers(conn, members=members),
+        **client_handlers(conn, key_dir=key_dir),
+        "auth headers": auth_headers_handler(
+            conn, seed_for=seeds, runtime_id=runtime_id, clock=clock
+        ),
+        **audit_handlers(
             conn,
-            key_id=ident,
-            purpose="disclosure_proof",
-            algorithm="Ed25519",
-            public_key_b64url=public,
-            activated_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        )
-    return ident, public
+            sink=sink,
+            checkpoint_key=checkpoint_key,
+            on_security_change=lambda: broker.invalidate_where(lambda _p: True),
+        ),
+        **inspect_handlers(conn, lineage=NoRestoreLineage(), broker=broker, prompter=prompter),
+    }
+    if telegram is not None:
+        handlers.update(auth_handlers(conn, telegram))
+        handlers.update(scope_handlers(conn, telegram, discovery))
+        simulatable.update(scope_commands(discovery))
+    handlers.update(policy_handlers(conn, registry=StagingRegistry(), simulatable=simulatable))
+    return handlers
 
 
 def build_runtime(
@@ -187,16 +238,17 @@ def build_runtime(
         status_key=_disclosure_public(conn),
     )
     approver = AdminApprover(broker, prompter, privacy_key=privacy_key, conn=conn)
-    handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
-        **project_handlers(conn),
-        **client_handlers(conn, key_dir=key_dir),
-        "auth headers": auth_headers_handler(
-            conn, seed_for=seeds.get, runtime_id=runtime_id, clock=clock
-        ),
-    }
-    if telegram is not None:
-        handlers.update(auth_handlers(conn, telegram))
-        handlers.update(scope_handlers(conn, telegram, DiscoveryStore()))
+    handlers = admin_handlers(
+        conn,
+        key_dir=key_dir,
+        anchor_path=anchor_path,
+        telegram=telegram,
+        broker=broker,
+        prompter=prompter,
+        seeds=seeds.get,
+        runtime_id=runtime_id,
+        clock=clock,
+    )
     return RuntimeServices(
         ingress_app=app,
         admin_router=AdminRouter(

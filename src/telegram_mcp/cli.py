@@ -98,6 +98,14 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    return _fail(
+        "serve is not a separate verb in this build: use `telegram-mcp start`"
+        " (runtime) or `telegram-mcp demo` (synthetic).",
+        EXIT_NOT_IN_PHASE,
+    )
+
+
 def _cmd_start(args: argparse.Namespace) -> int:
     from telegram_mcp.runtime.bootstrap import LaunchctlJobControl, start_all
 
@@ -312,6 +320,7 @@ def _build_parser() -> argparse.ArgumentParser:
     modes.add_argument("--chatgpt", action="store_true", help="adds the tunnel client, port 8767")
     modes.add_argument("--all", action="store_true", help="both listeners")
 
+    sub.add_parser("serve", help="not a separate verb in this build; see start and demo")
     sub.add_parser("stop", help="drain and stop every job (no-op while OFF)")
     sub.add_parser("status", help="report runtime state; works while OFF")
 
@@ -360,6 +369,7 @@ _COMMANDS = {
     "stop": _cmd_stop,
     "status": _cmd_status,
     "doctor": _cmd_doctor,
+    "serve": _cmd_serve,
     "admin": _cmd_admin,
     "keys": _cmd_keys,
     "pair": _cmd_pair,

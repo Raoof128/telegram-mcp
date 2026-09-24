@@ -1604,6 +1604,143 @@ def phase4c_reads(ledger: Ledger) -> None:
     ledger.run(area, "never a global search", never_global)
 
 
+def _raise(detail: Any) -> None:
+    raise AssertionError(str(detail))
+
+
+def phase5a_operator(ledger: Ledger) -> None:
+    """Phase 5a over a real admin socket: simulate, diff, commit; lock round-trip; audit."""
+    area = "Phase 5a — operator surface"
+    import asyncio
+    import secrets as _secrets
+
+    sys.path.insert(0, str(REPO))
+    from telegram_mcp.ipc.admin import AdminRouter, serve_admin
+    from telegram_mcp.ipc.framing import decode_json_frame, encode_json_frame
+    from telegram_mcp.keys.store import provision_missing, set_store_dir
+    from telegram_mcp.runtime.composition import admin_handlers
+    from telegram_mcp.storage.db import open_db
+    from tests.authority_fixtures import (
+        BETA_REF,
+        seed_authority_rows,
+        seed_project_world,
+        seed_second_project,
+    )
+
+    results: dict[str, Any] = {}
+
+    async def main() -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as short:
+            root = Path(short)
+            provision_missing(root / "keys", phases=(2, 3))
+            set_store_dir(root / "keys")
+            conn = open_db(root / "meta.db")
+            seed_authority_rows(conn)
+            seed_project_world(conn)
+            seed_second_project(conn)
+            (root / "anchor").mkdir(mode=0o700)
+
+            class Broker:
+                def pending_count(self) -> int:
+                    return 0
+
+                def invalidate_where(self, predicate: Any) -> int:
+                    return 0
+
+            class Prompter:
+                connected = False
+
+            handlers = admin_handlers(
+                conn,
+                key_dir=root / "keys",
+                anchor_path=root / "anchor" / "anchor.json",
+                telegram=None,
+                broker=Broker(),
+                prompter=Prompter(),
+                seeds=lambda ref: None,
+                runtime_id=_secrets.token_bytes(16),
+                clock=time.time,
+            )
+            router = AdminRouter(handlers, presence_verifier=lambda proof: proof == {"m": "smoke"})
+            sock = root / "admin.sock"
+            server = await serve_admin(sock, router)
+            try:
+
+                async def call(cmd: str, **args: Any) -> dict[str, Any]:
+                    reader, writer = await asyncio.open_unix_connection(str(sock))
+                    payload = encode_json_frame(
+                        {"cmd": cmd, "args": {"presence": {"m": "smoke"}, **args}}
+                    )
+                    writer.write(len(payload).to_bytes(4, "big") + payload)
+                    await writer.drain()
+                    size = int.from_bytes(await reader.readexactly(4), "big")
+                    body = await reader.readexactly(size)
+                    writer.close()
+                    return decode_json_frame(body)
+
+                simulated = await call(
+                    "policy simulate", command="project disable", args={"project_ref": BETA_REF}
+                )
+                results["simulated"] = simulated["data"]["diff"]
+                results["diff"] = (await call("policy diff", staged=simulated["data"]["staged"]))[
+                    "data"
+                ]["diff"]
+                await call("project disable", project_ref=BETA_REF)
+                results["stale"] = (await call("policy diff", staged=simulated["data"]["staged"]))[
+                    "code"
+                ]
+                results["lock"] = (await call("lock"))["data"]
+                results["status"] = (await call("lock status"))["data"]
+                results["unlock"] = (await call("unlock"))["data"]
+                results["verify"] = (await call("audit verify"))["data"]
+                results["drift"] = (await call("project drift"))["code"]
+            finally:
+                server.close()
+                await server.wait_closed()
+                conn.close()
+
+    def drive() -> dict[str, Any]:
+        if not results:
+            asyncio.run(main())
+        return results
+
+    ledger.run(
+        area,
+        "simulate then diff returns the staged change",
+        lambda: drive()["simulated"] == drive()["diff"] or _raise("diff differs"),
+    )
+    ledger.run(
+        area,
+        "a committed change makes the staged diff stale",
+        lambda: drive()["stale"] == "MALFORMED_REQUEST" or _raise(drive()["stale"]),
+    )
+    ledger.run(
+        area,
+        "lock is chained with a refreshed anchor",
+        lambda: drive()["lock"]["anchor"] == "refreshed" or _raise(drive()["lock"]),
+    )
+    ledger.run(
+        area,
+        "lock status reads locked without writing",
+        lambda: drive()["status"]["locked"] is True or _raise(drive()["status"]),
+    )
+    ledger.run(
+        area,
+        "unlock is chained with a refreshed anchor",
+        lambda: drive()["unlock"]["anchor"] == "refreshed" or _raise(drive()["unlock"]),
+    )
+    ledger.run(
+        area,
+        "audit verify reports CLEAN integrity",
+        lambda: drive()["verify"]["integrity"] == "CLEAN" or _raise(drive()["verify"]),
+    )
+    ledger.run(
+        area,
+        "a 5b command answers NOT_AVAILABLE_IN_PHASE",
+        lambda: drive()["drift"] == "NOT_AVAILABLE_IN_PHASE" or _raise(drive()["drift"]),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Phase 1 + Phase 2 end-to-end smoke")
     parser.add_argument("--verbose", action="store_true", help="print tracebacks for failures")
@@ -1624,6 +1761,7 @@ def main() -> int:
         phase4a_catalogue(ledger)
         phase4b_reads(ledger)
         phase4c_reads(ledger)
+        phase5a_operator(ledger)
         conn = state.get("conn")
         if conn is not None:
             conn.close()

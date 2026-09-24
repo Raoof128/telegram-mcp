@@ -18,7 +18,7 @@ import pytest
 from telegram_mcp.cli import main
 from telegram_mcp.ipc.admin import AdminRouter, serve_admin
 
-VERBS = ("demo", "start", "stop", "status", "doctor", "admin", "keys", "pair", "rotate")
+VERBS = ("demo", "start", "stop", "status", "doctor", "admin", "keys", "pair", "rotate", "serve")
 
 
 def _run(argv, monkeypatch):
@@ -238,3 +238,8 @@ def test_demo_config_failure_prints_one_fixed_line(monkeypatch, capsys):
     assert "ValidationError" not in captured.err
     assert "0.0.0.0" not in captured.err
     assert os.environ["TELEGRAM_API_HASH"] == "not-allowed-in-safe-demo"
+
+
+def test_serve_points_at_start_and_exits_not_in_phase(monkeypatch, capsys):
+    assert _run(["serve"], monkeypatch) == 5  # EXIT_NOT_IN_PHASE
+    assert "telegram-mcp start" in capsys.readouterr().err
