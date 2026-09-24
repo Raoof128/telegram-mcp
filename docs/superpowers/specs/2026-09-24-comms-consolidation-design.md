@@ -1,6 +1,9 @@
 # Comms Consolidation Design (Phase 5b-0 contract, and the 5b→5e sequence)
 
-**Status:** Revision 1. The owner approved it section by section on 2026-09-24, and all seven owner amendments are folded in (§0A).
+**Status:** Revision 2.
+
+- **Revision 2** replaces §2.2's package-selection rule after measurement disproved it (§0B), tightens §3.4 to a common-contract procedure, and adds transport-to-transport isolation.
+- **Revision 1:** the owner approved it section by section on 2026-09-24, with seven amendments (§0A).
 **Date:** 2026-09-24 (Australia/Sydney)
 **Supersedes, for sequencing only:** the Phase-5 design's 5b and 5c ordering. Its technical content (lifecycle, rotation, retention, chain epochs, backup and import) stands, and is re-sequenced here as **5c**.
 **Sources measured at the time of writing:**
@@ -44,6 +47,17 @@ The migration obeys one rule:
 | A6 | Presence behaviour is frozen through 5b-2. | §1 |
 | A7 | Operations outside the repo are not in any exit gate. | §5 |
 
+## 0B. Revision 2: the §2.2 rule was measured and replaced
+
+Revision 1 selected `core` modules by an import-closure rule. Measuring the closures at `3152ee4` disproved the rule: **transport-neutrality is semantic, not syntactic.**
+
+- `ipc.framing` imports `contract`, the Telegram tool-contract loader that also hosts the strict decoder.
+- `disclosure.audit.chain` and `anchor` reach `disclosure.keys` (Telegram key purposes) and `storage.settings` (the Telegram §32 settings registry).
+- `ipc.handlers._wrapper` reaches the same modules.
+- `storage.db` reaches `authority.*` and Telegram policy state.
+
+Any populated `core` in 5b-1 would therefore need judgment or module splits, and neither is mechanical. The owner ruled that **`comms/core` starts empty.**
+
 ## 1. Governance through 5b-2
 
 - **Frozen spec v0.1.10** (SHA-256 `36b67f48…b0a`) governs **Telegram semantics**.
@@ -63,18 +77,24 @@ These are protocol and host identifiers, not branding. Changing any of them woul
 - **Logger names** (`telegram_mcp.*`), because log consumers key on them.
 - **Behaviour.** No handler, rule, default, error string or exit code changes.
 
-### 2.2 Package map and the dependency rule
+### 2.2 Package map and the dependency rule (revision 2)
 
-- The Python package `telegram_mcp` becomes `comms`.
-- `comms/core/` holds exactly the modules a **mechanical** rule selects: a module is core if and only if its transitive import closure inside the package contains no Telegram-specific module. The 5b-1 plan computes the list with an AST import-graph script, commits the script and its output, and moves exactly that list. Nobody picks by eye.
-- `comms/transports/telegram/` holds everything else.
+**5b-1 does not classify any existing Telegram module as shared core.**
 
-**The dependency rule is permanent from 5b-1 onward, not a one-off migration check:**
+- `comms/core/` exists with **no production implementation**: only `__init__.py` (a docstring) and an optional `ARCHITECTURE.md`.
+- Every `telegram_mcp` implementation module moves by **pure prefix relocation**: `telegram_mcp.X` becomes `comms.transports.telegram.X`.
+- No module is split, no function is extracted, no dependency direction changes, no shared abstraction is introduced, no protocol or domain string changes, and no runtime semantics change.
 
-- `comms.core` must not import `comms.transports.*` or the legacy `telegram_mcp` package, **statically or dynamically**. Calls to `importlib.import_module`, `__import__` and `importlib.util` inside `core` are rejected outright.
-- `comms.core` must not name transport internals: no string literal containing `comms.transports` and no attribute access into a transport module.
+The only non-import edits in production code are the **package-resource anchors**, which must follow the files: `resources.files("telegram_mcp")` in `server.py:28` and `contract.py:125`. Logger names (`telegram_mcp`, `telegram_mcp.admin`, `.audit`, `.sensitive`, `.daemon`, `.rendezvous`) and context-variable and scope keys (`telegram_mcp_operation`, `telegram_mcp_principal`) are identifiers under §2.1 and **do not change**.
+
+**The dependency rule is permanent from 5b-1 onward** and is enforced even while `core` is empty:
+
+- `comms.core` must not import `comms.transports.*`, `telegram_mcp` or `whatsvault`, **statically or dynamically**. Calls to `importlib.import_module`, `__import__` and `importlib.util` inside `core` are rejected outright, and so are string literals naming a transport path.
 - `comms.transports.*` may import `comms.core`.
-- **Enforcement:** an AST guard runs over `src/comms/core/**` for static imports, dynamic-import calls and transport-path strings. A second guard computes the transitive closure of every `core` module and asserts it never reaches `transports`.
+- **One transport must not import another.** `comms.transports.telegram` must not import `whatsvault`, and `whatsvault` must not import `comms.transports.telegram` or `telegram_mcp`.
+- **Enforcement:** an AST guard plus a transitive-closure guard. An empty-core guard also asserts that `comms/core` contains no function or class definitions until 5b-2's first seam.
+
+A 5b-1 commit whose explanation needs more than "import path moved" does not belong in 5b-1.
 
 ### 2.3 Compatibility surface (A1)
 
@@ -102,7 +122,7 @@ A guard test asserts that the legacy package contains only these two files and t
 
 ### 2.5 Exit criteria
 
-1. The Telegram source is mechanically relocated per the committed map.
+1. The Telegram source is relocated by pure prefix under `comms/transports/telegram`, and `comms/core` has no production implementation.
 2. Protocol and domain strings are identical.
 3. On-host identity is identical.
 4. The `telegram-mcp` CLI and `python -m telegram_mcp.cli` work, and the `comms` alias works.
@@ -146,11 +166,25 @@ It is **not** moved into `src/comms/transports/whatsapp` during 5b-2. The combin
 - **One `uv.lock`**, re-resolved with WhatsVault's dependencies (`sqlcipher3`, `keyring`, `python-ulid`, `apscheduler<4`, and ranges for `mcp`, `cryptography` and `uvicorn`). The existing pins satisfy them: `mcp==2.2.0` meets `>=2.1,<3`, `cryptography==50.0.1` meets `>=43`, and `uvicorn==0.53.0` meets `>=0.30`. The new packages get the spec §7 dependency review.
 - The gate evidence records the **native substrate**: Python version and architecture, the `sqlcipher3` version, and the runtime SQLCipher version (`PRAGMA cipher_version`), plus the Homebrew SQLCipher formula version. `uv.lock` cannot pin a Homebrew library, so a changed native substrate has to show up in evidence.
 
-### 3.4 Seam consolidation (after the combined baseline is green)
+### 3.4 Seam consolidation (after the combined baseline is green; revision 2)
 
-Only after exit criteria 1–7 below pass does consolidation begin, **one seam per commit**, each with both suites green. A seam is consolidated only when the two implementations are shown to be identical in contract: same inputs, same outputs, and same failure behaviour on the vectors of both projects. Examples: JCS, opaque-ref format, audit framing.
+Consolidation begins only after exit criteria 1–7 below pass. For each candidate shared primitive, the procedure is:
 
-Platform-specific mechanisms are **never** consolidated into `core`. Examples: Meta webhook verification, template state, Cloud API delivery semantics, and MTProto sessions.
+1. Identify the Telegram implementation.
+2. Identify the WhatsVault implementation.
+3. Define the **common observable contract**. This is not the source shape: two projects may implement one abstraction differently.
+4. Prove both existing implementations satisfy it.
+5. Add cross-implementation characterization tests.
+6. Introduce the `comms/core` implementation.
+7. Move one transport onto it.
+8. Gate green.
+9. Move the other transport onto it.
+10. Gate green.
+11. Remove the duplicated implementation.
+
+Each step is its own commit on a green gate. A primitive whose two sides differ materially in event schema, key purpose, retention or checkpoint semantics (for example, audit chaining) is **not** made common just because both contain HMAC code. It waits for 5b-3's semantics.
+
+Platform mechanisms are never consolidated. Examples: Meta webhook verification, template state, Cloud API delivery semantics, and MTProto sessions.
 
 ### 3.5 Exit criteria
 
