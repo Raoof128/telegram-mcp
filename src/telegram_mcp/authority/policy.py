@@ -23,9 +23,13 @@ __all__ = [
     "ClientState",
     "Denial",
     "EffectiveEgress",
+    "OwnerScope",
+    "PeerFacts",
     "ProjectState",
+    "TraceStep",
     "check_pre_serialize",
     "evaluate",
+    "evaluate_with_trace",
     "make_view",
     "readable_members",
 ]
@@ -88,6 +92,7 @@ class AuthorityRequest:
     client_ref: str
     project_refs: tuple[str, ...] = ()
     peer_identity: str | None = None
+    facts: PeerFacts | None = None
 
     def __post_init__(self) -> None:
         if self.operation not in OPERATIONS:
@@ -101,6 +106,64 @@ class EffectiveEgress:
 
     level: str
     excerpt_limit: int | None
+
+
+@dataclass(frozen=True)
+class PeerFacts:
+    """What is known about a chat's §10.4 class. ``None`` means unknown (0B G14).
+
+    ``candidates`` narrows an unknown ``chat_type``: a stored MTProto
+    ``channel`` is either a broadcast channel or a supergroup, and if the
+    owner excludes both, the answer is a definite no, not "unknown".
+    """
+
+    chat_type: str | None  # "private" | "group" | "supergroup" | "channel"
+    archived: bool | None
+    candidates: tuple[str, ...] = ()
+
+    @classmethod
+    def from_stored(cls, peer_type: str) -> PeerFacts:
+        """``peers`` stores only the MTProto peer type; a channel may be a supergroup."""
+        if peer_type == "channel":
+            return cls(None, None, ("supergroup", "channel"))
+        return cls({"user": "private", "chat": "group"}.get(peer_type), None)
+
+
+@dataclass(frozen=True)
+class OwnerScope:
+    """The owner's §10.4 chat-kind switches; a chat must pass all of them."""
+
+    include_archived: bool
+    include_private: bool
+    include_groups: bool
+    include_channels: bool
+
+    def admits(self, chat_type: str, is_archived: bool) -> bool:
+        if is_archived and not self.include_archived:
+            return False
+        if chat_type == "private":
+            return self.include_private
+        if chat_type in ("group", "supergroup"):
+            return self.include_groups
+        return self.include_channels
+
+    def decide(self, facts: PeerFacts) -> bool | None:
+        """``admits`` when the facts settle it; ``None`` when they cannot."""
+        if facts.chat_type is None:
+            if facts.archived and not self.include_archived:
+                return False
+            if facts.candidates and not any(self.admits(c, False) for c in facts.candidates):
+                return False  # excluded whichever subtype it turns out to be
+            if facts.candidates and facts.archived is not None:
+                verdicts = {self.admits(c, facts.archived) for c in facts.candidates}
+                if len(verdicts) == 1:
+                    return verdicts.pop()
+            return None
+        if facts.archived is None:
+            if not self.admits(facts.chat_type, False):
+                return False  # excluded by class whatever the archive state
+            return True if self.include_archived else None
+        return self.admits(facts.chat_type, facts.archived)
 
 
 @dataclass(frozen=True)
@@ -138,6 +201,7 @@ class AuthorityView:
     policy_epoch: int = 0
     security_epoch: int = 0
     owner_mode: str = "allowlist"
+    owner_scope: OwnerScope | None = None
 
 
 class AuthorityChanged(Exception):
@@ -160,6 +224,7 @@ def make_view(
     policy_epoch: int = 0,
     security_epoch: int = 0,
     owner_mode: str = "allowlist",
+    owner_scope: OwnerScope | None = None,
 ) -> AuthorityView:
     """Build a normalized abstract view from row maps and owner policy."""
     if owner_mode not in OWNER_MODES:
@@ -174,6 +239,7 @@ def make_view(
         policy_epoch=policy_epoch,
         security_epoch=security_epoch,
         owner_mode=owner_mode,
+        owner_scope=owner_scope,
     )
 
 
@@ -186,49 +252,78 @@ def _effective_egress(grants: list[ClientProjectGrant]) -> EffectiveEgress:
     return EffectiveEgress(level, min(limits) if limits else None)
 
 
-def evaluate(view: AuthorityView, request: AuthorityRequest) -> AuthoritySnapshot | Denial:
-    """Intersect all authority layers; allow only if every layer passes."""
+TraceStep = tuple[str, str]
+
+
+def _decide(
+    view: AuthorityView, request: AuthorityRequest, trace: list[TraceStep] | None
+) -> AuthoritySnapshot | Denial:
+    def note(step: str, outcome: str = "pass") -> None:
+        if trace is not None:
+            trace.append((step, outcome))
+
+    def deny(step: str, code: str, reason: str) -> Denial:
+        note(step, f"deny:{code}")
+        return Denial(code, reason)
+
     client = view.clients.get(request.client_ref)
     if client is None:
-        return Denial(REF_NOT_FOUND, "unknown client")
+        return deny("client", REF_NOT_FOUND, "unknown client")
+    note("client")
     for ref in request.project_refs:
         if ref not in view.projects:
-            return Denial(REF_NOT_FOUND, "unknown project")
+            return deny("project", REF_NOT_FOUND, "unknown project")
     for ref in request.project_refs:
         if not view.projects[ref].enabled:
-            return Denial(NOT_ACCESSIBLE, "project disabled")
+            return deny("project", NOT_ACCESSIBLE, "project disabled")
+    note("project")
     if not client.enabled:
-        return Denial(CLIENT_REVOKED, "client disabled")
+        return deny("client_enabled", CLIENT_REVOKED, "client disabled")
+    note("client_enabled")
 
     contributing: list[ClientProjectGrant] = []
     for ref in request.project_refs:
         grant = view.grants.get((request.client_ref, ref))
         if grant is None:
-            return Denial(NOT_ACCESSIBLE, "no grant row")
+            return deny("grant", NOT_ACCESSIBLE, "no grant row")
         if request.operation in ("read", "cross_search") and not grant.can_read:
-            return Denial(NOT_ACCESSIBLE, "grant denies read")
+            return deny("grant", NOT_ACCESSIBLE, "grant denies read")
         contributing.append(grant)
+    note("grant")
     if request.operation == "cross_search":
         for ref in request.project_refs:
-            grant = view.grants[(request.client_ref, ref)]
-            if not grant.can_cross_search:
-                return Denial(NOT_ACCESSIBLE, "grant denies cross-project search")
+            if not view.grants[(request.client_ref, ref)].can_cross_search:
+                return deny("cross_search", NOT_ACCESSIBLE, "grant denies cross-project search")
+        note("cross_search")
 
     peer = request.peer_identity
     if peer is None:
         if request.operation in ("read", "cross_search"):
-            return Denial(NOT_ACCESSIBLE, "peer identity required")
+            return deny("peer", NOT_ACCESSIBLE, "peer identity required")
+        note("peer", "skip")
     else:
         if peer in view.owner_denies:
-            return Denial(NOT_ACCESSIBLE, "owner denies peer")
+            return deny("owner_deny", NOT_ACCESSIBLE, "owner denies peer")
+        note("owner_deny")
         # §10.4: under allowlist only listed peers are readable -- an empty
         # list admits nothing. all_cloud_chats admits members unless denied.
         if view.owner_mode == "allowlist" and peer not in view.owner_allows:
-            return Denial(NOT_ACCESSIBLE, "owner does not allow peer")
+            return deny("owner_allow", NOT_ACCESSIBLE, "owner does not allow peer")
+        note("owner_allow")
         for ref in request.project_refs:
             if peer not in view.memberships.get(ref, frozenset()):
-                return Denial(NOT_ACCESSIBLE, "peer not a project member")
+                return deny("membership", NOT_ACCESSIBLE, "peer not a project member")
+        note("membership")
+        if view.owner_scope is None or request.facts is None:
+            note("owner_class", "facts_unknown")
+        else:
+            admitted = view.owner_scope.decide(request.facts)
+            if admitted is False:
+                return deny("owner_class", NOT_ACCESSIBLE, "owner scope excludes chat class")
+            note("owner_class", "pass" if admitted else "facts_unknown")
 
+    egress = _effective_egress(contributing)
+    note("egress", egress.level)
     return AuthoritySnapshot(
         policy_epoch=view.policy_epoch,
         security_epoch=view.security_epoch,
@@ -237,8 +332,22 @@ def evaluate(view: AuthorityView, request: AuthorityRequest) -> AuthoritySnapsho
             ref: view.grants[(request.client_ref, ref)].grant_digest for ref in request.project_refs
         },
         peer_identity=peer,
-        effective_egress=_effective_egress(contributing),
+        effective_egress=egress,
     )
+
+
+def evaluate(view: AuthorityView, request: AuthorityRequest) -> AuthoritySnapshot | Denial:
+    """Intersect all authority layers; allow only if every layer passes."""
+    return _decide(view, request, None)
+
+
+def evaluate_with_trace(
+    view: AuthorityView, request: AuthorityRequest
+) -> tuple[AuthoritySnapshot | Denial, tuple[TraceStep, ...]]:
+    """The same decision, with the ordered steps that produced it (spec §33.1)."""
+    trace: list[TraceStep] = []
+    verdict = _decide(view, request, trace)
+    return verdict, tuple(trace)
 
 
 def check_pre_serialize(

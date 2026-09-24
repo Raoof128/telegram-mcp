@@ -19,6 +19,7 @@ from telegram_mcp.authority.policy import (
     AuthorityView,
     ClientProjectGrant,
     ClientState,
+    OwnerScope,
     ProjectState,
     make_view,
 )
@@ -155,6 +156,9 @@ def load_view(conn: sqlite3.Connection, *, principal_id: int, account_id: int) -
         policy_epoch=int(policy[0]) if policy else 0,
         security_epoch=security_epoch,
         owner_mode=policy[1] if policy else "allowlist",
+        owner_scope=OwnerScope(
+            *load_owner_scope(conn, principal_id=principal_id, account_id=account_id)
+        ),
     )
 
 

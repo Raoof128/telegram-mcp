@@ -47,3 +47,24 @@ def test_no_await_inside_a_transaction():
 def test_scope_mode_exists_exactly_once():
     hits = [p.name for p in HANDLERS.glob("*.py") if '"scope mode"' in p.read_text()]
     assert hits == ["projects.py"]
+
+
+DECISION_FIELDS = {
+    "owner_mode",
+    "include_archived",
+    "include_private",
+    "include_groups",
+    "include_channels",
+}
+
+
+def test_owner_policy_is_decided_only_in_authority_policy():
+    """0B G13: loads are keyword arguments; any attribute access is a decision."""
+    offenders = []
+    for path in sorted(SRC.rglob("*.py")):
+        if path == SRC / "authority" / "policy.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Attribute) and node.attr in DECISION_FIELDS:
+                offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
+    assert offenders == []

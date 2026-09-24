@@ -34,7 +34,13 @@ from telegram_mcp.authority.cursors import (
     project_scope_digest,
     scope_entries_from_view,
 )
-from telegram_mcp.authority.policy import AuthorityRequest, Denial, evaluate, readable_members
+from telegram_mcp.authority.policy import (
+    AuthorityRequest,
+    Denial,
+    OwnerScope,
+    evaluate,
+    readable_members,
+)
 from telegram_mcp.consent.broker import ConsentBroker, ConsentError, ConsumedChallenge
 from telegram_mcp.consent.challenge import display_digest, jcs_dumps
 from telegram_mcp.consent.display import build_display
@@ -145,25 +151,6 @@ class CatalogueSnapshot:
     def project_scope_digest(self) -> str:
         """The receipt's labelled form (Appendix K); the challenge uses ``scope_hex``."""
         return "hmac-sha256:" + self.scope_hex
-
-
-@dataclass(frozen=True)
-class OwnerScope:
-    """The owner's §10.4 chat-kind switches; a chat must pass all of them."""
-
-    include_archived: bool
-    include_private: bool
-    include_groups: bool
-    include_channels: bool
-
-    def admits(self, chat_type: str, is_archived: bool) -> bool:
-        if is_archived and not self.include_archived:
-            return False
-        if chat_type == "private":
-            return self.include_private
-        if chat_type in ("group", "supergroup"):
-            return self.include_groups
-        return self.include_channels
 
 
 @dataclass(frozen=True)
