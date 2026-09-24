@@ -26,6 +26,14 @@ searches are per peer only, with a pure continuation engine
 `bounds.PageBudget` holds every read to both §13.2 caps (bytes and 32,000
 codepoints). A page ends only on Telegram's own signal (`_page_end`).
 Evidence: `docs/verification/phase-4.md`, `telegram-rpc-review.md`.
+**Phase 5a is on `main`** (merged at `f3047da`): the operator surface runs on
+one transaction runner (`ipc/handlers/_wrapper.py`; audited admin events share
+the disclosure append guard and anchor), one policy evaluator with traces
+(`authority/policy.py`; retrieval decides chat class through `admit_live`),
+metadata-effective access and `policy explain/simulate/diff` (semantic
+simulate-equals-commit over every simulatable command; bound `tps_` stages).
+Evidence: `docs/verification/phase-5.md`. 5b (revoke, rotation, retention,
+recovery, chain epochs) is designed, not built.
 Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 
 ## Non-negotiables
@@ -53,8 +61,8 @@ Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 1337 passed, 10 skipped
-uv run python scripts/e2e_smoke.py                # 53 checks, end to end
+uv run pytest -q                                  # 1493 passed, 10 skipped
+uv run python scripts/e2e_smoke.py                # 60 checks, end to end
 uv run pytest tests/formal -q -s                  # 624 states, 18 assertions
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
