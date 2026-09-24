@@ -34,6 +34,7 @@ __all__ = [
     "RECOVERY_REQUIRED",
     "AnchorError",
     "derive_integrity",
+    "latch_degraded",
     "read_anchor",
     "repair_anchor",
     "write_anchor",
@@ -131,6 +132,15 @@ def read_anchor(path: str | Path, chain_key: bytes) -> dict[str, Any]:
     if not hmac.compare_digest(_anchor_mac(chain_key, body), str(body.get("anchor_mac", ""))):
         raise AnchorError("anchor MAC does not verify")
     return body
+
+
+def latch_degraded(conn: sqlite3.Connection, *, reason: str, disclosure_ref: str = "") -> None:
+    """The single degraded latch (design §6.8). Set only, never cleared here."""
+    from telegram_mcp.storage.settings import set_setting
+
+    set_setting(conn, "audit.integrity_degraded", 1)
+    set_setting(conn, "audit.degraded_disclosure_ref", disclosure_ref)
+    set_setting(conn, "audit.degraded_reason", reason)
 
 
 def derive_integrity(conn: sqlite3.Connection, chain_key: bytes, path: str | Path) -> str:

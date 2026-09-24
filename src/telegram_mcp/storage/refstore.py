@@ -48,43 +48,53 @@ class RefStore:
         self._conn = conn
         self._account = account_id
 
-    def ensure_peer(
+    def ensure_peer_in_tx(
         self, peer_type: str, peer_id: int, *, display_name: str | None, username: str | None
     ) -> PeerRow:
+        """Upsert inside the caller's transaction (Phase-5 design §2.1). Never commits."""
+        if not self._conn.in_transaction:
+            raise ValueError("ensure_peer_in_tx requires an open transaction")
         if peer_type not in PEER_TYPES:
             raise ValueError("unknown peer type")
         now = _now()
-        with immediate_transaction(self._conn):
-            existing = self._conn.execute(
-                "SELECT id FROM peers WHERE account_id = ? AND telegram_peer_type = ?"
-                " AND telegram_peer_id = ?",
-                (self._account, peer_type, peer_id),
-            ).fetchone()
-            if existing is None:
-                self._conn.execute(
-                    "INSERT INTO peers (account_id, peer_ref, telegram_peer_type, telegram_peer_id,"
-                    " display_name_cache, username_cache, first_seen_at, last_seen_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        self._account,
-                        mint_opaque_ref("tgp_"),
-                        peer_type,
-                        peer_id,
-                        display_name,
-                        username,
-                        now,
-                        now,
-                    ),
-                )
-            else:
-                self._conn.execute(
-                    "UPDATE peers SET display_name_cache = ?, username_cache = ?, last_seen_at = ?"
-                    " WHERE id = ?",
-                    (display_name, username, now, existing[0]),
-                )
+        existing = self._conn.execute(
+            "SELECT id FROM peers WHERE account_id = ? AND telegram_peer_type = ?"
+            " AND telegram_peer_id = ?",
+            (self._account, peer_type, peer_id),
+        ).fetchone()
+        if existing is None:
+            self._conn.execute(
+                "INSERT INTO peers (account_id, peer_ref, telegram_peer_type, telegram_peer_id,"
+                " display_name_cache, username_cache, first_seen_at, last_seen_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    self._account,
+                    mint_opaque_ref("tgp_"),
+                    peer_type,
+                    peer_id,
+                    display_name,
+                    username,
+                    now,
+                    now,
+                ),
+            )
+        else:
+            self._conn.execute(
+                "UPDATE peers SET display_name_cache = ?, username_cache = ?, last_seen_at = ?"
+                " WHERE id = ?",
+                (display_name, username, now, existing[0]),
+            )
         found = self.peer_by_identity(f"{peer_type}:{peer_id}")
         assert found is not None
         return found
+
+    def ensure_peer(
+        self, peer_type: str, peer_id: int, *, display_name: str | None, username: str | None
+    ) -> PeerRow:
+        with immediate_transaction(self._conn):
+            return self.ensure_peer_in_tx(
+                peer_type, peer_id, display_name=display_name, username=username
+            )
 
     def peer_by_ref(self, peer_ref: str) -> PeerRow | None:
         return _row(

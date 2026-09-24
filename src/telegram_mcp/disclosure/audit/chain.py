@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import secrets
 import sqlite3
+import threading
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -22,7 +23,9 @@ from telegram_mcp.consent.challenge import jcs_dumps
 
 __all__ = [
     "ADMIN_EVENTS",
+    "APPEND_GUARD",
     "CHECKPOINT_DOMAIN",
+    "EVENT_COLUMNS",
     "EVENT_DOMAIN",
     "GENESIS_DOMAIN",
     "ChainError",
@@ -32,6 +35,7 @@ __all__ = [
     "genesis_mac",
     "head",
     "immediate_transaction",
+    "insert_checkpoint",
     "mint_event_id",
     "require_immediate_transaction",
     "verify_chain",
@@ -45,6 +49,11 @@ GENESIS_DOMAIN = b"telegram-mcp-audit-genesis-v1"
 # Non-tool chain events. audit_events.tool_name is NOT NULL and §6.5 sends
 # administrative and security events through the same barrier, so they need
 # values. The dotted prefix cannot collide with the ten tool names.
+# One process-wide guard for every audit append (Phase-5 design §2.1, 0B G5):
+# the coordinator's disclosure barrier and every audited admin command take
+# this same lock, so the chain cannot fork between them.
+APPEND_GUARD = threading.Lock()
+
 ADMIN_EVENTS: tuple[str, ...] = (
     "admin.lock",
     "admin.unlock",
@@ -70,7 +79,7 @@ _ALLOWED_TOOL_NAMES = frozenset(_TOOLS) | frozenset(ADMIN_EVENTS)
 # Appendix C illustrates evt_01J...: Crockford base32, uppercase, 26 chars.
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-_EVENT_COLUMNS = (
+EVENT_COLUMNS = (
     "event_id",
     "ts",
     "tool_name",
@@ -97,7 +106,7 @@ class ChainError(Exception):
 def require_immediate_transaction(conn: sqlite3.Connection) -> None:
     """Refuse to append outside a caller-owned write transaction."""
     if not conn.in_transaction:
-        raise ChainError("append_event requires an open BEGIN IMMEDIATE transaction")
+        raise ChainError("an open BEGIN IMMEDIATE transaction is required")
 
 
 @contextmanager
@@ -147,7 +156,7 @@ def event_mac(
         + chain_epoch.to_bytes(8, "big")
         + chain_seq.to_bytes(8, "big")
         + bytes.fromhex(prev_event_mac)
-        + jcs_dumps({k: event[k] for k in _EVENT_COLUMNS})
+        + jcs_dumps({k: event[k] for k in EVENT_COLUMNS})
     )
     return hmac.new(chain_key, message, hashlib.sha256).hexdigest()
 
@@ -186,7 +195,7 @@ def append_event(
     require_immediate_transaction(conn)
     if event.get("tool_name") not in _ALLOWED_TOOL_NAMES:
         raise ChainError("event tool_name is not in the closed vocabulary")
-    missing = [c for c in _EVENT_COLUMNS if c not in event]
+    missing = [c for c in EVENT_COLUMNS if c not in event]
     if missing:
         raise ChainError("event is missing required columns")
 
@@ -206,13 +215,11 @@ def append_event(
         prev_event_mac=prev,
         event=event,
     )
-    columns = ", ".join(
-        (*_EVENT_COLUMNS, "chain_epoch", "chain_seq", "prev_event_mac", "event_mac")
-    )
-    marks = ", ".join("?" * (len(_EVENT_COLUMNS) + 4))
+    columns = ", ".join((*EVENT_COLUMNS, "chain_epoch", "chain_seq", "prev_event_mac", "event_mac"))
+    marks = ", ".join("?" * (len(EVENT_COLUMNS) + 4))
     conn.execute(
         f"INSERT INTO audit_events ({columns}) VALUES ({marks})",
-        (*(event[c] for c in _EVENT_COLUMNS), chain_epoch, chain_seq, prev, mac),
+        (*(event[c] for c in EVENT_COLUMNS), chain_epoch, chain_seq, prev, mac),
     )
 
     return {
@@ -226,9 +233,7 @@ def append_event(
 
 def verify_chain(conn: sqlite3.Connection, chain_key: bytes) -> None:
     """Recompute every retained link. Raises ``ChainError`` on any mismatch."""
-    columns = ", ".join(
-        (*_EVENT_COLUMNS, "chain_epoch", "chain_seq", "prev_event_mac", "event_mac")
-    )
+    columns = ", ".join((*EVENT_COLUMNS, "chain_epoch", "chain_seq", "prev_event_mac", "event_mac"))
     rows = conn.execute(
         f"SELECT {columns} FROM audit_events ORDER BY chain_epoch, chain_seq"
     ).fetchall()
@@ -238,7 +243,7 @@ def verify_chain(conn: sqlite3.Connection, chain_key: bytes) -> None:
     for row in rows:
         record = dict(
             zip(
-                (*_EVENT_COLUMNS, "chain_epoch", "chain_seq", "prev_event_mac", "event_mac"),
+                (*EVENT_COLUMNS, "chain_epoch", "chain_seq", "prev_event_mac", "event_mac"),
                 row,
                 strict=True,
             )
@@ -278,10 +283,11 @@ def _checkpoint_message(row: Mapping[str, Any]) -> bytes:
     )
 
 
-def write_checkpoint(
+def insert_checkpoint(
     conn: sqlite3.Connection, checkpoint_key: bytes, *, now: str
 ) -> dict[str, Any]:
-    """Sign the current head with the dedicated audit-checkpoint key."""
+    """Sign the current head inside the caller's transaction. Never commits."""
+    require_immediate_transaction(conn)
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     from telegram_mcp.opaque import mint_opaque_ref
@@ -321,8 +327,15 @@ def write_checkpoint(
             signature.hex(),
         ),
     )
-    conn.commit()
     return row
+
+
+def write_checkpoint(
+    conn: sqlite3.Connection, checkpoint_key: bytes, *, now: str
+) -> dict[str, Any]:
+    """Compatibility wrapper: one checkpoint in its own transaction."""
+    with immediate_transaction(conn):
+        return insert_checkpoint(conn, checkpoint_key, now=now)
 
 
 def verify_checkpoints(conn: sqlite3.Connection, checkpoint_public: bytes) -> None:

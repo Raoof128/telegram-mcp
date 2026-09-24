@@ -53,6 +53,7 @@ __all__ = [
     "require_foreign_keys",
     "save_epoch_state",
     "startup_gc",
+    "write_epoch_state",
 ]
 
 ERR_SYMLINK = "database path must not be a symlink"
@@ -287,35 +288,42 @@ def bind_epoch_state(conn: sqlite3.Connection) -> EpochState:
     }
 
 
+def write_epoch_state(conn: sqlite3.Connection, state: Mapping[str, Any]) -> None:
+    """The UPDATEs of :func:`save_epoch_state`, inside the caller's transaction."""
+    require_foreign_keys(conn)
+    if not conn.in_transaction:
+        raise StorageError("write_epoch_state requires an open transaction")
+    security = state["security_state"]
+    conn.execute(
+        "UPDATE security_state SET security_epoch = ?, locked = ?, locked_at = ?,"
+        " updated_at = ? WHERE singleton_id = 1",
+        (
+            int(security["security_epoch"]),
+            int(security["locked"]),
+            security["locked_at"],
+            security["updated_at"],
+        ),
+    )
+    for (principal_ref, account_ref), row in state["policy_state"].items():
+        conn.execute(
+            "UPDATE policy_state SET policy_epoch = ?, updated_at = ?"
+            " WHERE principal_id = (SELECT id FROM principals WHERE principal_ref = ?)"
+            " AND account_id = (SELECT id FROM accounts WHERE account_ref = ?)",
+            (int(row["policy_epoch"]), row["updated_at"], principal_ref, account_ref),
+        )
+    for project_ref, row in state["projects"].items():
+        conn.execute(
+            "UPDATE projects SET project_epoch = ?, updated_at = ? WHERE project_ref = ?",
+            (int(row["project_epoch"]), row["updated_at"], project_ref),
+        )
+
+
 def save_epoch_state(conn: sqlite3.Connection, state: Mapping[str, Any]) -> None:
     """Write epoch state back transactionally (spec §10.6, §10.8, §12.2)."""
-    require_foreign_keys(conn)
-    security = state["security_state"]
     conn.commit()
     try:
         conn.execute("BEGIN")
-        conn.execute(
-            "UPDATE security_state SET security_epoch = ?, locked = ?, locked_at = ?,"
-            " updated_at = ? WHERE singleton_id = 1",
-            (
-                int(security["security_epoch"]),
-                int(security["locked"]),
-                security["locked_at"],
-                security["updated_at"],
-            ),
-        )
-        for (principal_ref, account_ref), row in state["policy_state"].items():
-            conn.execute(
-                "UPDATE policy_state SET policy_epoch = ?, updated_at = ?"
-                " WHERE principal_id = (SELECT id FROM principals WHERE principal_ref = ?)"
-                " AND account_id = (SELECT id FROM accounts WHERE account_ref = ?)",
-                (int(row["policy_epoch"]), row["updated_at"], principal_ref, account_ref),
-            )
-        for project_ref, row in state["projects"].items():
-            conn.execute(
-                "UPDATE projects SET project_epoch = ?, updated_at = ? WHERE project_ref = ?",
-                (int(row["project_epoch"]), row["updated_at"], project_ref),
-            )
+        write_epoch_state(conn, state)
         conn.execute("COMMIT")
     except sqlite3.Error:
         conn.execute("ROLLBACK")
