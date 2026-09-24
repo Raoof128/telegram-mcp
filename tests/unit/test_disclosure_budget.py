@@ -167,7 +167,7 @@ def test_reservation_binds_the_six_frozen_components(tmp_path):
         client_id=1,
         security_epoch=4,
         project_scope_digest="hmac-sha256:" + "0" * 64,
-        consent_challenge_digest="1" * 64,
+        binding_digest="1" * 64,
         request_nonce="n" * 32,
         worst_case=_worst(),
         ttl_seconds=60,
@@ -177,7 +177,7 @@ def test_reservation_binds_the_six_frozen_components(tmp_path):
     assert reservation.client_id == 1
     assert reservation.security_epoch == 4
     assert reservation.project_scope_digest == "hmac-sha256:" + "0" * 64
-    assert reservation.consent_challenge_digest == "1" * 64
+    assert reservation.binding_digest == "1" * 64
     assert reservation.request_nonce == "n" * 32
     assert reservation.expires_at > 0
     assert reservation.reservation_ref
@@ -194,7 +194,7 @@ def test_a_live_reservation_counts_against_the_next_consultation(tmp_path):
         client_id=1,
         security_epoch=1,
         project_scope_digest="d",
-        consent_challenge_digest="c",
+        binding_digest="c",
         request_nonce="n",
         worst_case=_worst(records=7),
         ttl_seconds=60,
@@ -211,7 +211,7 @@ def test_release_frees_the_reservation(tmp_path):
         client_id=1,
         security_epoch=1,
         project_scope_digest="d",
-        consent_challenge_digest="c",
+        binding_digest="c",
         request_nonce="n",
         worst_case=_worst(records=7),
         ttl_seconds=60,
@@ -240,7 +240,7 @@ def test_an_expired_reservation_stops_counting(tmp_path):
         client_id=1,
         security_epoch=1,
         project_scope_digest="d",
-        consent_challenge_digest="c",
+        binding_digest="c",
         request_nonce="n",
         worst_case=_worst(records=7),
         ttl_seconds=60,
@@ -261,7 +261,7 @@ def test_reserving_past_a_hard_ceiling_refuses(tmp_path):
             client_id=1,
             security_epoch=1,
             project_scope_digest="d",
-            consent_challenge_digest="c",
+            binding_digest="c",
             request_nonce="n",
             worst_case=_worst(records=2_000),  # global hard ceiling is 1500
             ttl_seconds=60,
@@ -290,13 +290,14 @@ def test_commit_writes_one_row_per_bucket_and_releases(tmp_path):
         client_id=1,
         security_epoch=1,
         project_scope_digest="d",
-        consent_challenge_digest="c",
+        binding_digest="c",
         request_nonce="n",
         worst_case={key: Usage(10, 1000)},
         ttl_seconds=60,
     )
     ledger.commit(
         reservation,
+        binding_digest=reservation.binding_digest,
         disclosure_ref="tdr_a",
         actual={key: Usage(3, 30)},
         effective_egress_level="metadata_only",
@@ -325,7 +326,7 @@ def test_actual_exceeding_reserved_fails_closed(tmp_path):
         client_id=1,
         security_epoch=1,
         project_scope_digest="d",
-        consent_challenge_digest="c",
+        binding_digest="c",
         request_nonce="n",
         worst_case={key: Usage(10, 1000)},
         ttl_seconds=60,
@@ -334,8 +335,38 @@ def test_actual_exceeding_reserved_fails_closed(tmp_path):
     with pytest.raises(BudgetError):
         ledger.commit(
             reservation,
+            binding_digest=reservation.binding_digest,
             disclosure_ref="tdr_a",
             actual={key: Usage(11, 1000)},
             effective_egress_level="metadata_only",
             ts="2026-09-22T00:00:00Z",
+        )
+
+
+def test_a_reservation_is_bound_to_its_call(tmp_path):
+    """5b-3 design §2 / spec v0.2 §23C.3: without consent, the binding is the call itself."""
+    from comms.transports.telegram.disclosure.budget import BudgetError, call_binding_digest
+
+    conn_ledger = _ledger(tmp_path)
+    call_a = call_binding_digest("telegram_get_messages", {"limit": 5}, "n1")
+    call_b = call_binding_digest("telegram_get_messages", {"limit": 5}, "n2")
+    assert call_a != call_b  # a fresh nonce makes every call distinct
+    assert call_a == call_binding_digest("telegram_get_messages", {"limit": 5}, "n1")
+    reservation = conn_ledger.reserve(
+        client_id=1,
+        security_epoch=1,
+        project_scope_digest="hmac-sha256:" + "0" * 64,
+        binding_digest=call_a,
+        request_nonce="n1",
+        worst_case=_worst(),
+        ttl_seconds=60,
+    )
+    with pytest.raises(BudgetError):
+        conn_ledger.commit(
+            reservation,
+            binding_digest=call_b,
+            disclosure_ref="tdr_" + "z" * 26,
+            actual={},
+            effective_egress_level="metadata_only",
+            ts="2026-09-24T00:00:00Z",
         )

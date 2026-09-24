@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from comms.transports.telegram.canonical import jcs_dumps
 from comms.transports.telegram.disclosure.measure import (
     RECORD_ELEMENT,
     bytes_disclosed,
@@ -44,6 +45,7 @@ __all__ = [
     "Thresholds",
     "Usage",
     "buckets_for",
+    "call_binding_digest",
     "committed_usage",
     "subject_digest",
     "thresholds_for",
@@ -94,6 +96,15 @@ def subject_digest(kind: str, subject: str = "") -> str:
     key = load_key("privacy-key")
     message = _SUBJECT_DOMAIN + kind.encode("ascii") + subject.encode("ascii")
     return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
+_CALL_BINDING_DOMAIN = b"comms-call-binding/v1\0"
+
+
+def call_binding_digest(tool_name: str, validated_args: Mapping[str, Any], nonce: str) -> str:
+    """Bind a reservation to exactly one call: the tool, its frozen arguments, a fresh nonce."""
+    body = jcs_dumps({"args": dict(validated_args), "nonce": nonce, "tool": tool_name})
+    return hashlib.sha256(_CALL_BINDING_DOMAIN + body).hexdigest()
 
 
 def window_start(now: float, minutes: int) -> str:
@@ -187,15 +198,16 @@ class Reservation:
 
     The first six fields are the binding §23C.3 freezes. ``security_epoch``
     is what makes an emergency lock invalidate reservations in flight;
-    ``consent_challenge_digest`` is what stops a reservation minted under one
-    approval being spent by a different call.
+    ``binding_digest`` is what stops a reservation minted for one call being
+    spent by a different call (comms spec v0.2 §23C.3; it replaced the
+    consent-challenge digest when consent was removed).
     """
 
     reservation_ref: str
     client_id: int
     security_epoch: int
     project_scope_digest: str
-    consent_challenge_digest: str
+    binding_digest: str
     request_nonce: str
     expires_at: float
     buckets: tuple[tuple[BucketKey, Usage], ...]
@@ -282,7 +294,7 @@ class BudgetLedger:
         client_id: int,
         security_epoch: int,
         project_scope_digest: str,
-        consent_challenge_digest: str,
+        binding_digest: str,
         request_nonce: str,
         worst_case: Mapping[BucketKey, Usage],
         ttl_seconds: int,
@@ -300,7 +312,7 @@ class BudgetLedger:
                 client_id=client_id,
                 security_epoch=security_epoch,
                 project_scope_digest=project_scope_digest,
-                consent_challenge_digest=consent_challenge_digest,
+                binding_digest=binding_digest,
                 request_nonce=request_nonce,
                 expires_at=self._clock() + ttl_seconds,
                 buckets=tuple(worst_case.items()),
@@ -317,6 +329,7 @@ class BudgetLedger:
         self,
         reservation: Reservation,
         *,
+        binding_digest: str,
         disclosure_ref: str,
         actual: Mapping[BucketKey, Usage],
         effective_egress_level: str,
@@ -331,6 +344,8 @@ class BudgetLedger:
         attacker who found an estimator gap could exceed an approved
         exposure.
         """
+        if not hmac.compare_digest(reservation.binding_digest, binding_digest):
+            raise BudgetError("reservation is bound to a different call")
         reserved = dict(reservation.buckets)
         for key, measured in actual.items():
             limit = reserved.get(key)

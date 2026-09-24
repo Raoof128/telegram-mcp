@@ -404,7 +404,7 @@ class DisclosureCoordinator:
                         client_id=snapshot.client_id,
                         security_epoch=snapshot.security_epoch,
                         project_scope_digest=snapshot.project_scope_digest,
-                        consent_challenge_digest=approval.challenge_sha256,
+                        binding_digest=approval.challenge_sha256,
                         request_nonce=approval.nonce,
                         worst_case=worst_case,
                         ttl_seconds=60,
@@ -483,6 +483,7 @@ class DisclosureCoordinator:
                         self._insert_receipt(prepared, snapshot)
                         self._ledger.commit(
                             reservation,
+                            binding_digest=reservation.binding_digest,
                             disclosure_ref=prepared["disclosure_ref"],
                             actual=actual,
                             effective_egress_level=prepared["effective_egress_level"],
