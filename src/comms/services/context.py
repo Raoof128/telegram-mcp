@@ -16,7 +16,9 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import Any
 
+from comms.core import timeutil
 from comms.core.campaigns.directory import destination_id
+from comms.core.campaigns.history import identity_history
 from comms.core.errors import CommsError
 from comms.core.objects import object_ref
 from comms.core.providers.capability import Capability, CapabilityState
@@ -37,7 +39,15 @@ SEARCH_BOUNDS = MappingProxyType(
 INCLUDES = frozenset(
     {"messages", "members", "admins", "topics", "capabilities", "linked_audiences", "campaigns"}
 )
-_SERVED = frozenset({"messages", "members", "admins"})  # the rest arrive with D10, D11, D15
+_SERVED = frozenset({"messages", "members", "admins"})  # the rest arrive with D15
+# P §20–21: what each transport's sources may call themselves. WhatsApp has no provider
+# history (the Cloud API is not a chat-search database), so it is only ever the archive.
+_PROVENANCE = MappingProxyType(
+    {
+        "telegram": frozenset({"telegram_live", "telegram_local"}),
+        "whatsapp": frozenset({"whatsapp_webhook_archive"}),
+    }
+)
 _IDENTITIES = frozenset({"message_id", "sender_id", "from_id", "chat_id", "update_id", "user_id"})
 _MAX_PAGE = 100
 
@@ -98,6 +108,40 @@ class ContextEngine:
         if fallback and bot is not None and "telegram_bot" in self._sources:
             return bot
         raise CommsError(code)
+
+    # -- WhatsApp and campaign-store sources (D11; P §20) -----------------------------------
+
+    def archive(
+        self, subject: str, target: ProviderTarget, *, limit: int = 20, cursor: str | None = None
+    ) -> dict[str, Any]:
+        """The WhatsVault / webhook archive for one WhatsApp conversation."""
+        if target.transport != "whatsapp":
+            raise CommsError("INVALID_ARGUMENT")
+        return self.recent(subject, target, limit=limit, cursor=cursor)
+
+    def campaign_history(
+        self, subject: str, target: ProviderTarget, *, limit: int = 20, cursor: str | None = None
+    ) -> dict[str, Any]:
+        """Outbound campaign records for the target's delivery identity, newest first."""
+        before = None
+        if cursor is not None:
+            if not (isinstance(cursor, str) and cursor.isdigit() and len(cursor) <= 18):
+                raise CommsError("INVALID_ARGUMENT")
+            before = int(cursor)
+        rows, more = identity_history(
+            self._conn, target.transport, target.identity, limit=_limit(limit), before=before
+        )
+        observed = timeutil.iso(self._clock())
+        items = [
+            {**row, "source": "campaign_store", "observed_at": observed, "group_ref": subject}
+            for row in rows
+        ]
+        return {
+            "group_ref": subject,
+            "source": "campaign_store",
+            "items": items,
+            "next_cursor": None if more is None else str(more),
+        }
 
     def recent(
         self, group: str, target: ProviderTarget, *, limit: int = 20, cursor: str | None = None
@@ -221,11 +265,17 @@ class ContextEngine:
         if source is None:
             raise CommsError("NOT_CONFIGURED")
         try:
-            return source.read(ContextQuery(target, kind, dict(args)))
+            page = source.read(ContextQuery(target, kind, dict(args)))
         except ContextRefused as refused:
             raise CommsError(_REFUSALS.get(refused.code, "PROVIDER_UNAVAILABLE")) from None
         except ValueError:
             raise CommsError("INVALID_ARGUMENT") from None
+        allowed = _PROVENANCE.get(target.transport, frozenset())
+        if page.provenance not in allowed or any(
+            item.get("source") != page.provenance for item in page.items
+        ):
+            raise CommsError("PROVIDER_UNAVAILABLE")  # a mislabelled source fails closed
+        return page
 
     def _item(self, group: str, target: ProviderTarget, item: Mapping[str, Any]) -> dict[str, Any]:
         out = {k: v for k, v in item.items() if k not in _IDENTITIES and k != "untrusted"}
