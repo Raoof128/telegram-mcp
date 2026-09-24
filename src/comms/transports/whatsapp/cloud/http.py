@@ -28,6 +28,7 @@ TOKEN_ITEM = "meta-access-token"
 _TOKEN = re.compile(r"\A[A-Za-z0-9_.\-]{20,512}\Z")
 _NUMBER_ID = re.compile(r"\A[0-9]{5,20}\Z")
 _OBJECT_ID = re.compile(r"\A[0-9]{1,20}\Z")  # a Graph object id (a template)
+_GROUP_ID = re.compile(r"\A[0-9]{5,30}\Z")
 
 
 class GraphRefused(Exception):
@@ -114,6 +115,37 @@ class GraphApi:
             form={"messaging_product": "whatsapp", "type": mime},
             files={"file": ("media", data, mime)},
         )
+
+    def phone_info(self) -> GraphResponse:
+        params = {"fields": "verified_name,quality_rating,status"}
+        return self._call("GET", f"/{API_VERSION}/{self._phone}", params=params)
+
+    def list_groups(self, *, limit: int) -> GraphResponse:
+        return self._call(
+            "GET", f"/{API_VERSION}/{self._phone}/groups", params={"limit": str(limit)}
+        )
+
+    def remove_group_participant(self, group_id: str, wa_id: str) -> GraphResponse:
+        body = {"messaging_product": "whatsapp", "participants": [{"user": wa_id}]}
+        return self._call(
+            "DELETE", f"/{API_VERSION}/{self._group(group_id)}/participants", body=body
+        )
+
+    def reset_group_invite(self, group_id: str) -> GraphResponse:
+        return self._post(
+            f"/{API_VERSION}/{self._group(group_id)}/invite_link", {"messaging_product": "whatsapp"}
+        )
+
+    def update_group(self, group_id: str, body: Mapping[str, Any]) -> GraphResponse:
+        return self._post(
+            f"/{API_VERSION}/{self._group(group_id)}", {"messaging_product": "whatsapp", **body}
+        )
+
+    @staticmethod
+    def _group(group_id: str) -> str:
+        if not isinstance(group_id, str) or not _GROUP_ID.match(group_id):
+            raise ValueError("group id refused")
+        return group_id
 
     def bearer(self) -> dict[str, str]:
         """The authorization header, for the media downloader in this package only."""
