@@ -10,6 +10,7 @@ from comms.core import refs
 from comms.core.storage.db import open_comms_db
 from comms.core.storage.migrations import MIGRATIONS, migrate
 from comms.transports.telegram.peers import marked_chat_id
+from comms.transports.whatsapp.numbers import e164
 
 KEY = bytes(range(32))
 T0 = "2026-09-24T00:00:00.000000Z"
@@ -200,8 +201,5 @@ def tg(raw: str) -> str:
 
 
 def wa(raw: str) -> str:
-    """E.164 canonical form."""
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    if not raw.strip().startswith("+") or not 8 <= len(digits) <= 15:
-        raise ValueError("unrecognised number")
-    return "+" + digits
+    """E.164 canonical form: the production rule, one copy (comms v0.3 C23)."""
+    return e164(raw)

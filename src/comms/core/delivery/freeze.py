@@ -19,6 +19,7 @@ from comms.core import domains, refs, timeutil
 from comms.core.campaigns.drafts import LifecycleError, load, targets_of
 from comms.core.campaigns.events import append_event
 from comms.core.campaigns.resolve import Candidate, Targets, resolve_targets
+from comms.core.campaigns.templates import template_binding
 from comms.core.canonical import jcs_dumps
 from comms.core.delivery.commitment import CommitContext, campaign_commitment
 from comms.core.delivery.reducer import Evidence, reduce
@@ -29,6 +30,7 @@ from comms.core.delivery.transport import (
     Skip,
     SkipReason,
 )
+from comms.core.delivery.window import window_fact
 from comms.core.storage.db import write_tx
 
 __all__ = [
@@ -180,14 +182,22 @@ def _freeze(
         if not wanted <= set(transports):
             raise LifecycleError("transport unavailable")
         content = json.loads(campaign["content"])
+        template = template_binding(conn, campaign["id"])
         gen = refs.mint("generation")
         planned: list[_Planned] = []
         for candidate in resolve_targets(conn, targets, wanted):
             identity = conn.execute(
                 "SELECT identity FROM delivery_identities WHERE id = ?", (candidate.identity_id,)
             ).fetchone()[0]
+            facts: dict[str, Any] = {}
+            window = window_fact(conn, candidate.identity_id)
+            if window is not None:
+                facts["window"] = window
+            if template is not None:
+                facts["template"] = template
             prepared = transports[candidate.transport].prepare(
-                DeliveryIntent(candidate.transport, identity, content), timeutil.utc(send_at)
+                DeliveryIntent(candidate.transport, identity, content, facts),
+                timeutil.utc(send_at),
             )
             if isinstance(prepared, Skip):
                 payload, skip = None, SkipReason(prepared.reason)

@@ -47,6 +47,7 @@ class ResultKind(StrEnum):
 class SkipReason(StrEnum):
     PLATFORM_INELIGIBLE = "platform_ineligible"
     CONTENT_UNSUPPORTED = "content_unsupported"  # the transport cannot carry this content
+    TEMPLATE_REQUIRED = "template_required"  # outside the free-form window, and no template
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,9 @@ class DeliveryIntent:
     transport: str
     identity: str = field(repr=False)
     content: Mapping[str, Any] = field(repr=False)
+    # Local facts the freeze copies in from comms.db inside its transaction, so prepare stays
+    # pure (S3): the mirrored customer-service window, the campaign's template binding (A22, A23).
+    facts: Mapping[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass(frozen=True)

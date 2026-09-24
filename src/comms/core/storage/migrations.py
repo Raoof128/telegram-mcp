@@ -381,6 +381,14 @@ CREATE TRIGGER attempts_request_key_scoped_unique BEFORE UPDATE OF provider_requ
 CREATE TABLE user_updates (event_ref TEXT PRIMARY KEY, chat_id TEXT NOT NULL, message_id INTEGER NOT NULL,
   kind TEXT NOT NULL, payload TEXT NOT NULL, received_at TEXT NOT NULL);
 CREATE INDEX user_updates_chat ON user_updates (chat_id, message_id);
+-- A22 (Task C23): the customer-service window, mirrored from webhook ingestion into state
+-- Comms owns; it only moves forward. A23: a campaign's frozen template binding (one per
+-- campaign; choosing among languages per recipient is Part D's).
+CREATE TABLE endpoint_window (identity_id INTEGER PRIMARY KEY REFERENCES delivery_identities(id) ON DELETE RESTRICT,
+  last_customer_message_at TEXT NOT NULL, observed_at TEXT NOT NULL, source_event_ref TEXT NOT NULL);
+CREATE TABLE template_bindings (campaign_id INTEGER PRIMARY KEY REFERENCES campaigns(id) ON DELETE RESTRICT,
+  name TEXT NOT NULL, language TEXT NOT NULL, schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
+  parameters TEXT NOT NULL, bound_at TEXT NOT NULL);
 CREATE TRIGGER attempts_outcome_code_set_once BEFORE UPDATE OF outcome_code ON delivery_attempts
   WHEN OLD.outcome_code IS NOT NULL BEGIN SELECT RAISE(ABORT, 'outcome code is frozen'); END;
 """
