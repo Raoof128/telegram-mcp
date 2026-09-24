@@ -42,8 +42,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from comms.core.storage.db import write_tx
+from comms.core.strict_json import strict_json_loads  # single strict JSON decoder
 from comms.transports.telegram.authority.refs import validate_ref_format
-from comms.transports.telegram.contract import strict_json_loads  # single strict JSON decoder
 from comms.transports.telegram.storage.owner_state import load_security
 from comms.transports.telegram.storage.settings import get_setting, put_setting
 

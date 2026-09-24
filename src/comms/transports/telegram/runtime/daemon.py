@@ -127,7 +127,6 @@ async def run_daemon(
             conn,
             key_dir=Path(config.key_dir),
             anchor_path=state / "anchor" / "anchor.json",
-            runtime_id=runtime_id,
             telegram=session,
         )
         closers.append(

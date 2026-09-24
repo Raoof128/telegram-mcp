@@ -17,7 +17,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextvars import ContextVar
 from typing import Any
 
-from comms.transports.telegram.contract import strict_json_loads
+from comms.core.strict_json import strict_json_loads
 
 __all__ = [
     "DEFAULT_LIMITS",

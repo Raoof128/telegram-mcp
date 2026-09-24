@@ -1,7 +1,6 @@
 """comms v0.3 Task A15: disclosure-on-read and project/grant authority are retired; rows are kept."""
 
 import ast
-import secrets
 from pathlib import Path
 
 import pytest
@@ -48,14 +47,14 @@ def test_no_production_path_reaches_the_coordinator_budget_or_policy_evaluator()
     assert reached.isdisjoint(RETIRED_AUTHORITY), sorted(reached & RETIRED_AUTHORITY)
 
 
-def test_the_retired_commands_are_exactly_projects_scope_policy_and_exposure():
+def test_the_retired_commands_are_exactly_projects_scope_policy_exposure_and_tgml1_issuance():
     retired = set(RETIRED_ADMIN_COMMANDS)
     assert retired.isdisjoint(ADMIN_COMMANDS)
-    assert {c.split()[0] for c in retired} == {"project", "scope", "policy", "exposure"}
-    assert not any(
-        c.split()[0] in {"project", "scope", "policy", "exposure"} for c in ADMIN_COMMANDS
-    )
-    assert len(retired) == 28
+    families = {"project", "scope", "policy", "exposure"}
+    assert {c.split()[0] for c in retired} == families | {"auth"}
+    assert not any(c.split()[0] in families for c in ADMIN_COMMANDS)
+    assert [c for c in retired if c.startswith("auth ")] == ["auth headers"]  # tgml1 issuance
+    assert len(retired) == 29
 
 
 @pytest.fixture
@@ -71,7 +70,6 @@ def populated(tmp_path):
         conn,
         key_dir=store,
         anchor_path=tmp_path / "anchor" / "anchor.json",
-        runtime_id=secrets.token_bytes(16),
     )
     return conn, router
 

@@ -1,8 +1,5 @@
 """Command completeness by name, not count (design D9, §5.4)."""
 
-import secrets
-import time
-
 import pytest
 
 from comms.transports.telegram.ipc.admin import ADMIN_COMMANDS, RETIRED_ADMIN_COMMANDS, AdminRouter
@@ -44,9 +41,6 @@ async def handlers(tmp_path):
         key_dir=store,
         anchor_path=tmp_path / "anchor" / "anchor.json",
         telegram=session,
-        seeds=lambda ref: None,
-        runtime_id=secrets.token_bytes(16),
-        clock=time.time,
     )
 
 

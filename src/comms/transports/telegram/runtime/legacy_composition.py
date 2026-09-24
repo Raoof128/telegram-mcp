@@ -29,6 +29,7 @@ from comms.transports.telegram.http_guards import DEFAULT_LIMITS, RateLimiter
 from comms.transports.telegram.ipc.admin import LEGACY_ADMIN_SURFACE, AdminRouter
 from comms.transports.telegram.ipc.handlers.clients import CLIENT_COMMANDS
 from comms.transports.telegram.ipc.handlers.exposure import exposure_handlers
+from comms.transports.telegram.ipc.handlers.leases import auth_headers_handler
 from comms.transports.telegram.ipc.handlers.policy import policy_handlers
 from comms.transports.telegram.ipc.handlers.projects import (
     PROJECT_COMMANDS,
@@ -37,8 +38,8 @@ from comms.transports.telegram.ipc.handlers.projects import (
 )
 from comms.transports.telegram.ipc.handlers.scope import scope_commands, scope_handlers
 from comms.transports.telegram.ipc.leases import LeaseError, verify_lease
-from comms.transports.telegram.keys.store import key_id, load_key, set_store_dir
-from comms.transports.telegram.runtime.composition import _Seeds, admin_handlers
+from comms.transports.telegram.keys.store import key_id, load_key, read_lease_seed, set_store_dir
+from comms.transports.telegram.runtime.composition import admin_handlers
 from comms.transports.telegram.runtime.identity import PrincipalContext, resolve_principal
 from comms.transports.telegram.runtime.ingress import create_ingress_app
 from comms.transports.telegram.sensitive_dispatch import SensitiveDispatcher
@@ -50,6 +51,16 @@ from comms.transports.telegram.telegram.reads import TelegramReads
 from comms.transports.telegram.telegram.service import RoutedRetrieval
 
 __all__ = ["RuntimeServices", "build_runtime", "legacy_admin_handlers"]
+
+
+class _Seeds:
+    """``verify_lease``'s seed lookup: read-only, never mints."""
+
+    def __init__(self, key_dir: Path) -> None:
+        self._dir = key_dir
+
+    def get(self, client_ref: str) -> bytes | None:
+        return read_lease_seed(self._dir, client_ref)
 
 
 @dataclass
@@ -84,15 +95,7 @@ def legacy_admin_handlers(
     clock: Callable[[], float],
 ) -> dict[str, Callable[[dict[str, Any]], Any]]:
     """The pre-v0.3 handler map: production's, plus the retired authority commands."""
-    handlers = admin_handlers(
-        conn,
-        key_dir=key_dir,
-        anchor_path=anchor_path,
-        telegram=telegram,
-        seeds=seeds,
-        runtime_id=runtime_id,
-        clock=clock,
-    )
+    handlers = admin_handlers(conn, key_dir=key_dir, anchor_path=anchor_path, telegram=telegram)
     discovery = DiscoveryStore()
     members = DiscoveryStore()  # one store: minted by `project members`, used by remove-peer
     simulatable: dict[str, Any] = {
@@ -100,6 +103,9 @@ def legacy_admin_handlers(
         **CLIENT_COMMANDS,
         **member_commands(members),
     }
+    handlers["auth headers"] = auth_headers_handler(
+        conn, seed_for=seeds, runtime_id=runtime_id, clock=clock
+    )
     handlers.update(project_handlers(conn, members=members))
     handlers.update(exposure_handlers(conn))
     if telegram is not None:

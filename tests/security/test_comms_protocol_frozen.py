@@ -34,6 +34,14 @@ TOMBSTONED_IN_V0_2 = Counter(
         "b'telegram-mcp-rendezvous/v1'": 1,  # ipc/rendezvous.py RV-1 transcript
     }
 )
+# comms v0.3 (spec A2). The 16 tool names, `tgml1` issuance and the policy-bundle ids are
+# tombstoned, but none changes this multiset: the tool names are not protocol literals,
+# `tgml1` stays as the lease codec's prefix for verification (issuance is retired), and
+# the policy-bundle ids never shipped. The comms domains v0.3 adds are pinned by
+# test_comms_wire_frozen.ADDED_IN_V03. Both counters stay here so a later v0.3 change to
+# the legacy wire has to be named.
+TOMBSTONED_IN_V0_3: Counter[str] = Counter()
+ADDED_IN_V0_3: Counter[str] = Counter()
 # KEEP_LITERALS (the 5b-1 record) entries whose files were deleted with consent.
 RETIRED_KEEP_LITERALS = {
     ("src/comms/transports/telegram/ipc/rendezvous.py", "telegram_mcp.rendezvous"),
@@ -44,8 +52,18 @@ RETIRED_KEEP_LITERALS = {
 def test_protocol_constants_are_the_baseline_multiset():
     baseline = Counter(json.loads(FIXTURE.read_text()))
     assert not (TOMBSTONED_IN_V0_2 - baseline), "only baseline identifiers can be tombstoned"
-    expected = baseline - TOMBSTONED_IN_V0_2 + ADDED_IN_V0_2
+    expected = baseline - TOMBSTONED_IN_V0_2 + ADDED_IN_V0_2 - TOMBSTONED_IN_V0_3 + ADDED_IN_V0_3
     assert Counter(protocol_constants(ROOT / "src" / "comms")) == expected
+
+
+def test_protocol_multiset_records_v03_changes():
+    from tests.security.test_comms_wire_frozen import ADDED_IN_V03
+
+    found = Counter(protocol_constants(ROOT / "src" / "comms"))
+    assert found["'tgml1'"] >= 1  # the codec remains for verification; issuance is retired
+    assert not any("policy-bundle" in k or "policy-signature" in k for k in found)
+    assert not (TOMBSTONED_IN_V0_3 & ADDED_IN_V0_3)
+    assert all(k.startswith("b'comms") for k in ADDED_IN_V03)
 
 
 def _docstrings(tree: ast.AST) -> set[int]:

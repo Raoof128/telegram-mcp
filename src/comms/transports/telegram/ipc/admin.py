@@ -83,7 +83,6 @@ ADMIN_COMMANDS: tuple[str, ...] = (
     "client list",
     "client rotate",
     "client disable",
-    "auth headers",
     "tunnel rotate-binding",
     "auth revoke-this-session",
     "disclosure show",
@@ -101,9 +100,10 @@ ADMIN_COMMANDS: tuple[str, ...] = (
 )
 
 # Retired by comms v0.3 (A3, spec §33 less the disclosure-on-read authority): projects,
-# grants, scope, the policy engine's commands and the exposure budget. Each answers
-# RETIRED_IN_V0_3 before any handler runs, so nothing is mutated; their rows are kept.
-# `policy export`/`import` spoke the tombstoned tg-mcp-policy-bundle/v1 wire.
+# grants, scope, the policy engine's commands, the exposure budget and `tgml1` issuance
+# (`auth headers`). Each answers RETIRED_IN_V0_3 before any handler runs, so nothing is
+# mutated; their rows are kept. `policy export`/`import` were never built: the policy
+# bundle wire they would have spoken never shipped and is tombstoned (spec A2).
 RETIRED_ADMIN_COMMANDS: tuple[str, ...] = (
     "scope discover",
     "scope list",
@@ -133,6 +133,7 @@ RETIRED_ADMIN_COMMANDS: tuple[str, ...] = (
     "policy export",
     "policy import",
     "exposure status",
+    "auth headers",
 )
 # The pre-v0.3 surface, for the historical harness (runtime/legacy_composition) only.
 LEGACY_ADMIN_SURFACE: tuple[str, ...] = ADMIN_COMMANDS + RETIRED_ADMIN_COMMANDS

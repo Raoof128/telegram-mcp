@@ -1372,17 +1372,26 @@ def phase5a_operator(ledger: Ledger) -> None:
                 "key_dir": root / "keys",
                 "anchor_path": root / "anchor" / "anchor.json",
                 "telegram": None,
-                "seeds": lambda ref: None,
-                "runtime_id": _secrets.token_bytes(16),
-                "clock": time.time,
             }
             production = AdminRouter(admin_handlers(conn, **wiring))
             results["retired"] = {
                 cmd: production.dispatch({"cmd": cmd, "args": {}})["code"]
-                for cmd in ("policy simulate", "policy diff", "project disable", "exposure status")
+                for cmd in (
+                    "policy simulate",
+                    "policy diff",
+                    "project disable",
+                    "exposure status",
+                    "auth headers",
+                )
             }
             # Simulate/diff/commit are retired in comms v0.3; driven here on the historical surface.
-            handlers = legacy_admin_handlers(conn, **wiring)
+            handlers = legacy_admin_handlers(
+                conn,
+                **wiring,
+                seeds=lambda ref: None,
+                runtime_id=_secrets.token_bytes(16),
+                clock=time.time,
+            )
             router = AdminRouter(handlers, surface=LEGACY_ADMIN_SURFACE)
             sock = root / "admin.sock"
             server = await serve_admin(sock, router)
@@ -1426,7 +1435,7 @@ def phase5a_operator(ledger: Ledger) -> None:
 
     ledger.run(
         area,
-        "production retires the policy, project and exposure commands",
+        "production retires the policy, project, exposure and tgml1-issuance commands",
         lambda: (
             set(drive()["retired"].values()) == {"RETIRED_IN_V0_3"} or _raise(drive()["retired"])
         ),

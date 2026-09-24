@@ -15,7 +15,7 @@ import asyncio
 import json
 from typing import Any
 
-from comms.transports.telegram.contract import strict_json_loads  # single strict JSON decoder
+from comms.core.strict_json import strict_json_loads  # single strict JSON decoder
 
 __all__ = [
     "IDLE_TIMEOUT_S",

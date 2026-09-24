@@ -10,7 +10,6 @@ legacy one.
 from __future__ import annotations
 
 import sqlite3
-import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,21 +25,10 @@ from comms.transports.telegram.ipc.handlers.audit import audit_handlers
 from comms.transports.telegram.ipc.handlers.auth import auth_handlers
 from comms.transports.telegram.ipc.handlers.clients import client_handlers
 from comms.transports.telegram.ipc.handlers.inspect import inspect_handlers
-from comms.transports.telegram.ipc.handlers.leases import auth_headers_handler
-from comms.transports.telegram.keys.store import load_key, read_lease_seed, set_store_dir
+from comms.transports.telegram.keys.store import load_key, set_store_dir
 from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 
 __all__ = ["admin_handlers", "build_admin", "build_telegram"]
-
-
-class _Seeds:
-    """``verify_lease``'s seed lookup: read-only, never mints."""
-
-    def __init__(self, key_dir: Path) -> None:
-        self._dir = key_dir
-
-    def get(self, client_ref: str) -> bytes | None:
-        return read_lease_seed(self._dir, client_ref)
 
 
 def _iso_now() -> str:
@@ -53,14 +41,12 @@ def admin_handlers(
     key_dir: Path,
     anchor_path: Path,
     telegram: Any,
-    seeds: Callable[[str], bytes | None],
-    runtime_id: bytes,
-    clock: Callable[[], float],
 ) -> dict[str, Callable[[dict[str, Any]], Any]]:
     """The one assembly point for the production admin handler map (Phase-5 design §2).
 
-    Comms v0.3 retired projects, grants, scope, the policy commands and the exposure
-    budget (``RETIRED_ADMIN_COMMANDS``); the router refuses them before any handler.
+    Comms v0.3 retired projects, grants, scope, the policy commands, the exposure
+    budget and ``tgml1`` issuance (``RETIRED_ADMIN_COMMANDS``); the router refuses them
+    before any handler.
     """
     sink = AuditSink(load_key("audit-chain-key"), anchor_path, _iso_now)
     checkpoint_key = load_key("audit-checkpoint-key")
@@ -69,9 +55,6 @@ def admin_handlers(
     )
     handlers: dict[str, Callable[[dict[str, Any]], Any]] = {
         **client_handlers(conn, key_dir=key_dir),
-        "auth headers": auth_headers_handler(
-            conn, seed_for=seeds, runtime_id=runtime_id, clock=clock
-        ),
         **audit_handlers(conn, sink=sink, checkpoint_key=checkpoint_key),
         **inspect_handlers(conn, lineage=NoRestoreLineage()),
     }
@@ -85,9 +68,7 @@ def build_admin(
     *,
     key_dir: Path,
     anchor_path: Path,
-    runtime_id: bytes,
     telegram: Any = None,
-    clock: Callable[[], float] = time.time,
 ) -> AdminRouter:
     """The daemon's production surface: the admin socket's router, nothing else (v0.3 A3)."""
     set_store_dir(key_dir)
@@ -97,9 +78,6 @@ def build_admin(
             key_dir=key_dir,
             anchor_path=anchor_path,
             telegram=telegram,
-            seeds=_Seeds(key_dir).get,
-            runtime_id=runtime_id,
-            clock=clock,
         )
     )
 
