@@ -9,6 +9,7 @@ from comms.core.audit.chain import COMMS, insert_checkpoint, verify_checkpoints
 from comms.core.keys import rotate as rot
 from comms.core.keys.slots import load_active, registry_public_for
 from comms.core.storage.db import write_tx
+from comms.services.handles import ContextHandles
 from tests.core.audit.legacy_fixtures import comms_world
 from tests.core.campaign_helpers import NOW
 
@@ -49,33 +50,37 @@ def test_checkpoint_rotation_new_key_id_old_public_kept(env):
     assert env["store"].versions("audit-checkpoint-key") == [2]  # the old private half is gone
 
 
-def _stub_context_tables(conn):
-    with write_tx(conn):
-        conn.execute("CREATE TABLE ctx_handles (ref TEXT PRIMARY KEY)")
-        conn.execute(
-            "CREATE TABLE cursors (ref TEXT PRIMARY KEY, ctx_ref TEXT NOT NULL REFERENCES ctx_handles(ref))"
+def _stub_context_tables(env):
+    """Real D9 rows: two handles with a cursor each, under a provisioned cursor key."""
+    _rotate(env, "cursor-key")
+    handles = ContextHandles(env["conn"], env["store"], clock=lambda: NOW)
+    for n in range(2):
+        ref = handles.open(
+            client="cli_" + "a" * 26,
+            owner="o",
+            target_ref="grp_x",
+            actor="telegram_user",
+            query_digest="q" * 64,
+            snapshot={},
         )
-        conn.executemany("INSERT INTO ctx_handles VALUES (?)", [("ctx_a",), ("ctx_b",)])
-        conn.executemany(
-            "INSERT INTO cursors VALUES (?, ?)", [("cur_a", "ctx_a"), ("cur_b", "ctx_b")]
-        )
+        handles.cursor("cli_" + "a" * 26, ref, {"offset": n})
 
 
 def test_cursor_rotation_invalidates_every_cursor_and_ctx_handle(env):
-    _stub_context_tables(env["conn"])
+    _stub_context_tables(env)
     _rotate(env, "cursor-key")
     counts = [
         env["conn"].execute(f"SELECT count(*) FROM {t}").fetchone()[0]
         for t in ("cursors", "ctx_handles")
     ]
     assert counts == [0, 0]
-    (payload,) = [
+    payloads = [
         json.loads(r[0])
         for r in env["conn"].execute(
             "SELECT payload FROM audit_events WHERE kind = 'admin.key_rotation'"
         )
     ]
-    assert payload["purpose"] == "cursor-key"
+    assert [p["purpose"] for p in payloads] == ["cursor-key", "cursor-key"]  # provision, rotate
 
 
 def test_cursor_rotation_before_context_tables_exist_invalidates_nothing_and_succeeds(env):

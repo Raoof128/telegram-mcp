@@ -462,6 +462,17 @@ CREATE TABLE mutation_steps (id INTEGER PRIMARY KEY, mutation_id INTEGER NOT NUL
   step_no INTEGER NOT NULL CHECK (step_no >= 1), capability TEXT NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('PENDING','IN_FLIGHT','SUCCEEDED','FAILED','OUTCOME_UNKNOWN')),
   provider_request_key TEXT, provider_code TEXT, UNIQUE (mutation_id, step_no));
+-- D9 (A30, G13): the comms security epoch (bumped by a revocation; handles and cursors of an
+-- older epoch are stale), client-bound ctx_ handles and key-versioned cur_ cursors.
+CREATE TABLE security_epoch (id INTEGER PRIMARY KEY CHECK (id = 1), epoch INTEGER NOT NULL CHECK (epoch >= 1));
+INSERT INTO security_epoch (id, epoch) VALUES (1, 1);
+CREATE TRIGGER security_epoch_forward BEFORE UPDATE ON security_epoch WHEN NEW.epoch <= OLD.epoch
+  BEGIN SELECT RAISE(ABORT, 'the security epoch only moves forward'); END;
+CREATE TABLE ctx_handles (ref TEXT PRIMARY KEY, client TEXT NOT NULL, owner TEXT NOT NULL, security_epoch INTEGER NOT NULL,
+  query_digest TEXT NOT NULL, target_ref TEXT NOT NULL, actor TEXT NOT NULL, snapshot TEXT NOT NULL,
+  created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+CREATE TABLE cursors (ref TEXT PRIMARY KEY, ctx_ref TEXT NOT NULL REFERENCES ctx_handles(ref) ON DELETE CASCADE,
+  position TEXT NOT NULL, cursor_key_version INTEGER NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE TRIGGER mutations_born_in_flight BEFORE INSERT ON mutations WHEN NEW.state <> 'IN_FLIGHT'
   BEGIN SELECT RAISE(ABORT, 'a mutation is born IN_FLIGHT'); END;
 CREATE TRIGGER mutations_binding_immutable BEFORE UPDATE OF op_ref, authenticated_client, request_id,

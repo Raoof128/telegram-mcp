@@ -11,6 +11,7 @@ __all__ = [
     "AUDIT_CHAIN",
     "AUDIT_CHECKPOINT",
     "AUDIT_GENESIS",
+    "CURSOR",
     "IDEMPOTENCY",
     "MTPROTO_RANDOM_ID",
     "RECIPIENTS",
@@ -33,5 +34,6 @@ BACKUP_SIGNATURE = b"comms-backup-signature/v1\0"  # comms v0.3 B24
 MTPROTO_RANDOM_ID = b"comms-mtproto-random-id/v1\0"  # comms v0.3 A20 (Task C15)
 REQUEST_DIGEST = b"comms-request-digest/v1\0"  # comms v0.3 A28 (Task D4)
 ADMIN_OP = b"comms-admin-op/v1\0"  # comms v0.3 A28 (Task D4)
+CURSOR = b"comms-cursor/v1\0"  # comms v0.3 A30 (Task D9)
 BACKUP_BINDING = b"comms-backup-binding/v1\0"  # comms v0.3 B25
 BACKUP_SCHEMA = b"comms-backup/v1\0"  # comms v0.3 B25: the payload's schema name

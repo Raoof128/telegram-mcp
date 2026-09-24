@@ -43,6 +43,7 @@ ADDED_IN_V03 = Counter(  # comms/core/domains.py, comms v0.3 Part A
         "b'comms-mtproto-random-id/v1\\x00'": 1,  # Part C, A20
         "b'comms-request-digest/v1\\x00'": 1,  # Part D, A28
         "b'comms-admin-op/v1\\x00'": 1,  # Part D, A28
+        "b'comms-cursor/v1\\x00'": 1,  # Part D, A30
     }
 )
 
