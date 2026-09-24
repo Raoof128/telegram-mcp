@@ -48,6 +48,8 @@ RULED_MODIFIED = {
         "tests/test_ops_launchd.py",
         "tests/test_ops_launchd_runnable.py",
     },
+    # comms v0.3 C27: FakeGraph appended beside the unchanged FakeMeta (the Meta contract oracle).
+    "R-C27": {"src/whatsvault/providers/fake_meta.py"},
 }
 RULED_ADDED: dict[str, set[str]] = {}
 
