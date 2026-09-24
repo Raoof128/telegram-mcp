@@ -53,6 +53,11 @@ AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
         "orphaned_version": count(1),
     },
     "admin.credential_revoked": {"purpose": one_of(_CREDENTIALS), "version": count(1)},
+    "admin.session_revoke": {
+        "phase": one_of({"started", "finished"}),
+        "outcome": one_of({"pending", "confirmed", "failed", "unknown", "aborted"}),
+        "security_epoch": count(1),
+    },
     "admin.key_rotation": {
         "purpose": one_of(set(PURPOSES)),
         "old_version": count(0),
@@ -71,6 +76,7 @@ SUBJECT_KINDS: dict[str, str | None] = {
     "admin.credential_rotation": None,
     "admin.credential_rotation_rolled_back": None,
     "admin.credential_revoked": None,
+    "admin.session_revoke": None,
     "admin.key_rotation": None,
 }
 

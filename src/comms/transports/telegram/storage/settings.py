@@ -129,6 +129,13 @@ SETTINGS_REGISTRY: dict[str, SettingSpec] = {
     "audit.append_state": SettingSpec(
         "str", "open", choices=("open", "sealed"), origin="impl", phase=3
     ),
+    # comms v0.3 B14: the session revoke's two-transaction state and the remote outcome.
+    "telegram.session_state": SettingSpec(
+        "str", "active", choices=("active", "revoking", "logged_out"), origin="impl", phase=3
+    ),
+    "telegram.remote_revoke": SettingSpec(
+        "str", "none", choices=("none", "confirmed", "failed", "unknown"), origin="impl", phase=3
+    ),
     # comms v0.3 (A33, G3): once "revoked", no bearer client can be enabled or added.
     "auth.tgml1_state": SettingSpec(
         "str", "open", choices=("open", "revoked"), origin="impl", phase=3

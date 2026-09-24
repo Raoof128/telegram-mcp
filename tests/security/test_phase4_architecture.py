@@ -36,9 +36,12 @@ REVIEWED_RPCS: frozenset[str] = frozenset(
         "help.GetConfigRequest",
         "messages.GetRepliesRequest",
         "messages.SearchRequest",
+        "auth.LogOutRequest",  # comms v0.3 B14: admin.revoke only
     }
 )
 
+# comms v0.3 B14: the one administrative RPC, built only inside the adapter's admin.revoke path.
+SANCTIONED = {(ADAPTER, "LogOutRequest")}
 PROHIBITED = {
     "send_message",
     "send_file",
@@ -191,7 +194,7 @@ def test_no_prohibited_symbol_appears_in_src():
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                 else None
             )
-            if name in PROHIBITED:
+            if name in PROHIBITED and (path, name) not in SANCTIONED:
                 hits.append(f"{path}:{node.lineno}:{name}")
     assert hits == []
 

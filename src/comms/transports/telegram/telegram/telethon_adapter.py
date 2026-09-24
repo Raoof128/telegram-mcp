@@ -37,6 +37,7 @@ from comms.transports.telegram.telegram.deadline import (
 from comms.transports.telegram.telegram.errors import GatewayError
 
 __all__ = [
+    "ADMIN_RPCS",
     "OPERATIONS",
     "REVIEWED_REQUESTS",
     "DialogView",
@@ -63,6 +64,9 @@ OPERATIONS: dict[str, frozenset[str]] = {
     ),
     "admin.status": frozenset({"updates.GetStateRequest", "users.GetUsersRequest"}),
     "admin.discover": frozenset({"messages.GetDialogsRequest"}),
+    # comms v0.3 B14: the one administrative RPC. One send, never retried, only from the
+    # auth handler's revoke flow (telegram/admin_rpc.py); no read path may carry it.
+    "admin.revoke": frozenset({"auth.LogOutRequest"}),
     "mcp.retrieval": frozenset(
         {
             "messages.GetPeerDialogsRequest",
@@ -75,6 +79,7 @@ OPERATIONS: dict[str, frozenset[str]] = {
     ),
 }
 REVIEWED_REQUESTS: frozenset[str] = frozenset().union(*OPERATIONS.values())
+ADMIN_RPCS: frozenset[str] = OPERATIONS["admin.revoke"]
 
 
 def qualified(request: Any) -> str:
@@ -441,6 +446,16 @@ class TelethonSession:
             budget=WorkBudget(max_rpcs=1),
         )
         return int(users[0].id)
+
+    async def admin_log_out(self, deadline: Deadline) -> None:
+        """Exactly one ``auth.LogOutRequest`` (comms v0.3 B14); only ``admin_rpc`` calls this."""
+        await self._call_reviewed(
+            functions.auth.LogOutRequest(),
+            operation="admin.revoke",
+            client_ref="operator",
+            deadline=deadline,
+            budget=WorkBudget(max_rpcs=1),
+        )
 
     async def logout_local(self) -> None:
         """Forget the session locally; never ``log_out``.

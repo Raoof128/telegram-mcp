@@ -32,10 +32,11 @@ never called: in 1.45.0 they retry on `AuthRestartError`, send
 | `admin.login` | `account.GetPasswordRequest` | https://core.telegram.org/method/account.getPassword | none | SRP parameters for 2FA. |
 | `admin.login` | `auth.CheckPasswordRequest` | https://core.telegram.org/method/auth.checkPassword | authorises this session | SRP proof; the password never leaves the daemon. |
 | `admin.login` | `help.GetConfigRequest` | https://core.telegram.org/method/help.getConfig | none | Read by the one explicit, budgeted DC switch on `PHONE_MIGRATE`. |
+| `admin.revoke` | `auth.LogOutRequest` | https://core.telegram.org/method/auth.logOut | ends this authorisation at Telegram | comms v0.3 B14: once per `auth revoke-this-session`, never retried, only after the `started` event is committed and anchored; the local session is wiped whatever the outcome. |
 
 **Absent in every phase:**
 - `updates.GetDifferenceRequest`: 4b login no longer calls it.
-- `auth.ResendCodeRequest`, `auth.LogOutRequest`.
+- `auth.ResendCodeRequest` (and `auth.LogOutRequest` outside `admin.revoke`).
 - `account.UpdatePasswordSettingsRequest`, `account.ConfirmPasswordEmailRequest`.
 - `contacts.ResolveUsernameRequest`, `channels.GetChannelsRequest`.
 - Every takeout request.

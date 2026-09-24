@@ -3,7 +3,8 @@
 Spec §9.2: the phone number, code and 2FA password reach the daemon only over
 the admin socket and are held for the single step that needs them. They are
 never logged, never placed in a challenge or display, never returned.
-``auth revoke-this-session`` is deliberately not registered (design D8).
+``auth revoke-this-session`` (comms v0.3 B14) is registered only when a comms audit writer
+is supplied: its ``started``/``finished`` events live on the comms chain.
 """
 
 from __future__ import annotations
@@ -14,9 +15,11 @@ import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from comms.transports.telegram.storage.identity import ensure_account
+from comms.transports.telegram.telegram import admin_rpc
 from comms.transports.telegram.telegram.deadline import Deadline
 from comms.transports.telegram.telegram.errors import GatewayError
 
@@ -40,6 +43,8 @@ def auth_handlers(
     session: Any,
     *,
     clock: Callable[[], float] = time.monotonic,
+    writer: Any = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> dict[str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]]:
     logins: dict[str, _Login] = {}
 
@@ -104,4 +109,18 @@ def auth_handlers(
         logins.clear()
         return {"logged_out_locally": True}
 
-    return {"auth login": login, "auth status": status, "auth logout-local": logout_local}
+    async def revoke(args: dict[str, Any]) -> dict[str, Any]:
+        if set(args):
+            raise ValueError("unknown argument")
+        outcome = await admin_rpc.revoke_session(conn, writer, session, now=now())
+        logins.clear()
+        return {"revoked": True, "remote_revoke": outcome}
+
+    handlers: dict[str, Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]] = {
+        "auth login": login,
+        "auth status": status,
+        "auth logout-local": logout_local,
+    }
+    if writer is not None:
+        handlers["auth revoke-this-session"] = revoke
+    return handlers
