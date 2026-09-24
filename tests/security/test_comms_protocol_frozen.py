@@ -86,6 +86,7 @@ def test_every_remaining_telegram_mcp_literal_is_a_frozen_identifier():
                 "test_comms_layering.py",
                 "test_comms_protocol_frozen.py",
                 "test_comms_entry_points.py",  # names the legacy entry point on purpose
+                "test_catalog_skeleton.py",  # forbids the legacy package as an import, on purpose
             }:
                 continue
             tree = ast.parse(path.read_text())
