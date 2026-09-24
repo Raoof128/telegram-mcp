@@ -16,6 +16,8 @@ from comms.core.validators import Validator, count, digest, key_id, one_of, ref
 
 __all__ = ["AUDIT_EVENT_SPECS", "SUBJECT_KINDS", "validate_audit_event"]
 
+_CREDENTIALS = {name for name, p in PURPOSES.items() if p.rotation == "staged"}
+
 AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
     "campaign_event": {"event_type": one_of(EVENT_TYPES)},
     "system.test_marker": {"count": count(0)},
@@ -40,6 +42,17 @@ AUDIT_EVENT_SPECS: dict[str, Mapping[str, Validator]] = {
         "from_state": one_of({"ACTIVE", "TRUSTED_RETIRED", "VERIFICATION_ONLY"}),
         "to_state": one_of({"TRUSTED_RETIRED", "VERIFICATION_ONLY", "REVOKED"}),
     },
+    "admin.credential_rotation": {
+        "purpose": one_of(_CREDENTIALS),
+        "old_version": count(0),
+        "new_version": count(1),
+    },
+    "admin.credential_rotation_rolled_back": {
+        "purpose": one_of(_CREDENTIALS),
+        "restored_version": count(0),  # 0: a first activation had nothing to restore
+        "orphaned_version": count(1),
+    },
+    "admin.credential_revoked": {"purpose": one_of(_CREDENTIALS), "version": count(1)},
     "admin.key_rotation": {
         "purpose": one_of(set(PURPOSES)),
         "old_version": count(0),
@@ -55,6 +68,9 @@ SUBJECT_KINDS: dict[str, str | None] = {
     "system.legacy_client_auth_revoked": "cutover",
     "campaign_event_committed": "event",
     "admin.signer_trust": None,
+    "admin.credential_rotation": None,
+    "admin.credential_rotation_rolled_back": None,
+    "admin.credential_revoked": None,
     "admin.key_rotation": None,
 }
 

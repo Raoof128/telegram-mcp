@@ -1,6 +1,7 @@
 """Key IDs, ``<kind>:sha256:<64 hex>``: the one rule for both the legacy store and comms.
 
-An HMAC key's ID hashes the secret; an Ed25519 key's ID hashes its raw public key.
+An HMAC key's ID hashes the secret; an Ed25519 key's ID hashes its raw public key; an
+opaque credential's ID hashes the credential (high-entropy provider tokens).
 IDs may be stored for lookup, but every load recomputes and compares them.
 """
 
@@ -11,7 +12,7 @@ import hashlib
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-__all__ = ["ed25519_key_id", "ed25519_public", "hmac_key_id"]
+__all__ = ["ed25519_key_id", "ed25519_public", "hmac_key_id", "opaque_key_id"]
 
 
 def hmac_key_id(secret: bytes) -> str:
@@ -25,3 +26,7 @@ def ed25519_public(seed: bytes) -> bytes:
 
 def ed25519_key_id(public: bytes) -> str:
     return "ed25519:sha256:" + hashlib.sha256(public).hexdigest()
+
+
+def opaque_key_id(value: bytes) -> str:
+    return "opaque:sha256:" + hashlib.sha256(value).hexdigest()

@@ -138,6 +138,8 @@ def key_id_for(purpose: str, material: bytes) -> str:
         return ids.hmac_key_id(material)
     if kind == "ed25519":
         return ids.ed25519_key_id(ids.ed25519_public(material))
+    if kind == "opaque":
+        return ids.opaque_key_id(material)
     raise KeySlotError("no key id rule for this key kind")
 
 
