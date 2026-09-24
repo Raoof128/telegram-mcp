@@ -1,3 +1,81 @@
 {
-  "fixtures": {}
+  "fixtures": {
+    "telegram_bot/sendMessage_400_chat_not_found.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "2e2959b7a53d7d18c395917206b729a759cf5663a4fc4c99fd33a21ca0e50125",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_400_undocumented.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "39733296e9e1afc7d7404cf2e73226ad28bf3865ac646897079d1a9924b6eae8",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_401.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "c30e5ebcc0cb75a7fcd214554ab599c1b309c9b0ad517f50f161a7a8ff42f761",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_403_blocked.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "d1b78841913a820211a5810a62f7d0bd600e5f81a8a5d478d3450d057a3a8498",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_429.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "ec69aa461490ef0b3ab0982df43f4ebd037b196ec18204a0e2ef8887d1c99e56",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_429_no_retry_after.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "fd9bfbe5cb0d8625a1a23308c06650489b8c818b68bf9d36e0d2fa62feabe97a",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_500_envelope.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "4c74f59e317e957728d0a259ddffe37140a79ca0187337de101573fe6cd661e0",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_502.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "7152ea58bfa1ba4debe98f0f639d1608618a09b92c79f383862ba87c7a838ad0",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_malformed.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "e9474d18beb5e2ede1c0b4ac8ca4fce6db2b7941397962b10e5f12700d86c03e",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_no_ok_field.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "43d3db779da9c4e10bbb1843e27e15db3ad9e694c8ed4953002213c0b7064140",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "22211893982c3b9a1e0163032c7a85174ab9ab765c5ccdd9e0f30192de0b11fc",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    }
+  }
 }

@@ -1,0 +1,1 @@
+{"http_status": 200, "body": {"ok": true, "result": {"message_id": 4711, "date": 1790000000, "chat": {"id": -1001234567890, "type": "supergroup", "title": "Fixture group"}, "text": "hello"}}}
