@@ -51,6 +51,9 @@ class SlotChainKeys:
     def current(self) -> bytes:
         return load_active(self._conn, self._store, "audit-chain-key")[0]
 
+    def current_id(self) -> str:
+        return load_active(self._conn, self._store, "audit-chain-key")[1]
+
     def for_epoch(self, epoch: int) -> bytes:
         return self.current()
 
@@ -90,6 +93,10 @@ class AuditWriter:
     ) -> None:
         self.conn, self._keys, self._anchor, self._clock = conn, keys, Path(anchor_path), clock
 
+    def key_id(self) -> str:
+        """The ID of the chain key new events are MACed under."""
+        return self._keys.current_id()
+
     @contextmanager
     def transaction(self) -> Iterator[AuditTx]:
         with append_guard(COMMS):
@@ -103,20 +110,31 @@ class AuditWriter:
                     committed = head(
                         self.conn, COMMS
                     )  # this transaction's own head, read inside it
+            if committed is not None:
+                self._refresh(committed, now)
+
+    def refresh_anchor(self) -> None:
+        """Re-anchor to the committed head (a resumed cutover after a crash before its refresh)."""
+        with append_guard(COMMS):
+            committed = head(self.conn, COMMS)
             if committed is None:
-                return
-            try:
-                write_anchor(
-                    COMMS_ANCHOR,
-                    self._anchor,
-                    self._keys.for_epoch(committed["chain_epoch"]),
-                    chain_epoch=committed["chain_epoch"],
-                    chain_seq=committed["chain_seq"],
-                    event_id=committed["event_id"],
-                    event_mac=committed["event_mac"],
-                    now=timeutil.iso(now),
-                    guard_conn=self.conn,
-                )
-            except Exception:  # noqa: BLE001 -- any refresh failure degrades; the lock is still held
-                latch_degraded(self.conn, reason="ANCHOR_REFRESH_FAILED", now=now)
-                raise AnchorFailed from None
+                raise ValueError("cannot anchor an empty comms chain")
+            self._refresh(committed, timeutil.utc(self._clock()))
+
+    def _refresh(self, committed: Mapping[str, Any], now: datetime) -> None:
+        """Called with the append guard held; a failure latches degraded before raising."""
+        try:
+            write_anchor(
+                COMMS_ANCHOR,
+                self._anchor,
+                self._keys.for_epoch(committed["chain_epoch"]),
+                chain_epoch=committed["chain_epoch"],
+                chain_seq=committed["chain_seq"],
+                event_id=committed["event_id"],
+                event_mac=committed["event_mac"],
+                now=timeutil.iso(now),
+                guard_conn=self.conn,
+            )
+        except Exception:  # noqa: BLE001 -- any refresh failure degrades; the lock is still held
+            latch_degraded(self.conn, reason="ANCHOR_REFRESH_FAILED", now=now)
+            raise AnchorFailed from None

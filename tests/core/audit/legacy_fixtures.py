@@ -49,4 +49,8 @@ def legacy_port(tmp_path: Path, *, events: int = 3, name: str = "legacy.db") -> 
     h = head(conn)
     if h is not None:
         write_anchor(adir / "anchor.json", CHAIN_KEY, now="2026-09-24T00:00:00Z", **h)
-    return TelegramLegacyPort(conn, CHAIN_KEY, CHECKPOINT_SEED, adir / "anchor.json", CutoverGate())
+    key_dir = tmp_path / f"{name}.keys"
+    key_dir.mkdir(mode=0o700)
+    return TelegramLegacyPort(
+        conn, CHAIN_KEY, CHECKPOINT_SEED, adir / "anchor.json", CutoverGate(), key_dir
+    )

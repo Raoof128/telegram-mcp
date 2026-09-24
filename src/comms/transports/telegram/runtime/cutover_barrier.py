@@ -2,14 +2,15 @@
 
 ``CutoverGate`` wraps the legacy ingress ASGI app: once closed it refuses new requests
 with 503 and counts in-flight ones down. ``TelegramLegacyPort`` verifies, seals and
-anchors the legacy chain. The seal is enforced by the legacy database itself (a trigger
-refuses every audit insert once ``audit.append_state`` is ``sealed``), not only here.
+anchors the legacy chain, and retires `tgml1`. The seal and the retirement are enforced
+by the legacy database itself (triggers refuse every audit insert once
+``audit.append_state`` is ``sealed``, and every bearer client once ``auth.tgml1_state`` is
+``revoked``), not only here.
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +21,9 @@ from comms.core.audit.cutover import LegacySeal
 from comms.core.canonical import jcs_dumps
 from comms.core.storage.db import write_tx
 from comms.transports.telegram.disclosure.audit import anchor, chain
-from comms.transports.telegram.storage.settings import get_setting, validate_setting
+from comms.transports.telegram.disclosure.audit.profile import LEGACY_TELEGRAM
+from comms.transports.telegram.ipc.leases import revoke_client_auth
+from comms.transports.telegram.storage.settings import get_setting, put_setting
 
 __all__ = ["CutoverGate", "TelegramLegacyPort"]
 
@@ -104,9 +107,12 @@ class TelegramLegacyPort:
         checkpoint_key: bytes,
         anchor_path: Path,
         gate: CutoverGate,
+        key_dir: Path,
     ) -> None:
         self.conn, self._key, self._cp_key = conn, chain_key, checkpoint_key
-        self._anchor, self.gate = Path(anchor_path), gate
+        self._anchor, self.gate, self._key_dir = Path(anchor_path), gate, Path(key_dir)
+
+    chain_domain = LEGACY_TELEGRAM.event_domain.decode()
 
     def close_ingress(self) -> None:
         self.gate.close()
@@ -143,15 +149,10 @@ class TelegramLegacyPort:
         )
 
     def seal(self, *, now: datetime) -> LegacySeal:
-        value = json.dumps(validate_setting("audit.append_state", "sealed"), separators=(",", ":"))
         with write_tx(self.conn):
             chain.append_event(self.conn, self._key, _marker(now))
             chain.insert_checkpoint(self.conn, self._cp_key, now=timeutil.iso(now))
-            self.conn.execute(
-                "INSERT INTO settings(key, value_json, updated_at) VALUES ('audit.append_state', ?, ?)"
-                " ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at",
-                (value, timeutil.iso(now)),
-            )
+            put_setting(self.conn, "audit.append_state", "sealed", now=timeutil.iso(now))
         seal = self.sealed_record()
         assert seal is not None
         return seal
@@ -163,4 +164,4 @@ class TelegramLegacyPort:
         anchor.write_anchor(self._anchor, self._key, now=timeutil.iso(now), **current)
 
     def revoke_client_auth(self, *, now: datetime) -> tuple[int, int]:
-        raise NotImplementedError("Task A11")
+        return revoke_client_auth(self.conn, self._key_dir, now=timeutil.iso(now))

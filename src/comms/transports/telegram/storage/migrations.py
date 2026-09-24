@@ -628,6 +628,28 @@ _V03_SEAL = (
       WHEN OLD.key = 'audit.append_state' AND OLD.value_json = '"sealed"'
       BEGIN SELECT RAISE(ABORT, 'legacy seal is one-way (sealed)'); END
     """,
+    """
+    CREATE TRIGGER legacy_tgml1_retired_u BEFORE UPDATE OF enabled ON mcp_clients
+      WHEN NEW.enabled = 1 AND NEW.auth_kind = 'bearer'
+       AND (SELECT value_json FROM settings WHERE key = 'auth.tgml1_state') = '"revoked"'
+      BEGIN SELECT RAISE(ABORT, 'tgml1 is retired'); END
+    """,
+    """
+    CREATE TRIGGER legacy_tgml1_retired_i BEFORE INSERT ON mcp_clients
+      WHEN NEW.auth_kind = 'bearer'
+       AND (SELECT value_json FROM settings WHERE key = 'auth.tgml1_state') = '"revoked"'
+      BEGIN SELECT RAISE(ABORT, 'tgml1 is retired'); END
+    """,
+    """
+    CREATE TRIGGER legacy_tgml1_one_way_u BEFORE UPDATE ON settings
+      WHEN OLD.key = 'auth.tgml1_state' AND OLD.value_json = '"revoked"'
+      BEGIN SELECT RAISE(ABORT, 'tgml1 revocation is one-way'); END
+    """,
+    """
+    CREATE TRIGGER legacy_tgml1_one_way_d BEFORE DELETE ON settings
+      WHEN OLD.key = 'auth.tgml1_state' AND OLD.value_json = '"revoked"'
+      BEGIN SELECT RAISE(ABORT, 'tgml1 revocation is one-way'); END
+    """,
 )
 
 MIGRATIONS: tuple[Migration, ...] = (

@@ -35,16 +35,22 @@ import binascii
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from comms.core.storage.db import write_tx
 from comms.transports.telegram.authority.refs import validate_ref_format
 from comms.transports.telegram.contract import strict_json_loads  # single strict JSON decoder
+from comms.transports.telegram.storage.authority_view import load_security
+from comms.transports.telegram.storage.settings import get_setting, put_setting
 
 if TYPE_CHECKING:
+    import sqlite3
     from collections.abc import Mapping
+    from pathlib import Path
 
 __all__ = [
     "LEASE_AUDIENCE",
@@ -55,6 +61,7 @@ __all__ = [
     "LeaseClaims",
     "LeaseError",
     "mint_lease",
+    "revoke_client_auth",
     "verify_lease",
 ]
 
@@ -243,3 +250,35 @@ def verify_lease(
         security_epoch=sec,
         version=1,
     )
+
+
+def revoke_client_auth(conn: sqlite3.Connection, key_dir: Path, *, now: str) -> tuple[int, int]:
+    """Retire `tgml1` (comms v0.3 A33): the cutover's ``LEGACY_CLIENT_AUTH_REVOKED`` step.
+
+    One legacy transaction disables every bearer client, bumps the security epoch
+    (so no lease already minted verifies) and records ``auth.tgml1_state=revoked``,
+    after which the legacy DB refuses to enable or add a bearer client. Then every
+    seed file, pending ones included, is deleted. A rerun never bumps the epoch
+    again; it only deletes seed files a crash left behind. Returns the number of
+    bearer registrations retired and the security epoch, the same on every rerun.
+    """
+    if get_setting(conn, "auth.tgml1_state") != "revoked":
+        with write_tx(conn):
+            conn.execute("UPDATE mcp_clients SET enabled = 0 WHERE auth_kind = 'bearer'")
+            conn.execute(
+                "UPDATE security_state SET security_epoch = security_epoch + 1, updated_at = ?"
+                " WHERE singleton_id = 1",
+                (now,),
+            )
+            put_setting(conn, "auth.tgml1_state", "revoked", now=now)
+    seeds = sorted(key_dir.glob("lease-seed.*"))
+    for path in seeds:
+        path.unlink()
+    if seeds:
+        directory = os.open(key_dir, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    retired = conn.execute("SELECT count(*) FROM mcp_clients WHERE auth_kind = 'bearer'").fetchone()
+    return int(retired[0]), load_security(conn)[0]

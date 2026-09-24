@@ -31,6 +31,7 @@ __all__ = [
     "SettingSpec",
     "all_settings",
     "get_setting",
+    "put_setting",
     "set_setting",
     "validate_setting",
 ]
@@ -128,6 +129,10 @@ SETTINGS_REGISTRY: dict[str, SettingSpec] = {
     "audit.append_state": SettingSpec(
         "str", "open", choices=("open", "sealed"), origin="impl", phase=3
     ),
+    # comms v0.3 (A33, G3): once "revoked", no bearer client can be enabled or added.
+    "auth.tgml1_state": SettingSpec(
+        "str", "open", choices=("open", "revoked"), origin="impl", phase=3
+    ),
     # non-secret release metadata.
     "release.profile": SettingSpec("str", "safe_demo", choices=_RELEASE_PROFILES),
     "release.version": SettingSpec("str", "0.1.10", origin="impl"),
@@ -164,8 +169,8 @@ def validate_setting(key: str, value: Any) -> Any:
     return value
 
 
-def set_setting(conn: sqlite3.Connection, key: str, value: Any, *, now: str | None = None) -> Any:
-    """Validate and upsert one allowlisted setting."""
+def put_setting(conn: sqlite3.Connection, key: str, value: Any, *, now: str | None = None) -> Any:
+    """Validate and upsert one allowlisted setting inside the caller's transaction."""
     validated = validate_setting(key, value)
     conn.execute(
         "INSERT INTO settings(key, value_json, updated_at) VALUES (?, ?, ?)"
@@ -173,6 +178,12 @@ def set_setting(conn: sqlite3.Connection, key: str, value: Any, *, now: str | No
         " updated_at = excluded.updated_at",
         (key, json.dumps(validated, separators=(",", ":")), now or _now_iso()),
     )
+    return validated
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value: Any, *, now: str | None = None) -> Any:
+    """Validate, upsert and commit one allowlisted setting."""
+    validated = put_setting(conn, key, value, now=now)
     conn.commit()
     return validated
 
