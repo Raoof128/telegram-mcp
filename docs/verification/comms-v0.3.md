@@ -139,3 +139,66 @@ Unchanged from Part A: the R-A20 `.claude/settings.json` change, and the out-of-
 `comms-v0.3-part-b` is an annotated local tag, **not pushed**: tag object `89fc6b23689d5d49646f18e87416a1bc47528541` → commit `c135599656a9b5479afb26d6656ec9091f2ccf3a`.
 
 No production claim.
+
+## Part C: provider adapters
+
+Commits `1ed921f` … this section, after the `comms-v0.3-part-b` tag (`c135599`).
+
+### Adapter inventory
+
+| Adapter | Contracts (A18) | Where | Provider surface |
+|---|---|---|---|
+| `telegram_bot` | delivery, capability, admin, context | `transports/telegram/bot/` | Bot API, pinned to `https://api.telegram.org`; one `POST` per call from a closed method set; token only in the path, redacted from httpx's log |
+| `telegram_user` | delivery, capability, admin, context | `transports/telegram/user/`, adapter `telegram/telethon_adapter.py` | MTProto via Telethon 1.45.0 (the only Telethon importer); `READ_RPCS`/`WRITE_RPCS`/`ADMIN_RPCS` by capability, each its own recorder operation |
+| `whatsapp_cloud` | delivery, capability, admin | `transports/whatsapp/cloud/` | Meta Graph API v21.0, pinned to `https://graph.facebook.com`; media by id through the Meta-only downloader |
+| `whatsapp_webhooks` | inbound_context, provider_updates | `transports/whatsapp/webhooks/` | the raw ASGI ingress (`GET`/`POST /webhooks/meta`), the durable inbox and the resumable fan-out |
+
+Shared: `core/providers/{capability,protocols,semantics,ratelimit}.py` (capability ids and states, `ADAPTER_CONTRACTS`, the `SEMANTICS` idempotency table, normalized rate limits); `transports/net.py` (the origin pin and the IDNA exact-suffix host rule); `transports/telegram/{peers,message_text,args,admin_profiles,chat_specs,capabilities,page_bounds}.py` and `transports/whatsapp/numbers.py` (one copy of each shared rule); `core/campaigns/{render,templates}.py`, `core/delivery/window.py`; the registry `comms/runtime/adapters.py`, wired only through `composition.build_comms_adapters`.
+
+### API versions and fixtures
+
+- Bot API envelope shape (unchanged since 2.0), methods as of Bot API 9.x; Graph API **v21.0**; Telethon **1.45.0** (its layer's `messages.*ForumTopic` requests); httpx 0.28.1.
+- `tests/fixtures/providers/PROVENANCE.json` pins 58 fixtures by SHA-256 with provider, API version, source and capture date: 38 Bot API envelopes (`telegram_bot/`) and 20 Graph API bodies (`meta/`). All are hand-built from the documented shapes and say so; none is a live capture. The Meta contract oracle is WhatsVault's `FakeGraph` (R-C27), deterministic, with HMAC-signed webhooks.
+
+### Gate at the Part C head
+
+| Check | Result |
+|---|---|
+| `uv run pytest -q` | **3540 passed**, 4 skipped |
+| `scripts/e2e_smoke.py` | **57/57** |
+| `pytest tests/formal` | 44 passed: 544 states / 22 assertions; campaign model 96,528 states; audit model 215,040 states; keys model 512 states |
+| ruff, ruff format, mypy, `uv build` | clean |
+| WhatsVault suite | **450 passed** |
+
+### What the tests found
+
+- **Hidden replay (C14).** Telethon's `MTProtoSender._reconnect` re-queues every in-flight request after an automatic reconnect: a dropped `sendMessage` would be sent twice. The client now runs with `auto_reconnect=False` and `connection_retries=0`; a control test shows the default replays.
+- **Tokens in logs (C6).** httpx logs every request URL at INFO and its exceptions hold the URL; the Bot API token lives in the path. A redacting filter and a fixed, unchained `BotTransportError` close both (mutation-checked).
+- **Chat ids (C16, C21).** Channel ids were marked by string concatenation (`-100` + N), right only for ten-digit ids; now `-(10**12 + N)`, proved equal to Telethon's `get_peer_id` (the 5b-4 test fixture delegates to it).
+- **Campaign content (C23).** Campaign content is `{canonical, fa, en, links, media}` but the Telegram transports accepted only `{text}`: every real campaign would have frozen as skipped. `core/campaigns/render.py` is the one rendering rule, proved through a real freeze.
+- **A leaking repr (C31).** `DeliveryResult` printed its provider ref, which for Telegram names the chat; it is now `repr=False`.
+- **Missing conformance (C32).** `whatsapp_webhooks` advertised two contracts with no cases; the first live-mode run reported `NO_CASES`. Three cases now cover them.
+- **Guards (C15, C33).** The adapter boundary (only the adapter imports Telethon; only composition imports the adapter) moved the send and rights reads behind neutral types; the tombstone closure moved the page bounds out of `disclosure/bounds.py`; the wire-domain guard renamed a `comms-` literal.
+
+### The exit gate
+
+`tests/security/test_v03_part_c_exit.py` pins the plan's list verbatim — conformance over every contract, with zero unexplained skips; classification tables; semantics; egress; `random_id`; retries pinned; the window and templates; the webhook; canaries; fixture provenance — and re-runs every owning test in a fresh process. It also runs the whole conformance registry in-process: every advertised contract of all four adapters passes with zero skips.
+
+### Rulings made in Part C
+
+Registered: R-C27 (the Meta oracle in WhatsVault's `fake_meta.py`). The ledger records every smaller one task by task (C3 support and saga table; C6–C13 the Bot API client, classification, capability, admin tables and poller; C14 RPC sets; C15 key persistence and the collision rule; C16–C21 the MTProto transports; C22–C26 Meta; C28–C29 the webhook ingress and inbox; C30 rate limits; C33 the registry; the inbound-body retention phase).
+
+### Follow-ups (carried into Part D)
+
+- **The live update stream (C21).** The client stays `receive_updates=False`; turning the stream on makes Telethon issue `updates.GetDifference`, which needs its own review. The consumer, the translation and the single-owner claim are built.
+- **The daemon call (C33).** The legacy daemon does not yet open `comms.db` or the secret store; Part D's comms runtime calls `build_comms_adapters`.
+- **The WhatsVault archive (C29).** The worker takes an idempotent `Archive`; binding WhatsVault's importer (private to its app today) belongs with that runtime.
+- **Live acceptance (C32).** The runbooks and the opt-in, evidence-only run exist; with no accounts described every live case reports `NOT_CONFIGURED`. The Groups API endpoint shapes (C26) are unverified until that run.
+- **Per-recipient template language (C23)** and `chat.set_photo` (needs the media path) are Part D.
+
+### Waiting on the owner
+
+Unchanged: the R-A20 `.claude/settings.json` change, and the out-of-repo runbook steps.
+
+No production claim.
+
