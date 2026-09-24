@@ -136,6 +136,6 @@ Unchanged from Part A: the R-A20 `.claude/settings.json` change, and the out-of-
 
 ### Tag
 
-`comms-v0.3-part-b` is an annotated local tag on the commit that adds this section. It is **not pushed**; the tag object SHA is recorded in the follow-up commit.
+`comms-v0.3-part-b` is an annotated local tag, **not pushed**: tag object `89fc6b23689d5d49646f18e87416a1bc47528541` → commit `c135599656a9b5479afb26d6656ec9091f2ccf3a`.
 
 No production claim.
