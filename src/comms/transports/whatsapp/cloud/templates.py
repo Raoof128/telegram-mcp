@@ -23,8 +23,8 @@ from typing import Any
 
 from comms.core.canonical import jcs_dumps
 from comms.core.providers.protocols import ProviderResult
-from comms.transports.whatsapp.cloud.classify import classify_admin
-from comms.transports.whatsapp.cloud.http import GraphApi, GraphResponse, GraphTransportError
+from comms.transports.whatsapp.cloud.classify import admin_call
+from comms.transports.whatsapp.cloud.http import GraphApi, GraphResponse
 
 __all__ = ["TemplateCatalog", "TemplateOps", "TemplatePage", "schema_version"]
 
@@ -99,7 +99,7 @@ class TemplateOps:
             or not isinstance(body["components"], list)
         ):
             raise ValueError("template definition refused")
-        result = _admin(lambda: self._api.create_template(body))
+        result = admin_call(lambda: self._api.create_template(body))
         if result.outcome != "SUCCEEDED":
             return result
         template_id = result.detail.get("id")
@@ -112,20 +112,12 @@ class TemplateOps:
             raise ValueError("template id refused")
         if set(body) != {"components"} or not isinstance(body["components"], list):
             raise ValueError("template edit refused")
-        return _admin(lambda: self._api.edit_template(template_id, body))
+        return admin_call(lambda: self._api.edit_template(template_id, body))
 
     def delete(self, name: str) -> ProviderResult:
         if not isinstance(name, str) or not _NAME.match(name):
             raise ValueError("template name refused")
-        return _admin(lambda: self._api.delete_template(name))
-
-
-def _admin(call: Any) -> ProviderResult:
-    try:
-        outcome: GraphResponse | GraphTransportError = call()
-    except GraphTransportError as exc:
-        outcome = exc
-    return classify_admin(outcome)
+        return admin_call(lambda: self._api.delete_template(name))
 
 
 def _page(response: GraphResponse) -> TemplatePage:

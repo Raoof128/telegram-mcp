@@ -10,7 +10,7 @@ are ``OUTCOME_UNKNOWN``. A connection never made is ``FAILED_TRANSIENT``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
@@ -18,7 +18,7 @@ from comms.core.delivery.transport import ResultKind
 from comms.core.providers.protocols import ProviderResult
 from comms.transports.whatsapp.cloud.http import GraphResponse, GraphTransportError
 
-__all__ = ["META_CODES", "MetaOutcome", "classify_admin", "classify_send"]
+__all__ = ["META_CODES", "MetaOutcome", "admin_call", "classify_admin", "classify_send"]
 
 _T, _P, _U = ResultKind.FAILED_TRANSIENT, ResultKind.FAILED_PERMANENT, ResultKind.OUTCOME_UNKNOWN
 META_CODES: Mapping[int, tuple[ResultKind, str | None]] = MappingProxyType(
@@ -117,3 +117,12 @@ def classify_admin(outcome: GraphResponse | GraphTransportError) -> ProviderResu
     if kind is _U:
         return ProviderResult("OUTCOME_UNKNOWN", None)
     return ProviderResult("FAILED", name)
+
+
+def admin_call(call: Callable[[], GraphResponse]) -> ProviderResult:
+    """Make one non-send Graph call and classify it (one copy for templates and media)."""
+    try:
+        outcome: GraphResponse | GraphTransportError = call()
+    except GraphTransportError as exc:
+        outcome = exc
+    return classify_admin(outcome)

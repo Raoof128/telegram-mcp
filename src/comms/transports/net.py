@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-__all__ = ["EgressRefused", "pinned_client"]
+__all__ = ["EgressRefused", "host_allowed", "pinned_client", "suffix_pinned_client"]
 
 
 class EgressRefused(Exception):
@@ -53,4 +53,52 @@ def pinned_client(
         timeout=timeout,
         follow_redirects=False,
         trust_env=False,  # no proxy or certificate settings from the environment
+    )
+
+
+def host_allowed(url: str, suffixes: tuple[str, ...]) -> bool:
+    """``https`` on 443, no userinfo, and a host that after IDNA normalisation equals a suffix
+    or ends with ``"." + suffix``: an exact suffix match, never a substring (A26, O6)."""
+    parts = urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError:
+        return False
+    if (
+        parts.scheme != "https"
+        or "@" in parts.netloc
+        or port not in (None, 443)
+        or not parts.hostname
+    ):
+        return False
+    try:
+        host = parts.hostname.rstrip(".").encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return False
+    return any(host == suffix or host.endswith("." + suffix) for suffix in suffixes)
+
+
+class _SuffixPinned(httpx.BaseTransport):
+    def __init__(self, suffixes: tuple[str, ...], inner: httpx.BaseTransport) -> None:
+        self._suffixes, self._inner = suffixes, inner
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        if not host_allowed(str(request.url), self._suffixes):
+            raise EgressRefused
+        return self._inner.handle_request(request)
+
+    def close(self) -> None:
+        self._inner.close()
+
+
+def suffix_pinned_client(
+    suffixes: tuple[str, ...], *, timeout: float, transport: httpx.BaseTransport | None = None
+) -> httpx.Client:
+    """A client that reaches only hosts under ``suffixes`` (checked on every request), never
+    follows a redirect itself, and ignores the environment. For the Meta media downloader."""
+    return httpx.Client(
+        transport=_SuffixPinned(suffixes, transport or httpx.HTTPTransport(retries=0)),
+        timeout=timeout,
+        follow_redirects=False,
+        trust_env=False,
     )

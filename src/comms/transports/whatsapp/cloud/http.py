@@ -95,13 +95,35 @@ class GraphApi:
         return self._post(f"/{API_VERSION}/{self._business()}/message_templates", body)
 
     def edit_template(self, template_id: str, body: Mapping[str, Any]) -> GraphResponse:
-        if not _OBJECT_ID.match(template_id):
-            raise ValueError("template id refused")
-        return self._post(f"/{API_VERSION}/{template_id}", body)
+        return self._post(f"/{API_VERSION}/{self._object(template_id)}", body)
 
     def delete_template(self, name: str) -> GraphResponse:
         path = f"/{API_VERSION}/{self._business()}/message_templates"
         return self._call("DELETE", path, params={"name": name})
+
+    def media_info(self, media_id: str) -> GraphResponse:
+        return self._call("GET", f"/{API_VERSION}/{self._object(media_id)}")
+
+    def delete_media(self, media_id: str) -> GraphResponse:
+        return self._call("DELETE", f"/{API_VERSION}/{self._object(media_id)}")
+
+    def upload_media(self, data: bytes, mime: str) -> GraphResponse:
+        return self._call(
+            "POST",
+            f"/{API_VERSION}/{self._phone}/media",
+            form={"messaging_product": "whatsapp", "type": mime},
+            files={"file": ("media", data, mime)},
+        )
+
+    def bearer(self) -> dict[str, str]:
+        """The authorization header, for the media downloader in this package only."""
+        return {"Authorization": f"Bearer {self._token}"}
+
+    @staticmethod
+    def _object(object_id: str) -> str:
+        if not isinstance(object_id, str) or not _OBJECT_ID.match(object_id):
+            raise ValueError("graph object id refused")
+        return object_id
 
     def _business(self) -> str:
         if self._waba is None:
@@ -118,6 +140,8 @@ class GraphApi:
         *,
         body: Mapping[str, Any] | None = None,
         params: Mapping[str, str] | None = None,
+        form: Mapping[str, str] | None = None,
+        files: Mapping[str, Any] | None = None,
     ) -> GraphResponse:
         stage: Literal["not_sent", "ambiguous"] | None = None
         headers = {"Authorization": f"Bearer {self._token}"}
@@ -127,6 +151,8 @@ class GraphApi:
                 f"{GRAPH_ORIGIN}{path}",
                 json=dict(body) if body is not None else None,
                 params=dict(params or {}),
+                data=dict(form) if form is not None else None,
+                files=dict(files) if files is not None else None,
                 headers=headers,
             )
         except (httpx.ConnectError, httpx.ConnectTimeout):
