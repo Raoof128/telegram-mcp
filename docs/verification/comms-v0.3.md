@@ -75,6 +75,6 @@ Deferred minor: an intermittent uvicorn `CancelledError` traceback at smoke shut
 
 ### Tag
 
-`comms-v0.3-part-a` is an annotated local tag on the commit that adds this section. It is **not pushed**, and nothing is ever rebased across it. The tag object SHA is recorded in the follow-up commit.
+`comms-v0.3-part-a` is an annotated local tag on the commit that adds this section. It is **not pushed**, and nothing is ever rebased across it. Tag object `38b28bb43ad702859ac23250f8760acf15412bc0` → commit `fcae4ffd4b66a154c43ee1962d85e380cb7df52a`.
 
 No production claim.
