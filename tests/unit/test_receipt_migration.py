@@ -131,9 +131,56 @@ def v1_world(tmp_path):
     return conn, refs
 
 
+def _verify_at_v1_schema(conn, ref: str) -> bool:
+    """v1 verification exactly as it ran before 5b-3: the schema has no proof_version yet."""
+    row = conn.execute(
+        "SELECT r.disclosure_ref, p.principal_ref, c.client_ref, a.account_ref, r.tool_name,"
+        " r.security_epoch, r.policy_epoch, r.project_scope_digest, r.project_count,"
+        " r.effective_egress_level, r.records_disclosed, r.bytes_disclosed, r.partial,"
+        " r.committed_at, r.consent_key_id, r.consent_challenge_digest,"
+        " r.canonical_result_provenance_digest, r.canonical_coverage_digest,"
+        " r.proof_payload_sha256, r.proof_key_id, r.proof_signature"
+        " FROM disclosure_receipts r JOIN principals p ON p.id = r.principal_id"
+        " JOIN mcp_clients c ON c.id = r.client_id JOIN accounts a ON a.id = r.account_id"
+        " WHERE r.disclosure_ref = ?",
+        (ref,),
+    ).fetchone()
+    names = (
+        "disclosure_ref",
+        "principal_ref",
+        "client_ref",
+        "account_ref",
+        "tool_name",
+        "security_epoch",
+        "policy_epoch",
+        "project_scope_digest",
+        "project_count",
+        "effective_egress_level",
+        "records_disclosed",
+        "bytes_disclosed",
+        "partial",
+        "committed_at",
+        "consent_key_id",
+        "consent_challenge_digest",
+        "canonical_result_provenance_digest",
+        "canonical_coverage_digest",
+    )
+    fields = dict(zip(names, row[:18], strict=True))
+    fields["partial"] = bool(fields["partial"])
+    key = conn.execute(
+        "SELECT public_key_b64url FROM verification_keys WHERE key_id = ?", (row[19],)
+    ).fetchone()
+    return receipts.verify_proof(
+        receipts.build_proof_payload(**fields),
+        proof_signature=row[20],
+        proof_payload_sha256=row[18],
+        public_key_b64url=key[0],
+    )
+
+
 def test_v1_receipts_verify_before_and_after_the_migration(v1_world):
     conn, refs = v1_world
-    assert all(verify_persisted_receipt(conn, r) for r in refs)
+    assert all(_verify_at_v1_schema(conn, r) for r in refs)
     migrate(conn)
     assert all(verify_persisted_receipt(conn, r) for r in refs)
     assert conn.execute("SELECT DISTINCT proof_version FROM disclosure_receipts").fetchall() == [

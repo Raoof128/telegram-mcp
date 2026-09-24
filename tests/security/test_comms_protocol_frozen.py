@@ -15,9 +15,18 @@ from migration.move_map import KEEP_LITERALS
 FIXTURE = ROOT / "tests" / "fixtures" / "migration" / "protocol_constants.json"
 
 
+# comms spec v0.2 (5b-3) is the one semantic phase: it may add protocol
+# identifiers and tombstone retired ones, each named here. Anything else that
+# changes the multiset is drift and fails.
+ADDED_IN_V0_2 = Counter({"'tg-mcp-disclosure/v2'": 1})
+TOMBSTONED_IN_V0_2: Counter[str] = Counter()  # filled when consent is deleted (5b-3 Task 9)
+
+
 def test_protocol_constants_are_the_baseline_multiset():
-    baseline = json.loads(FIXTURE.read_text())
-    assert Counter(protocol_constants(ROOT / "src" / "comms")) == Counter(baseline)
+    baseline = Counter(json.loads(FIXTURE.read_text()))
+    assert not (TOMBSTONED_IN_V0_2 - baseline), "only baseline identifiers can be tombstoned"
+    expected = baseline - TOMBSTONED_IN_V0_2 + ADDED_IN_V0_2
+    assert Counter(protocol_constants(ROOT / "src" / "comms")) == expected
 
 
 def _docstrings(tree: ast.AST) -> set[int]:
