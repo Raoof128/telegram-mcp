@@ -351,7 +351,12 @@ _ADMIN_OUTCOMES: dict[type[BaseException], tuple[_AdminOutcome, str | None]] = {
     errors.UserNotMutualContactError: ("FAILED", "INVITE_REQUIRED"),
     errors.UserChannelsTooMuchError: ("FAILED", "INVITE_REQUIRED"),
     errors.UsersTooMuchError: ("FAILED", "UNAVAILABLE"),
+    errors.ChatAboutNotModifiedError: ("SUCCEEDED", None),
+    errors.InviteHashExpiredError: ("FAILED", "TARGET_NOT_FOUND"),
+    errors.TopicDeletedError: ("FAILED", "TARGET_NOT_FOUND"),
 }
+# Refusals Telethon has no class for, by their exact RPC message.
+_ALREADY_SET_MESSAGES = frozenset({"TOPIC_NOT_MODIFIED"})
 # P §26 permission names → the MTProto ChatBannedRights flags they lift (restrict is exact:
 # a permission not named is allowed).
 _BANNED_FOR_PERMISSION: Mapping[str, tuple[str, ...]] = MappingProxyType(
@@ -419,14 +424,9 @@ def _restrict(
         return ProviderResult("FAILED", "UNAVAILABLE")  # basic groups have no per-member rights
     channel = session._admin_channel(peer_id)
     user = session._admin_user(spec["user_id"])
-    banned = {
-        flag: True
-        for permission, allowed in spec["permissions"].items()
-        if not allowed
-        for flag in _BANNED_FOR_PERMISSION[permission]
-    }
-    rights = types.ChatBannedRights(until_date=_until(spec), **banned)
-    return functions.channels.EditBannedRequest(channel, user, rights)
+    return functions.channels.EditBannedRequest(
+        channel, user, _banned(spec["permissions"], _until(spec))
+    )
 
 
 def _admin_rights(
@@ -447,8 +447,186 @@ def _admin_rights(
     return functions.messages.EditChatAdminRequest(peer_id, user, True)
 
 
+def _banned(permissions: Mapping[str, bool], until: datetime | None = None) -> Any:
+    flags = {
+        flag: True
+        for permission, allowed in permissions.items()
+        if not allowed
+        for flag in _BANNED_FOR_PERMISSION[permission]
+    }
+    return types.ChatBannedRights(until_date=until, **flags)
+
+
+def _title(session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]) -> Any:
+    if peer_type == "channel":
+        return functions.channels.EditTitleRequest(session._admin_channel(peer_id), spec["title"])
+    return functions.messages.EditChatTitleRequest(peer_id, spec["title"])
+
+
+def _about(session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]) -> Any:
+    return functions.messages.EditChatAboutRequest(
+        session._admin_peer(peer_type, peer_id), spec["description"]
+    )
+
+
+def _default_rights(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    return functions.messages.EditChatDefaultBannedRightsRequest(
+        session._admin_peer(peer_type, peer_id), _banned(spec["permissions"])
+    )
+
+
+def _invite_args(spec: Mapping[str, Any]) -> dict[str, Any]:
+    expire = spec.get("expire_date")
+    return {
+        "request_needed": spec.get("creates_join_request"),
+        "expire_date": datetime.fromtimestamp(expire, UTC) if expire else None,
+        "usage_limit": spec.get("member_limit"),
+        "title": spec.get("name"),
+    }
+
+
+def _invite_create(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    peer = session._admin_peer(peer_type, peer_id)
+    return functions.messages.ExportChatInviteRequest(peer, **_invite_args(spec))
+
+
+def _invite_edit(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    peer = session._admin_peer(peer_type, peer_id)
+    return functions.messages.EditExportedChatInviteRequest(
+        peer, spec["invite_link"], **_invite_args(spec)
+    )
+
+
+def _invite_revoke(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    peer = session._admin_peer(peer_type, peer_id)
+    return functions.messages.EditExportedChatInviteRequest(peer, spec["invite_link"], revoked=True)
+
+
+def _join(approved: bool) -> Callable[..., Any]:
+    def build(
+        session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+    ) -> Any:
+        peer = session._admin_peer(peer_type, peer_id)
+        user = session._admin_user(spec["user_id"])
+        return functions.messages.HideChatJoinRequestRequest(peer, user, approved=approved)
+
+    return build
+
+
+def _emoji_id(spec: Mapping[str, Any]) -> int | None:
+    emoji = spec.get("icon_custom_emoji_id")
+    return int(emoji) if emoji else None
+
+
+def _topic_create(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    return functions.messages.CreateForumTopicRequest(
+        session._admin_peer(peer_type, peer_id),
+        spec["name"],
+        icon_color=spec.get("icon_color"),
+        icon_emoji_id=_emoji_id(spec),
+    )
+
+
+def _topic_state(closed: bool | None) -> Callable[..., Any]:
+    def build(
+        session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+    ) -> Any:
+        return functions.messages.EditForumTopicRequest(
+            session._admin_peer(peer_type, peer_id),
+            spec["message_thread_id"],
+            title=spec.get("name"),
+            icon_emoji_id=_emoji_id(spec),
+            closed=closed,
+        )
+
+    return build
+
+
+def _group_create(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    broadcast = spec["kind"] == "broadcast"
+    return functions.channels.CreateChannelRequest(
+        spec["title"],
+        spec.get("about", ""),
+        broadcast=True if broadcast else None,
+        megagroup=None if broadcast else True,
+        forum=True if spec.get("forum") else None,
+    )
+
+
+def _group_delete(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    if peer_type == "channel":
+        return functions.channels.DeleteChannelRequest(session._admin_channel(peer_id))
+    return functions.messages.DeleteChatRequest(peer_id)
+
+
+def _group_migrate(
+    session: TelethonSession, peer_type: str, peer_id: int, spec: Mapping[str, Any]
+) -> Any:
+    if peer_type != "chat":
+        return ProviderResult("FAILED", "UNAVAILABLE")  # already a supergroup or channel
+    return functions.messages.MigrateChatRequest(peer_id)
+
+
+def _invite_link(result: Any) -> str | None:
+    link = getattr(result, "link", None) if isinstance(result, types.ChatInviteExported) else None
+    return link if isinstance(link, str) and link else None
+
+
+def _topic_id(result: Any) -> str | None:
+    for update in getattr(result, "updates", None) or ():
+        message = getattr(update, "message", None)
+        if message is not None and isinstance(
+            getattr(message, "action", None), types.MessageActionTopicCreate
+        ):
+            return str(message.id)
+    return None
+
+
+def _new_channel(result: Any) -> str | None:
+    channels = [c for c in getattr(result, "chats", None) or () if isinstance(c, types.Channel)]
+    return str(utils.get_peer_id(channels[0])) if len(channels) == 1 else None
+
+
+_CREATED_REF: Mapping[Capability, Callable[[Any], str | None]] = MappingProxyType(
+    {
+        Capability.INVITE_CREATE: _invite_link,
+        Capability.TOPIC_CREATE: _topic_id,
+        Capability.GROUP_CREATE: _new_channel,
+        Capability.GROUP_MIGRATE: _new_channel,
+    }
+)
+
 _ADMIN_BUILDERS: Mapping[Capability, Callable[..., Any]] = MappingProxyType(
     {
+        Capability.CHAT_SET_TITLE: _title,
+        Capability.CHAT_SET_DESCRIPTION: _about,
+        Capability.CHAT_SET_PERMISSIONS: _default_rights,
+        Capability.INVITE_CREATE: _invite_create,
+        Capability.INVITE_EDIT: _invite_edit,
+        Capability.INVITE_REVOKE: _invite_revoke,
+        Capability.JOIN_REQUEST_APPROVE: _join(True),
+        Capability.JOIN_REQUEST_REJECT: _join(False),
+        Capability.TOPIC_CREATE: _topic_create,
+        Capability.TOPIC_EDIT: _topic_state(None),
+        Capability.TOPIC_CLOSE: _topic_state(True),
+        Capability.TOPIC_REOPEN: _topic_state(False),
+        Capability.GROUP_CREATE: _group_create,
+        Capability.GROUP_DELETE: _group_delete,
+        Capability.GROUP_MIGRATE: _group_migrate,
         Capability.MEMBER_ADD: _add,
         Capability.MEMBER_BAN: _ban,
         Capability.MEMBER_UNBAN: _unban,
@@ -772,15 +950,19 @@ class TelethonSession:
             return ProviderResult("FAILED", missing.code)
         if isinstance(planned, ProviderResult):
             return planned
-        passthrough = tuple(_ADMIN_OUTCOMES)
+        named = tuple(_ADMIN_OUTCOMES)
         try:
             result = await self.call_capability(
-                capability, planned, timeout=timeout, passthrough=passthrough
+                capability, planned, timeout=timeout, passthrough=(*named, errors.BadRequestError)
             )
-        except passthrough as exc:
+        except named as exc:
             outcome, code = next(v for k, v in _ADMIN_OUTCOMES.items() if isinstance(exc, k))
             detail = {"already_set": True} if outcome == "SUCCEEDED" else {}
             return ProviderResult(outcome, code, detail=detail)
+        except errors.BadRequestError as exc:
+            if exc.message in _ALREADY_SET_MESSAGES:
+                return ProviderResult("SUCCEEDED", None, detail={"already_set": True})
+            return ProviderResult("OUTCOME_UNKNOWN", None)  # an unnamed refusal
         except GatewayError as exc:
             if exc.code == "FLOOD_WAIT" and exc.retry_after:
                 return ProviderResult(
@@ -789,7 +971,36 @@ class TelethonSession:
             return ProviderResult("OUTCOME_UNKNOWN", None)
         if isinstance(result, types.messages.InvitedUsers) and result.missing_invitees:
             return ProviderResult("FAILED", "INVITE_REQUIRED")  # never turned into an invite link
-        return ProviderResult("SUCCEEDED", None)
+        ref_of = _CREATED_REF.get(capability)
+        if ref_of is None:
+            return ProviderResult("SUCCEEDED", None)
+        ref = ref_of(result)
+        if ref is None:
+            return ProviderResult("OUTCOME_UNKNOWN", None)  # created, but no ref to name it by
+        return ProviderResult("SUCCEEDED", None, provider_ref=ref)
+
+    async def admin_log(
+        self, peer_id: int, *, max_id: int, limit: int, timeout: float
+    ) -> list[tuple[int, datetime, int, str]]:
+        """One ``channels.getAdminLog`` page, newest first: ``(event id, date, user id, action
+        kind)``. The action's content is not returned."""
+        request = functions.channels.GetAdminLogRequest(
+            utils.get_input_channel(self.input_peer("channel", peer_id)),
+            "",
+            max_id=max_id,
+            min_id=0,
+            limit=limit,
+        )
+        result = await self.call_capability(Capability.ADMIN_LOG_READ, request, timeout=timeout)
+        return [(e.id, e.date, e.user_id, type(e.action).__name__) for e in result.events]
+
+    def _admin_peer(self, peer_type: str, peer_id: int) -> Any:
+        if peer_type == "chat":
+            return types.InputPeerChat(peer_id)
+        try:
+            return self.input_peer("channel", peer_id)
+        except GatewayError:
+            raise _PeerMissing("DESTINATION_NOT_FOUND") from None
 
     def _admin_channel(self, peer_id: int) -> Any:
         try:

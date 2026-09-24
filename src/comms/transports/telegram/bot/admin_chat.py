@@ -13,13 +13,13 @@ from collections.abc import Mapping
 from typing import Any
 
 from comms.core.providers.capability import Capability as C
+from comms.transports.telegram import chat_specs as specs
 from comms.transports.telegram.admin_profiles import ADMIN_RIGHTS, PROFILES, promotion
 from comms.transports.telegram.args import (
     boolean,
     permissions,
     positive_int,
     take,
-    text,
 )
 
 __all__ = ["ADMIN_RIGHTS", "CHAT_REQUESTS", "PROFILES"]  # the profiles are re-exported
@@ -36,12 +36,11 @@ def _demote(chat_id: int, args: Mapping[str, Any]) -> tuple[str, dict[str, Any]]
 
 
 def _title(chat_id: int, args: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
-    return "setChatTitle", {"chat_id": chat_id, **take(args, {"title": text(1, 128)}, {})}
+    return "setChatTitle", {"chat_id": chat_id, **specs.set_title(args)}
 
 
 def _description(chat_id: int, args: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
-    fields = take(args, {"description": text(0, 255)}, {})
-    return "setChatDescription", {"chat_id": chat_id, **fields}
+    return "setChatDescription", {"chat_id": chat_id, **specs.set_description(args)}
 
 
 def _permissions(chat_id: int, args: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:

@@ -54,7 +54,7 @@ def _invoke(tmp_path, script, cap, args, target=SUPER):
         )
         await session.start()
         try:
-            admin = UserAdmin(session, run=lambda coro: coro)
+            admin = UserAdmin(session, run=lambda coro: coro, clock=lambda: None)
             return await admin.invoke(SemanticOperation(cap, args), target, "op")
         finally:
             await session.stop()

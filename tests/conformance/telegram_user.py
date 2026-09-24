@@ -124,7 +124,7 @@ def _admin(mode: Mode, answer: ProviderResult) -> tuple[UserAdmin, _AdminSession
     if mode.live:
         raise Skip("NOT_CONFIGURED")
     session = _AdminSession(answer)
-    return UserAdmin(session, run=asyncio.run), session
+    return UserAdmin(session, run=asyncio.run, clock=lambda: NOW), session
 
 
 @REGISTRY.case("telegram_user", "admin")
