@@ -373,10 +373,6 @@ def test_cancel_before_send_from_each_pre_send_state(conn, transports):
         assert campaign_row(conn, cmp)[0] == "CANCELLED"
     with pytest.raises(drafts.LifecycleError, match="^campaign cannot be cancelled$"):
         f.cancel(conn, draft, now=NOW)
-    sending = ready(conn, {"recipients": [rcp]})
-    f.send(conn, sending, transports, now=NOW)
-    with pytest.raises(drafts.LifecycleError):
-        f.cancel(conn, sending, now=NOW)
     assert len(events(conn, "campaign.cancelled")) == 2
 
 

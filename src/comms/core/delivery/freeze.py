@@ -328,12 +328,16 @@ def unschedule(conn: Any, cmp: str, *, now: datetime) -> None:
 
 
 def cancel(conn: Any, cmp: str, *, now: datetime) -> CancelReport:
-    """Pre-send cancel (§6.2). A SENDING campaign is cancelled job by job (operations)."""
+    """Cancel (§6.2). A SENDING campaign is cancelled job by job, by ``operations``."""
+    if load(conn, cmp)["lifecycle"] == "SENDING":
+        from comms.core.delivery.operations import (
+            cancel_sending,
+        )
+
+        return cancel_sending(conn, cmp, now=now)
     with write_tx(conn):
         campaign = load(conn, cmp)
         lifecycle = campaign["lifecycle"]
-        if lifecycle == "SENDING":
-            raise LifecycleError("campaign is sending: cancel its jobs")
         if lifecycle not in ("DRAFT", "READY", "SCHEDULED"):
             raise LifecycleError("campaign cannot be cancelled")
         cancelled = 0

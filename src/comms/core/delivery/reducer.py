@@ -20,6 +20,7 @@ from comms.core.campaigns.events import ReasonCode, append_event
 
 __all__ = [
     "NAMED_DESCENTS",
+    "PROVIDER_STATUSES",
     "RANK",
     "TERMINAL",
     "Evidence",
@@ -393,6 +394,17 @@ def bind_provider_ref(
         if matches != 1:
             conn.execute(
                 "UPDATE provider_events SET disposition = 'refused' WHERE id = ?", (event_id,)
+            )
+            append_event(
+                conn,
+                "delivery.provider_update_refused",
+                None,
+                {
+                    "transport": transport,
+                    "reason": ReasonCode.AMBIGUOUS_MATCH.value,
+                    "status": status,
+                },
+                now=now,
             )
             continue
         t = reduce(conn, job_id, attempt_id, Evidence.PROVIDER, status, now=now)
