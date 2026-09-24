@@ -1477,6 +1477,58 @@ def phase5a_operator(ledger: Ledger) -> None:
     )
 
 
+def phase_v03_cutover(ledger: Ledger) -> None:
+    """comms v0.3 Part A: the constitutional cutover on a sandbox legacy DB, then verify --all."""
+    area = "comms v0.3 Part A — cutover"
+    sys.path.insert(0, str(REPO))
+    from comms.core.audit import cutover
+    from comms.core.audit.verify_all import verify_all
+    from comms.transports.telegram.storage.authority_view import load_security
+    from tests.core.audit.legacy_fixtures import comms_world, verify_keys
+    from tests.core.campaign_helpers import NOW
+
+    results: dict[str, Any] = {}
+
+    def drive() -> dict[str, Any]:
+        if not results:
+            with tempfile.TemporaryDirectory(dir="/tmp") as short:
+                world = comms_world(Path(short), bearer=True)
+                port = world["port"]
+                results["phase"] = cutover.run_cutover(
+                    world["conn"], port, world["writer"], now=NOW
+                )
+                results["report"] = verify_all(world["conn"], port.conn, verify_keys(world))
+                results["seeds"] = sorted(p.name for p in port.key_dir.glob("lease-seed.*"))
+                results["epoch"] = load_security(port.conn)[0]
+                results["rerun"] = cutover.run_cutover(
+                    world["conn"], port, world["writer"], now=NOW
+                )
+                world["conn"].close()
+                port.conn.close()
+        return results
+
+    ledger.run(
+        area,
+        "run_cutover reaches COMPLETE on a sandbox legacy DB",
+        lambda: drive()["phase"] == "COMPLETE" or _raise(drive()["phase"]),
+    )
+    ledger.run(
+        area,
+        "verify --all is green: legacy seal, lineage, comms genesis, anchor",
+        lambda: drive()["report"].ok or _raise(drive()["report"].problems),
+    )
+    ledger.run(
+        area,
+        "tgml1 retired: no seed left, security epoch bumped once",
+        lambda: (drive()["seeds"], drive()["epoch"]) == ([], 2) or _raise(drive()),
+    )
+    ledger.run(
+        area,
+        "a rerun is a no-op at COMPLETE",
+        lambda: drive()["rerun"] == "COMPLETE" or _raise(drive()["rerun"]),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Phase 1 + Phase 2 end-to-end smoke")
     parser.add_argument("--verbose", action="store_true", help="print tracebacks for failures")
@@ -1497,6 +1549,7 @@ def main() -> int:
         phase4b_reads(ledger)
         phase4c_reads(ledger)
         phase5a_operator(ledger)
+        phase_v03_cutover(ledger)
         conn = state.get("conn")
         if conn is not None:
             conn.close()
