@@ -191,3 +191,20 @@ def world(conn: Any) -> dict[str, Any]:
         "job": jid,
         "job_ref": jref,
     }
+
+
+def tg(raw: str) -> str:
+    """Marked Telegram identity (S2): user and private chat N → N, group → -N, channel → -100N."""
+    kind, sep, number = raw.partition(":")
+    marks = {"user": "", "private": "", "group": "-", "channel": "-100"}
+    if not sep or kind not in marks or not number.isdigit():
+        raise ValueError("unrecognised telegram peer")
+    return marks[kind] + number
+
+
+def wa(raw: str) -> str:
+    """E.164 canonical form."""
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not raw.strip().startswith("+") or not 8 <= len(digits) <= 15:
+        raise ValueError("unrecognised number")
+    return "+" + digits

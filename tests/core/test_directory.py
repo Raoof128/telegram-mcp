@@ -12,16 +12,7 @@ NOW = datetime(2026, 9, 24, tzinfo=UTC)
 PHONE = "+61400000001"
 
 
-def tg(raw: str) -> str:
-    """Marked Telegram identity (S2), local to this test until the fakes exist."""
-    kind, _, number = raw.partition(":")
-    return {"user": number, "private": number, "group": "-" + number, "channel": "-100" + number}[
-        kind
-    ]
-
-
-def wa(raw: str) -> str:
-    return "+" + "".join(ch for ch in raw if ch.isdigit())
+tg, wa = fx.tg, fx.wa
 
 
 @pytest.fixture
