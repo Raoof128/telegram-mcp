@@ -63,7 +63,9 @@ def test_protocol_multiset_records_v03_changes():
     assert found["'tgml1'"] >= 1  # the codec remains for verification; issuance is retired
     assert not any("policy-bundle" in k or "policy-signature" in k for k in found)
     assert not (TOMBSTONED_IN_V0_3 & ADDED_IN_V0_3)
-    assert all(k.startswith("b'comms") for k in ADDED_IN_V03)
+    # hash domains are bytes; the one string is D27's cml1 audience, a value inside a MACed payload
+    assert all(k.startswith(("b'comms", "'comms-")) for k in ADDED_IN_V03)
+    assert [k for k in ADDED_IN_V03 if not k.startswith("b'")] == ["'comms-loopback'"]
 
 
 def _docstrings(tree: ast.AST) -> set[int]:

@@ -473,6 +473,11 @@ CREATE TABLE ctx_handles (ref TEXT PRIMARY KEY, client TEXT NOT NULL, owner TEXT
   created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
 CREATE TABLE cursors (ref TEXT PRIMARY KEY, ctx_ref TEXT NOT NULL REFERENCES ctx_handles(ref) ON DELETE CASCADE,
   position TEXT NOT NULL, cursor_key_version INTEGER NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+-- D27 (A33): local MCP clients; the daemon's seed copy is a cml1-client-seed key-slot version
+CREATE TABLE clients (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+  seed_version INTEGER NOT NULL UNIQUE CHECK (seed_version >= 1),
+  created_at TEXT NOT NULL, rotated_at TEXT);
 CREATE TRIGGER mutations_born_in_flight BEFORE INSERT ON mutations WHEN NEW.state <> 'IN_FLIGHT'
   BEGIN SELECT RAISE(ABORT, 'a mutation is born IN_FLIGHT'); END;
 CREATE TRIGGER mutations_binding_immutable BEFORE UPDATE OF op_ref, authenticated_client, request_id,

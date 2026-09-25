@@ -44,6 +44,8 @@ ADDED_IN_V03 = Counter(  # comms/core/domains.py, comms v0.3 Part A
         "b'comms-request-digest/v1\\x00'": 1,  # Part D, A28
         "b'comms-admin-op/v1\\x00'": 1,  # Part D, A28
         "b'comms-cursor/v1\\x00'": 1,  # Part D, A30
+        "b'comms-local-lease/v1\\x00'": 1,  # Part D, A33
+        "'comms-loopback'": 1,  # Part D, A33: the cml1 audience
     }
 )
 

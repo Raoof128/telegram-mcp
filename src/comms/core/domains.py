@@ -13,6 +13,8 @@ __all__ = [
     "AUDIT_GENESIS",
     "CURSOR",
     "IDEMPOTENCY",
+    "LOCAL_LEASE",
+    "LOCAL_LEASE_AUDIENCE",
     "MTPROTO_RANDOM_ID",
     "RECIPIENTS",
     "REQUEST_DIGEST",
@@ -35,5 +37,7 @@ MTPROTO_RANDOM_ID = b"comms-mtproto-random-id/v1\0"  # comms v0.3 A20 (Task C15)
 REQUEST_DIGEST = b"comms-request-digest/v1\0"  # comms v0.3 A28 (Task D4)
 ADMIN_OP = b"comms-admin-op/v1\0"  # comms v0.3 A28 (Task D4)
 CURSOR = b"comms-cursor/v1\0"  # comms v0.3 A30 (Task D9)
+LOCAL_LEASE = b"comms-local-lease/v1\0"  # comms v0.3 A33 (Task D27)
+LOCAL_LEASE_AUDIENCE = "comms-loopback"  # comms v0.3 A33: a cml1 payload's aud
 BACKUP_BINDING = b"comms-backup-binding/v1\0"  # comms v0.3 B25
 BACKUP_SCHEMA = b"comms-backup/v1\0"  # comms v0.3 B25: the payload's schema name
