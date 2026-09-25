@@ -2090,6 +2090,26 @@ def phase_v03_daemon(ledger: Ledger) -> None:
         "audit verify --all is clean after the campaigns and the restore",
         lambda: verdict("verify_after"),
     )
+    ledger.run(
+        area,
+        "scripted Bot API updates are retained and served as telegram_local",
+        lambda: verdict("bot_updates_local"),
+    )
+    ledger.run(
+        area,
+        "a restart polls from the stored offset and ingests nothing twice",
+        lambda: verdict("bot_updates_no_duplicate"),
+    )
+    ledger.run(
+        area,
+        "the webhook listener verifies the challenge, accepts signed, refuses unsigned",
+        lambda: verdict("webhook_served"),
+    )
+    ledger.run(
+        area,
+        "kill -9 during webhook delivery, then restart, verifies clean",
+        lambda: verdict("webhook_kill9"),
+    )
 
 
 def main() -> int:

@@ -99,6 +99,10 @@
     "phase_v03_daemon::a campaign sent through the CLI is delivered by the daemon",
     "phase_v03_daemon::a scheduled campaign survives kill -9 and runs once",
     "phase_v03_daemon::keys rotate cursor-key invalidates an old context cursor",
-    "phase_v03_daemon::audit verify --all is clean after the campaigns and the restore"
+    "phase_v03_daemon::audit verify --all is clean after the campaigns and the restore",
+    "phase_v03_daemon::scripted Bot API updates are retained and served as telegram_local",
+    "phase_v03_daemon::a restart polls from the stored offset and ingests nothing twice",
+    "phase_v03_daemon::the webhook listener verifies the challenge, accepts signed, refuses unsigned",
+    "phase_v03_daemon::kill -9 during webhook delivery, then restart, verifies clean"
   ]
 }

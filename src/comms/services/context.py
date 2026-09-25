@@ -77,7 +77,7 @@ class ContextEngine:
     ) -> dict[str, Any]:
         """Live provider history when the user account can read the group, else the bot's
         locally retained updates (labelled ``telegram_local``)."""
-        target = self._reader(targets, Capability.HISTORY_READ, fallback=True)
+        target = self.reader(targets, Capability.HISTORY_READ, fallback=True)
         return self.recent(group, target, limit=limit, cursor=cursor)
 
     def search_for(
@@ -89,7 +89,7 @@ class ContextEngine:
     ) -> dict[str, Any]:
         """Search is provider history: the user actor only, never quietly the bot's updates."""
         chosen = [
-            (group, self._reader(targets, Capability.HISTORY_SEARCH, fallback=False))
+            (group, self.reader(targets, Capability.HISTORY_SEARCH, fallback=False))
             for group, targets in groups
         ]
         return self.search(chosen, query, limit=limit)
@@ -124,9 +124,11 @@ class ContextEngine:
             ],
         }
 
-    def _reader(
+    def reader(
         self, targets: Mapping[str, ProviderTarget], capability: Capability, *, fallback: bool
     ) -> ProviderTarget:
+        """The target a Telegram read uses: the user account when it has a source and the
+        capability, else (with ``fallback``) the bot; the one copy of the rule (E11c)."""
         user = targets.get("telegram_user")
         code = "NOT_CONFIGURED"
         if user is not None and "telegram_user" in self._sources and self._capability is not None:

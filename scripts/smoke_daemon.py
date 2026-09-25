@@ -338,7 +338,8 @@ def drive_directory_and_campaigns(root: Path) -> dict[str, Any]:
     out: dict[str, Any] = {}
     d = Daemon(root / "dir")
     d.json("keys", "provision", "--state-dir", str(d.state), "--runtime-dir", str(d.run))
-    d.settings()
+    webhook_port = _free_port()
+    d.settings(webhook_port=webhook_port)
     d.start()
     try:
         d.json("cutover", "run")
@@ -353,6 +354,15 @@ def drive_directory_and_campaigns(root: Path) -> dict[str, Any]:
             "MQ Society"
         ]
 
+        grp = groups[0]["group"] if groups else ""
+
+        def local_texts() -> list[str]:
+            page = d.http(seed, "comms_context_recent", {"group": grp, "limit": 10})
+            items = page["structuredContent"].get("items", []) if not page["isError"] else []
+            return [i["untrusted_text"] for i in items if i["source"] == "telegram_local"]
+
+        out["bot_updates_local"] = _until(lambda: len(local_texts()) == 3)
+
         cmp = _campaign(d, backup["rcp"], "Now")
         d.json("campaign", "send", "--campaign", cmp)
         out["campaign_delivered"] = _until(
@@ -365,12 +375,14 @@ def drive_directory_and_campaigns(root: Path) -> dict[str, Any]:
         d.json("campaign", "schedule", "--campaign", later, "--at", at)
         d.stop(signal.SIGKILL)  # before it is due
         d.start()
+        out["bot_updates_no_duplicate"] = sorted(local_texts()) == [
+            f"selftest update {n}" for n in (1, 2, 3)
+        ]  # the restart polled again from the stored offset: nothing twice
         out["scheduled_once"] = _until(
             lambda: (jobs := _jobs(d, later)) and "PENDING" not in jobs and sum(jobs.values()) == 1,
             seconds=45,
         )
 
-        grp = groups[0]["group"]
         page = d.http(seed, "comms_context_recent", {"group": grp, "limit": 2})["structuredContent"]
         cursor = page["next_cursor"]
         d.json("keys", "rotate", "cursor-key")
@@ -378,7 +390,44 @@ def drive_directory_and_campaigns(root: Path) -> dict[str, Any]:
         fresh = d.http(seed, "comms_context_recent", {"group": grp, "limit": 2})
         out["cursor_rotation"] = bool(cursor) and stale["isError"] and not fresh["isError"]
         out["verify_after"] = d.json("audit", "verify", "--all")["ok"] is True
+        out.update(_webhook_checks(d, webhook_port))
     finally:
         if d.proc is not None and d.proc.poll() is None:
             d.stop()
+    return out
+
+
+def _webhook_checks(d: Daemon, port: int) -> dict[str, Any]:
+    """The real webhook pipeline on its own listener, with the selftest secrets."""
+    import hashlib
+    import hmac
+
+    import httpx
+
+    from comms.runtime.selftest import SELFTEST_APP_SECRET, SELFTEST_VERIFY_TOKEN
+
+    base = f"http://127.0.0.1:{port}/webhooks/meta"
+    body = json.dumps({"object": "whatsapp_business_account", "entry": [{"changes": [{"value": {
+        "metadata": {"phone_number_id": "1234567890"},
+        "contacts": [{"wa_id": "61400000001", "profile": {"name": "Sara"}}],
+        "messages": [{"from": "61400000001", "id": "wamid.SMOKE", "timestamp": "1758800000",
+                      "type": "text", "text": {"body": "salaam"}}]}}]}]}).encode()  # fmt: skip
+    signed = "sha256=" + hmac.new(SELFTEST_APP_SECRET, body, hashlib.sha256).hexdigest()
+    headers = {"content-type": "application/json", "x-hub-signature-256": signed}
+    challenge = httpx.get(base, params={"hub.mode": "subscribe", "hub.verify_token": SELFTEST_VERIFY_TOKEN,
+                                        "hub.challenge": "4242"})  # fmt: skip
+    accepted = httpx.post(base, content=body, headers=headers)
+    unsigned = httpx.post(base, content=body, headers={"content-type": "application/json"})
+    out = {
+        "webhook_served": challenge.status_code == 200
+        and challenge.text == "4242"
+        and accepted.status_code == 200
+        and unsigned.status_code == 401,
+    }
+    httpx.post(base, content=body, headers=headers)  # a redelivery, then the process dies
+    d.stop(signal.SIGKILL)
+    d.start()
+    out["webhook_kill9"] = d.json("audit", "verify", "--all")["ok"] is True and _until(
+        lambda: bool(d.json("doctor", "--state-dir", str(d.state))["ok"])
+    )
     return out

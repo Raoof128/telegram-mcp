@@ -8,16 +8,24 @@ adapter factory differs. Every provider here is local and deterministic:
   refused exactly as in production) and then succeed with a synthetic provider ref;
 - every capability is ``AVAILABLE``;
 - context sources serve fixed synthetic pages under the provenance each actor really has;
-- campaign delivery accepts every job.
+- campaign delivery accepts every job;
+- the bot actor is the real Bot API poller and local context over a scripted HTTP transport
+  (three messages in the chat ``channel:1234567890``, served by the stored offset, so a restart
+  never re-ingests), so group context reads are ``telegram_local`` from the real retained
+  updates (D39-PRE E11c);
+- with a webhook port configured, the real webhook pipeline (inbox, worker, the comms archive,
+  the ingress) runs with fixed selftest secrets.
 
-Nothing here opens a socket or reads a credential; a provider transport that is touched at
-all fails loudly (``_Unreachable``).
+Nothing here opens a socket beyond the daemon's own listeners, or reads a credential; any other
+provider transport that is touched fails loudly (``_Unreachable``).
 """
 
 from __future__ import annotations
 
 import hashlib
 import itertools
+import json
+import time
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any
@@ -46,10 +54,17 @@ from comms.runtime.adapters import Adapters
 from comms.runtime.settings import DaemonSettings
 from comms.runtime.state import CommsState
 from comms.transports.telegram.bot.admin import BotAdmin
+from comms.transports.telegram.bot.context import BotContext
+from comms.transports.telegram.bot.http import BotApi
+from comms.transports.telegram.bot.updates import BotPoller
 from comms.transports.telegram.peers import marked_chat_id
 from comms.transports.telegram.user.admin import UserAdmin
 from comms.transports.whatsapp.cloud.groups import WhatsAppAdmin
 from comms.transports.whatsapp.numbers import e164
+from comms.transports.whatsapp.webhooks.archive import ArchiveContext, CommsArchive
+from comms.transports.whatsapp.webhooks.inbox import Inbox
+from comms.transports.whatsapp.webhooks.ingress import WebhookIngress
+from comms.transports.whatsapp.webhooks.worker import WebhookWorker
 
 __all__ = ["selftest_adapters"]
 
@@ -151,6 +166,51 @@ class _AcceptingDelivery:
         )
 
 
+# Public selftest constants: a selftest daemon is never a production daemon.
+SELFTEST_APP_SECRET = b"selftest-app-secret-0000000000000"
+SELFTEST_VERIFY_TOKEN = "selftest-verify-token-00000000000"
+SELFTEST_CHAT = -1001234567890  # channel:1234567890, marked
+_SELFTEST_BOT = "1:selftest"  # the token shape the pinned client checks; no real bot
+
+
+def _bot_updates() -> list[dict[str, Any]]:
+    return [
+        {
+            "update_id": n,
+            "message": {
+                "message_id": 100 + n,
+                "date": 1758800000 + n,
+                "chat": {"id": SELFTEST_CHAT, "type": "supergroup", "title": "MQ Society"},
+                "from": {"id": 42, "is_bot": False, "first_name": "Sara"},
+                "text": f"selftest update {n}",
+            },
+        }
+        for n in (1, 2, 3)
+    ]
+
+
+def _bot_transport() -> Any:
+    import httpx
+
+    def handle(request: Any) -> Any:
+        method = request.url.path.rsplit("/", 1)[-1]
+        if method == "getUpdates":
+            offset = int((json.loads(request.content or b"{}") or {}).get("offset") or 0)
+            result: Any = [u for u in _bot_updates() if u["update_id"] >= offset]
+        elif method == "getMe":
+            result = {"id": 1, "is_bot": True, "first_name": "selftest"}
+        else:
+            result = True
+        return httpx.Response(200, json={"ok": True, "result": result})
+
+    return httpx.MockTransport(handle)
+
+
+class _OneSecret:
+    def get(self, item: str, version: int) -> bytes:
+        return _SELFTEST_BOT.encode()
+
+
 def selftest_adapters(state: CommsState, settings: DaemonSettings) -> Adapters:
     def clock() -> datetime:
         return datetime.now(UTC)
@@ -161,15 +221,30 @@ def selftest_adapters(state: CommsState, settings: DaemonSettings) -> Adapters:
         "telegram_user": _Accepting(UserAdmin(unreachable, run=_no_run, clock=clock)),
         "whatsapp_cloud": _Accepting(WhatsAppAdmin(unreachable, unreachable)),
     }
-    return Adapters(
+    store: Any = _OneSecret()
+    api = BotApi(store, version=1, transport=_bot_transport())
+    adapters = Adapters(
         delivery={
             "telegram": _AcceptingDelivery("telegram", marked_chat_id),
             "whatsapp": _AcceptingDelivery("whatsapp", e164),
         },
         capability=dict.fromkeys(_ACTORS, _Available()),
         admin=dict(admins),
-        context={
-            "telegram_bot": _Pages("telegram_local"),
-            "telegram_user": _Pages("telegram_live"),
-        },
+        context={"telegram_bot": BotContext(api, state.conn, clock=clock)},
     )
+    adapters.poller = BotPoller(api, state.conn, clock=clock)
+    if settings.webhook_port is not None:
+        inbox = Inbox(state.conn, clock=clock)
+        adapters.inbox = inbox
+        adapters.worker = WebhookWorker(
+            state.conn, CommsArchive(state.conn, clock=clock), clock=clock
+        )
+        adapters.webhook = WebhookIngress(
+            app_secret=SELFTEST_APP_SECRET,
+            verify_token=SELFTEST_VERIFY_TOKEN,
+            accept=inbox.accept,
+            clock=time.monotonic,
+        )
+        adapters.listeners["webhook"] = adapters.webhook
+        adapters.context["whatsapp_cloud"] = ArchiveContext(state.conn, clock=clock)
+    return adapters
