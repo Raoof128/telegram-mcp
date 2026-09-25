@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from comms.mcp.spec import ToolSpec
+from comms.mcp.tools.account import ACCOUNT_TOOLS
 from comms.mcp.tools.admin import ADMIN_TOOLS
 from comms.mcp.tools.campaigns import CAMPAIGN_TOOLS
 from comms.mcp.tools.context import CONTEXT_TOOLS
@@ -19,4 +20,5 @@ FAMILIES: tuple[tuple[ToolSpec, ...], ...] = (
     ADMIN_TOOLS,
     CAMPAIGN_TOOLS,
     DIRECTORY_TOOLS,
+    ACCOUNT_TOOLS,
 )

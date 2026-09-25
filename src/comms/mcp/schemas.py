@@ -22,6 +22,7 @@ __all__ = [
     "ACTOR",
     "ANY_OBJECT",
     "BOOL",
+    "OUTCOMES",
     "READ_FAILURES",
     "WRITE_FAILURES",
     "array",
