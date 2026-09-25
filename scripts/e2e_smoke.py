@@ -1529,6 +1529,445 @@ def phase_v03_cutover(ledger: Ledger) -> None:
     )
 
 
+def _free_port() -> int:
+    with closing(socket.socket()) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def phase_v03_comms(ledger: Ledger) -> None:
+    """comms v0.3 Part D: comms mcp end to end against fake adapters — the real stdio proxy, the
+    real HTTP /mcp (local cml1 and remote OAuth), the real CLI and the real admin socket, over
+    the real composition (comms/runtime/comms_runtime.py)."""
+    area = "comms v0.3 Part D — comms mcp"
+    results: dict[str, Any] = {}
+
+    def drive() -> dict[str, Any]:
+        if not results:
+            import asyncio
+
+            with tempfile.TemporaryDirectory(dir="/tmp") as short:
+                results.update(asyncio.run(_comms_drive(Path(short))))
+        return results
+
+    def verdict(key: str) -> Any:
+        return drive().get(key) is True or _raise(drive().get(key))
+
+    ledger.run(area, "tools/list over stdio matches the catalog", lambda: verdict("stdio_tools"))
+    ledger.run(area, "a read over stdio reaches its service", lambda: verdict("stdio_read"))
+    ledger.run(
+        area,
+        "context read over HTTP carries provenance and a cur_ cursor",
+        lambda: verdict("context_read"),
+    )
+    ledger.run(area, "context page resumes by cursor", lambda: verdict("context_page"))
+    ledger.run(area, "a write over HTTP records one operation", lambda: verdict("http_write"))
+    ledger.run(
+        area,
+        "request-id replay returns the first result, no second effect",
+        lambda: verdict("replay"),
+    )
+    ledger.run(
+        area,
+        "a campaign runs through the real CLI over the admin socket",
+        lambda: verdict("campaign_cli"),
+    )
+    ledger.run(area, "an admin operation reaches the provider once", lambda: verdict("admin_op"))
+    ledger.run(area, "WhatsApp mark_read is its own audited write", lambda: verdict("whatsapp"))
+    ledger.run(area, "capability for a group names every actor", lambda: verdict("capability"))
+    ledger.run(
+        area, "OAuth: a local AS issues a token the remote /mcp accepts", lambda: verdict("oauth")
+    )
+    ledger.run(area, "bad cml1 leases are 401", lambda: verdict("bad_lease"))
+    ledger.run(area, "unknown tool is TOOL_NOT_FOUND over HTTP", lambda: verdict("unknown_tool"))
+    ledger.run(area, "duplicate JSON keys rejected over HTTP", lambda: verdict("duplicate_keys"))
+    ledger.run(
+        area, "client add and oauth approve over the admin socket", lambda: verdict("operator")
+    )
+    ledger.run(area, "a degraded audit trail refuses new writes", lambda: verdict("degraded"))
+
+
+async def _comms_drive(root: Path) -> dict[str, Any]:
+    """Build the composition over fakes, serve it, and drive every surface; one verdict per key."""
+    import asyncio
+    import base64
+    import hashlib
+    from datetime import UTC, datetime
+    from urllib.parse import parse_qs, urlparse
+
+    import httpx
+    import uvicorn
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    sys.path.insert(0, str(REPO))
+    from comms.core import refs
+    from comms.core.audit.integrity import latch_degraded
+    from comms.core.auth import clients, lease_format
+    from comms.core.keys import rotate as rot
+    from comms.core.objects import message_identity, object_ref
+    from comms.core.providers.capability import CapabilityState as S
+    from comms.core.security import security_epoch
+    from comms.mcp.catalog import TOOL_CATALOG
+    from comms.mcp.oauth.server import OAuthSettings
+    from comms.runtime.adapters import Adapters
+    from comms.runtime.comms_runtime import RemoteConfig, build_comms_runtime
+    from comms.transports.telegram.bot.admin import BotAdmin
+    from comms.transports.telegram.ipc.admin import AdminRouter, serve_admin
+    from comms.transports.telegram.user.admin import UserAdmin
+    from comms.transports.whatsapp.cloud.groups import WhatsAppAdmin
+    from tests.core import fakes
+    from tests.services.context_fixtures import Source
+    from tests.services.group_fixtures import (
+        WA_PHONE,
+        Admin,
+        Provider,
+        Tripwire,
+        _never,
+        group_world,
+    )
+
+    out: dict[str, Any] = {}
+    now = lambda: datetime.now(UTC)
+    w = group_world(root)
+    conn = w["conn"]
+    for purpose in ("campaign-commit-key", "cursor-key", "oauth-signing-key"):
+        rot.rotate(
+            w["writer"],
+            w["store"],
+            purpose,
+            material=os.urandom(32),
+            prove=lambda m: None,
+            now=now(),
+        )
+    admins = {
+        "telegram_bot": Admin(BotAdmin(Tripwire())),
+        "telegram_user": Admin(UserAdmin(Tripwire(), run=_never, clock=now)),
+        "whatsapp_cloud": Admin(WhatsAppAdmin(Tripwire(), Tripwire())),
+    }
+    adapters = Adapters(
+        delivery={"whatsapp": fakes.FakeWhatsApp(conn=conn)},
+        capability={actor: Provider(S.AVAILABLE) for actor in admins},
+        admin=admins,
+        context={"telegram_user": Source(), "telegram_bot": Source(provenance="telegram_local")},
+    )
+    ports = [_free_port(), _free_port()]
+    remote_client = clients.add_client(
+        conn, w["store"], "remote", now=now(), helper_path=root / "remote.seed"
+    )  # its row is what the OAuth server checks is enabled
+    issuer = f"http://127.0.0.1:{ports[1]}"
+    runtime = build_comms_runtime(
+        conn,
+        w["writer"],
+        w["store"],
+        adapters,
+        clock=now,
+        monotonic=time.monotonic,
+        host="127.0.0.1",
+        local_port=ports[0],
+        remote=RemoteConfig(
+            settings=OAuthSettings(
+                issuer=issuer,
+                resource=f"{issuer}/mcp",
+                client_id="remote",
+                redirect_uris=("http://127.0.0.1/cb",),
+                owner="owner",
+            ),
+            client_ref=remote_client,
+            port=ports[1],
+        ),
+    )
+    rundir = root / "run"
+    rundir.mkdir(mode=0o700)
+    router = AdminRouter(runtime.admin_handlers, control_handlers=runtime.control_handlers)
+    admin_server = await serve_admin(rundir / "admin.sock", router, allow_uid=os.getuid())
+    servers = [
+        uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+        for app, port in ((runtime.listeners.local, ports[0]), (runtime.listeners.remote, ports[1]))
+    ]
+    tasks = [asyncio.create_task(s.serve()) for s in servers]
+    while not all(s.started for s in servers):
+        await asyncio.sleep(0.01)
+    env = {**os.environ, "TELEGRAM_MCP_RUNTIME_DIR": str(rundir)}
+    comms_bin = str(Path(sys.executable).parent / "comms")
+
+    async def cli(*argv: str) -> dict[str, Any]:
+        proc = await asyncio.create_subprocess_exec(
+            comms_bin,
+            *argv,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"comms {' '.join(argv)}: {stderr.decode()[:200]}")
+        return json.loads(stdout)
+
+    def mcp_headers(token: str, method: str, name: str | None = None) -> dict[str, str]:
+        headers = {
+            "Mcp-Protocol-Version": "2026-07-28",
+            "Mcp-Method": method,
+            "Accept": "application/json, text/event-stream",
+            "Authorization": f"Bearer {token}",
+        }
+        if name:
+            headers["Mcp-Name"] = name
+        return headers
+
+    async def http_call(
+        port: int, token: str, name: str, arguments: dict[str, Any]
+    ) -> httpx.Response:
+        meta = {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
+        body = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments, "_meta": meta},
+        }
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            return await client.post(
+                "/mcp", headers=mcp_headers(token, "tools/call", name), json=body
+            )
+
+    try:
+        added = await cli(
+            "client", "add", "--name", "smoke", "--helper-path", str(root / "run" / "seed")
+        )
+        cli_ref = added["client"]
+        _cid, seed = lease_format.read_helper(root / "run" / "seed")
+
+        def lease() -> str:
+            return lease_format.mint(seed, cli_ref, security_epoch(conn), now=now())
+
+        approved = await cli("oauth", "approve")
+        out["operator"] = cli_ref.startswith("cli_") and len(approved["owner_code"]) >= 16
+
+        # -- stdio: the real proxy subprocess, driven by an MCP client -------------------
+        params = StdioServerParameters(
+            command=comms_bin,
+            args=[
+                "mcp",
+                "--stdio",
+                "--client-seed",
+                str(root / "run" / "seed"),
+                "--daemon",
+                f"http://127.0.0.1:{ports[0]}",
+                "--runtime-dir",
+                str(rundir),
+            ],
+            env=env,
+        )
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            listed = await session.list_tools()
+            out["stdio_tools"] = [t.name for t in listed.tools] == [s.name for s in TOOL_CATALOG]
+            got = await session.call_tool("comms_group_get", {"group": w["grp"]})
+            out["stdio_read"] = (not got.is_error) and got.structured_content["group"] == w["grp"]
+
+        # -- HTTP: context, writes, replay, admin ops ------------------------------------
+        page = (
+            await http_call(
+                ports[0], lease(), "comms_context_recent", {"group": w["grp"], "limit": 3}
+            )
+        ).json()["result"]
+        items, cursor = page["structuredContent"]["items"], page["structuredContent"]["next_cursor"]
+        out["context_read"] = (
+            bool(items) and all(i["source"] for i in items) and cursor.startswith("cur_")
+        )
+        nxt = (await http_call(ports[0], lease(), "comms_context_page", {"cursor": cursor})).json()[
+            "result"
+        ]
+        out["context_page"] = not nxt["isError"] and bool(nxt["structuredContent"]["items"])
+        request = refs.mint("request")
+        first = (
+            await http_call(
+                ports[0],
+                lease(),
+                "comms_location_create",
+                {"name": "Parramatta", "request_id": request},
+            )
+        ).json()["result"]
+        again = (
+            await http_call(
+                ports[0],
+                lease(),
+                "comms_location_create",
+                {"name": "Parramatta", "request_id": request},
+            )
+        ).json()["result"]
+        count = conn.execute("SELECT count(*) FROM locations WHERE name = 'Parramatta'").fetchone()[
+            0
+        ]
+        out["http_write"] = not first["isError"] and first["structuredContent"][
+            "location"
+        ].startswith("loc_")
+        out["replay"] = (
+            again["structuredContent"]["location"] == first["structuredContent"]["location"]
+            and count == 1
+            and again["structuredContent"]["replayed"]
+        )
+        ban = (
+            await http_call(
+                ports[0],
+                lease(),
+                "comms_group_member_ban",
+                {"group": w["grp"], "recipient": w["rcp"], "request_id": refs.mint("request")},
+            )
+        ).json()["result"]
+        out["admin_op"] = (
+            ban["structuredContent"]["result"] == "SUCCEEDED"
+            and len(admins["telegram_bot"].calls) == 1
+        )
+        capability = (
+            await http_call(ports[0], lease(), "comms_capability_for_group", {"group": w["grp"]})
+        ).json()["result"]
+        out["capability"] = set(capability["structuredContent"]["actors"]) == {
+            "telegram_bot",
+            "telegram_user",
+        }
+        wa_message = object_ref(
+            conn,
+            "message",
+            "whatsapp",
+            "whatsapp_cloud",
+            None,
+            message_identity(WA_PHONE, "wamid.SMOKE1"),
+            now=now(),
+        )
+        read = (
+            await http_call(
+                ports[0],
+                lease(),
+                "comms_message_mark_read",
+                {
+                    "conversation": w["rcp"],
+                    "message": wa_message,
+                    "request_id": refs.mint("request"),
+                },
+            )
+        ).json()["result"]
+        tools = [r[0] for r in conn.execute("SELECT tool FROM mutations")]
+        out["whatsapp"] = (
+            read["structuredContent"]["result"] == "SUCCEEDED"
+            and "comms_message_mark_read" in tools
+        )
+
+        # -- the real CLI: a campaign over the admin socket --------------------------------
+        created = await cli("campaign", "create", "--title", "Nowruz")
+        cmp = created["result"]["campaign"]
+        await cli(
+            "campaign",
+            "set-content",
+            "--campaign",
+            cmp,
+            "--content",
+            '{"canonical": "Happy Nowruz"}',
+        )
+        await cli(
+            "campaign",
+            "set-targets",
+            "--campaign",
+            cmp,
+            "--targets",
+            json.dumps({"recipients": [w["rcp"]]}),
+            "--transports",
+            '["whatsapp"]',
+        )
+        await cli("campaign", "validate", "--campaign", cmp)
+        sent = await cli("campaign", "send", "--campaign", cmp)
+        out["campaign_cli"] = (
+            sent["error"] is None
+            and sent["result"]["generation"].startswith("gen_")
+            and sent["request_id"].startswith("req_")
+        )
+
+        # -- refusals over HTTP -----------------------------------------------------------
+        bad = await http_call(ports[0], "cml1.forged.token", "comms_capability_list", {})
+        stale = lease_format.mint(os.urandom(32), cli_ref, security_epoch(conn), now=now())
+        out["bad_lease"] = (
+            bad.status_code == 401
+            and (await http_call(ports[0], stale, "comms_capability_list", {})).status_code == 401
+        )
+        unknown = (await http_call(ports[0], lease(), "comms_nope", {})).json()["result"]
+        out["unknown_tool"] = (
+            unknown["isError"] and unknown["structuredContent"]["error"]["code"] == "TOOL_NOT_FOUND"
+        )
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{ports[0]}") as client:
+            duplicated = await client.post(
+                "/mcp",
+                headers={**mcp_headers(lease(), "tools/list"), "Content-Type": "application/json"},
+                content=b'{"jsonrpc":"2.0","jsonrpc":"2.0","id":1,"method":"tools/list"}',
+            )
+        out["duplicate_keys"] = duplicated.status_code == 400
+
+        # -- OAuth through the remote listener ---------------------------------------------
+        verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
+        challenge = (
+            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+            .rstrip(b"=")
+            .decode()
+        )
+        owner = (await cli("oauth", "approve"))["owner_code"]
+        async with httpx.AsyncClient(base_url=issuer, follow_redirects=False) as client:
+            auth = await client.get(
+                "/authorize",
+                params={
+                    "response_type": "code",
+                    "client_id": "remote",
+                    "redirect_uri": "http://127.0.0.1/cb",
+                    "code_challenge": challenge,
+                    "code_challenge_method": "S256",
+                    "resource": f"{issuer}/mcp",
+                    "scope": "comms.full_admin",
+                    "state": "s",
+                    "owner_code": owner,
+                },
+            )
+            code = parse_qs(urlparse(auth.headers["location"]).query)["code"][0]
+            token = (
+                await client.post(
+                    "/token",
+                    data={
+                        "client_id": "remote",
+                        "grant_type": "authorization_code",
+                        "code": code,
+                        "redirect_uri": "http://127.0.0.1/cb",
+                        "code_verifier": verifier,
+                        "resource": f"{issuer}/mcp",
+                    },
+                )
+            ).json()["access_token"]
+        remote = await http_call(ports[1], token, "comms_capability_list", {})
+        out["oauth"] = remote.status_code == 200 and not remote.json()["result"]["isError"]
+
+        # -- last: the degraded latch -----------------------------------------------------
+        latch_degraded(conn, reason="ANCHOR_REFRESH_FAILED", now=now())
+        refused = (
+            await http_call(
+                ports[0],
+                lease(),
+                "comms_location_create",
+                {"name": "X", "request_id": refs.mint("request")},
+            )
+        ).json()["result"]
+        out["degraded"] = (
+            refused["isError"]
+            and refused["structuredContent"]["error"]["code"] == "AUDIT_INTEGRITY_DEGRADED"
+        )
+    finally:
+        for server in servers:
+            server.should_exit = True
+        await asyncio.gather(*tasks)
+        admin_server.close()
+        await admin_server.wait_closed()
+        conn.close()
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Phase 1 + Phase 2 end-to-end smoke")
     parser.add_argument("--verbose", action="store_true", help="print tracebacks for failures")
@@ -1550,6 +1989,7 @@ def main() -> int:
         phase4c_reads(ledger)
         phase5a_operator(ledger)
         phase_v03_cutover(ledger)
+        phase_v03_comms(ledger)
         conn = state.get("conn")
         if conn is not None:
             conn.close()

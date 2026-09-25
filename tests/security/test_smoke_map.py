@@ -52,3 +52,35 @@ def test_the_cutover_phase_is_in_the_smoke():
         "phase_v03_cutover::verify --all is green: legacy seal, lineage, comms genesis, anchor"
         in current
     )
+
+
+COMMS_PHASE = "phase_v03_comms::"
+# Task D37: the phase covers each of these (reads, writes, a campaign, an admin operation, a
+# degraded response, context, WhatsApp, capability, OAuth with a local AS, a request-id replay).
+REQUIRED = (
+    "a read over stdio reaches its service",
+    "a write over HTTP records one operation",
+    "a campaign runs through the real CLI over the admin socket",
+    "an admin operation reaches the provider once",
+    "a degraded audit trail refuses new writes",
+    "context page resumes by cursor",
+    "WhatsApp mark_read is its own audited write",
+    "capability for a group names every actor",
+    "OAuth: a local AS issues a token the remote /mcp accepts",
+    "request-id replay returns the first result, no second effect",
+)
+
+
+def test_every_legacy_smoke_check_accounted_and_every_replacement_present():
+    mapping = json.loads(MAP.read_text(encoding="utf-8"))
+    current = set(_current_checks())
+    missing = [
+        status.removeprefix("replaced_by:")
+        for status in mapping["legacy"].values()
+        if status.startswith("replaced_by:") and status.removeprefix("replaced_by:") not in current
+    ]
+    assert missing == []  # unexpectedly missing = 0
+    assert all(COMMS_PHASE + name in current for name in REQUIRED)
+    assert all(COMMS_PHASE + name in mapping["added_in_v0_3"] for name in REQUIRED)
+    replaced = [s for s in mapping["legacy"].values() if s.startswith("replaced_by:" + COMMS_PHASE)]
+    assert len(replaced) == 7
