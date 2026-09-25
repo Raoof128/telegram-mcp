@@ -579,6 +579,6 @@ R-A20 (decided), R-E1 to R-E3 (the owner's), and R-E4 to R-E17 are in `docs/veri
 
 ### Tag
 
-`comms-v0.3-d39-pre` is an annotated local tag, **not pushed**: @TAG@.
+`comms-v0.3-d39-pre` is an annotated tag, pushed with the owner's approval on 2026-09-25 together with the merge that lands this branch on `main`: tag object `4503cc6daca4b533232d615f120c689ffd17a90a` → commit `d258670ebe46e4dcacd6e66ecf9f6575d265fd7b`.
 
 No production claim.
