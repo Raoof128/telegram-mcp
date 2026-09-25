@@ -98,3 +98,25 @@ def test_archive_refuses_a_telegram_target(tmp_path):
     with pytest.raises(CommsError) as refused:
         engine.archive("grp_x", target, limit=3)
     assert refused.value.code == "INVALID_ARGUMENT"
+
+
+def test_the_comms_archive_through_the_engine_is_labelled_and_stripped(wa_world):
+    """D39-PRE E10b: the real archive as the source; provider identities never leave."""
+    import json
+
+    from comms.transports.whatsapp.webhooks.archive import ArchiveContext, CommsArchive
+
+    conn, digits = wa_world["conn"], PHONE.removeprefix("+")
+    body = json.dumps({"entry": [{"changes": [{"value": {
+        "metadata": {"phone_number_id": "1234567890"},
+        "contacts": [{"wa_id": digits, "profile": {"name": "Sara"}}],
+        "messages": [{"from": digits, "id": "wamid.X1", "timestamp": "1758800000", "type": "text",
+                      "text": {"body": "salaam"}}]}}]}]}).encode()  # fmt: skip
+    CommsArchive(conn, clock=lambda: NOW).ingest(body)
+    engine = _engine(conn, {"whatsapp_cloud": ArchiveContext(conn, clock=lambda: NOW)})
+    page = engine.archive(wa_world["rcp"], wa_world["target"], limit=5)
+    (item,) = page["items"]
+    assert page["source"] == item["source"] == "whatsapp_webhook_archive"
+    assert item["untrusted_text"] == "salaam" and item["untrusted"]["sender_name"] == "Sara"
+    assert item["message_ref"].startswith("cmg_")
+    assert "wamid.X1" not in json.dumps(page) and digits not in json.dumps(page)

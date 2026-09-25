@@ -49,13 +49,15 @@ def production_adapters(
     from comms.transports.telegram.runtime.composition import build_comms_adapters
 
     def build(state: CommsState, settings: DaemonSettings) -> Adapters:
+        from comms.transports.whatsapp.webhooks.archive import CommsArchive
+
         adapters: Adapters = build_comms_adapters(
             state.conn,
             state.secrets,
             settings.adapter,
             clock=clock,
             monotonic=monotonic,
-            archive=archive,
+            archive=archive if archive is not None else CommsArchive(state.conn, clock=clock),
             telegram_session=telegram_session,
             run=run,
         )

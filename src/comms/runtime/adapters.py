@@ -16,7 +16,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-from comms.core.credentials import active_credential, active_version
+from comms.core.credentials import (
+    active_credential,
+    active_version,
+    is_confirmed,
+    record_confirmed,
+)
 from comms.core.delivery.transport import DeliveryTransport
 from comms.core.keys.secrets import SecretStore
 from comms.transports.telegram.bot.admin import BotAdmin
@@ -35,6 +40,7 @@ from comms.transports.whatsapp.cloud.delivery import WhatsAppDelivery
 from comms.transports.whatsapp.cloud.groups import GroupDiscovery, WhatsAppAdmin
 from comms.transports.whatsapp.cloud.http import GraphApi
 from comms.transports.whatsapp.cloud.templates import TemplateCatalog
+from comms.transports.whatsapp.webhooks.archive import ArchiveContext
 from comms.transports.whatsapp.webhooks.inbox import Inbox
 from comms.transports.whatsapp.webhooks.ingress import WebhookIngress
 from comms.transports.whatsapp.webhooks.worker import Archive, WebhookWorker
@@ -190,10 +196,19 @@ def _webhooks(
     inbox = Inbox(conn, clock=clock)
     adapters.inbox = inbox
     adapters.worker = WebhookWorker(conn, archive, clock=clock)
+    versions = {"meta-app-secret": secret_version, "meta-webhook-secret": token_version}
+
+    def confirmed(purpose: str) -> None:  # R-E6: once per active version, metadata only
+        if not is_confirmed(conn, purpose, versions[purpose]):
+            record_confirmed(conn, purpose, versions[purpose])
+
     adapters.webhook = WebhookIngress(
         app_secret=secrets.get("meta-app-secret", secret_version),
         verify_token=secrets.get("meta-webhook-secret", token_version).decode("utf-8"),
         accept=inbox.accept,
         clock=monotonic,
+        on_confirmed=confirmed,
     )
+    # D39-PRE E10b: the comms-native archive is WhatsApp's context source
+    adapters.context["whatsapp_cloud"] = ArchiveContext(conn, clock=clock)
     adapters.listeners["webhook"] = adapters.webhook

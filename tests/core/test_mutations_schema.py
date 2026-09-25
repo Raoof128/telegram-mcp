@@ -212,7 +212,7 @@ def test_v3_rows_survive_v4(tmp_path):
     before = {
         t: conn.execute(f"SELECT {c} FROM {t} ORDER BY 1").fetchall() for t, c in columns.items()
     }
-    assert migrate(conn, MIGRATIONS) == 4
+    assert migrate(conn, MIGRATIONS) == MIGRATIONS[-1].version  # v4, and every later one
     for table, cols in columns.items():  # every v3 column of every v3 row, unchanged
         after = conn.execute(f"SELECT {cols} FROM {table} ORDER BY 1").fetchall()
         assert after == before[table], table

@@ -12,6 +12,7 @@ belong to the host (D5); nothing here asserts a Claude Code permission rule.
 import ast
 import importlib.metadata
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -146,7 +147,28 @@ def test_the_dormant_dispatcher_is_unreachable_from_the_root():
     scripts = sorted(e.name for e in importlib.metadata.distribution("telegram-mcp").entry_points)
     assert scripts == ["comms", "telegram-mcp"]
     for path in (ROOT / "src" / "comms").rglob("*.py"):
-        assert not any(n.startswith("whatsvault") for n in _imports(path)), path
+        reached = {n for n in _imports(path) if n.startswith("whatsvault")}
+        assert reached <= WHATSVAULT_ALLOWED, path
+
+
+# D39-PRE E10b (R-E14, the owner's comms-native archive): comms may import exactly WhatsVault's
+# pure webhook normaliser, and nothing it reaches may be WhatsVault's dispatcher, databases,
+# MCP or ops code. Proved at run time in a fresh interpreter.
+WHATSVAULT_ALLOWED = frozenset({"whatsvault.ingest.normalise", "whatsvault.ingest"})
+WHATSVAULT_REACHABLE = frozenset(
+    {"whatsvault", "whatsvault.ingest", "whatsvault.ingest.normalise", "whatsvault.ingest.dedupe"}
+)
+
+
+def test_the_archive_reaches_only_the_whatsvault_normaliser():
+    import subprocess
+
+    probe = (
+        "import json, sys, comms.transports.whatsapp.webhooks.archive;"
+        "print(json.dumps(sorted(m for m in sys.modules if m.startswith('whatsvault'))))"
+    )
+    done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
+    assert set(json.loads(done.stdout)) <= WHATSVAULT_REACHABLE, done.stdout
 
 
 def test_the_destructive_guard_catches_an_unmarked_delete(monkeypatch):
