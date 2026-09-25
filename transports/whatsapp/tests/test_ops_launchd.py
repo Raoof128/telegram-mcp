@@ -6,7 +6,7 @@ from whatsvault.ops import launchd
 
 def test_all_shipped_plists_validate():
     plists = glob.glob("apps/launchd/*.plist")
-    assert len(plists) >= 4
+    assert len(plists) >= 3  # ingest, scheduler, dispatcher; the MCP unit was retired (comms v0.3)
     for p in plists:
         f = {x["check"]: x["ok"] for x in launchd.validate(p)}
         assert all(f.values()), (p, f)

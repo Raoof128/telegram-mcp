@@ -301,7 +301,8 @@ def reduce(
             cur = conn.execute(
                 "UPDATE delivery_jobs SET state = 'IN_FLIGHT', attempt_count = attempt_count + 1"
                 " WHERE id = ? AND state = 'PENDING' AND EXISTS (SELECT 1 FROM campaigns c"
-                " WHERE c.id = ? AND c.lifecycle = 'SENDING' AND c.current_generation_id = ?)",
+                " WHERE c.id = ? AND c.lifecycle = 'SENDING' AND c.current_generation_id = ?)"
+                " AND (SELECT state FROM audit_integrity WHERE id = 1) = 'ok'",  # A8: no new effect
                 (job_id, campaign_id, generation_id),
             )
             if cur.rowcount != 1:

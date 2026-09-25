@@ -17,6 +17,7 @@ from typing import Any
 
 from comms.core.opaque import mint_opaque_ref
 from comms.transports.telegram.ipc.handlers._wrapper import Handler, TxCommand, tx_handler
+from comms.transports.telegram.storage.identity import active_account
 from comms.transports.telegram.telegram.discovery import DiscoveryStore
 
 __all__ = ["PROJECT_COMMANDS", "MemberView", "member_commands", "project_handlers"]
@@ -84,10 +85,10 @@ def _parse_create(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _plan_create(conn: sqlite3.Connection, parsed: dict[str, Any]) -> dict[str, Any]:
-    accounts = conn.execute("SELECT id FROM accounts").fetchall()
-    if len(accounts) != 1:
+    account = active_account(conn)
+    if account is None:
         raise ValueError("exactly one account is required")
-    return {**parsed, "account_id": int(accounts[0][0])}
+    return {**parsed, "account_id": account}
 
 
 def _apply_create(conn: sqlite3.Connection, plan: dict[str, Any]) -> dict[str, Any]:

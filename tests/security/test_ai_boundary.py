@@ -1,36 +1,64 @@
-"""comms spec v0.2 §AI-boundary: exactly what is proven, and no more (5b-3 design §3, §4).
+"""comms v0.3 §AI boundary under owner_full_admin (spec A29, A37; D5): what is proven, and no more.
 
-Proven here: no MCP tool on either transport is a transmission primitive,
-WhatsVault has no network client and no real provider, its dormant dispatcher
-is unreachable from the installed distribution, and Claude Code asks before
-every send command. Not claimed: that a shell-capable agent cannot run a
-command the operator could. Agents granted unrestricted operator-shell
-authority are, by definition, inside the operator trust boundary.
+v0.2 proved that no MCP tool could transmit. v0.3 retires that guard: the owner grants
+the AI full administration, so writes and sends are legitimate tools. What is proven now
+is that the AI surface is exactly the one catalog, every write says it is a write, every
+destructive operation says it is destructive, no tool is an untyped provider tunnel, and
+MCP handlers reach the service layer only. WhatsVault still has no network client and no
+real provider; real adapters arrive in Part C under ``comms.transports``. Host prompts
+belong to the host (D5); nothing here asserts a Claude Code permission rule.
 """
 
 import ast
 import importlib.metadata
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
 import pytest
 
+from comms.mcp.catalog import TOOL_CATALOG, tools_list_payload
+from comms.mcp.dispatch import Dispatcher
+from comms.services.registry import ServiceRegistry
+from tests.security.import_closure import closure
+
 ROOT = Path(__file__).resolve().parents[2]
 WHATSAPP = ROOT / "transports" / "whatsapp"
 WHATSVAULT = WHATSAPP / "src" / "whatsvault"
-WHATSVAULT_MCP = WHATSAPP / "apps" / "mcp" / "server.py"
-SEND_VERBS = ("send", "transmit", "post", "publish", "forward", "reply", "broadcast", "dispatch")
+MCP = ROOT / "src" / "comms" / "mcp"
 NETWORK = {"urllib.request", "http.client", "httpx", "requests", "aiohttp", "socket"}
-WHATSVAULT_TOOLS = {
-    "search",
-    "get_messages",
-    "list_chats",
-    "get_message_status",
-    "get_conversation_window",
-    "list_templates",
-}
+T = "comms.transports.telegram."
+# P §23–29: every semantic operation that deletes, removes, revokes, reduces authority or
+# overwrites provider state. Each catalog entry for one of these must be destructive; the
+# entries arrive in Part D, so a missing one is not yet a failure.
+DESTRUCTIVE_OPERATIONS = frozenset(
+    {
+        "message.delete",
+        "message.edit",
+        "group.member.remove",
+        "group.member.ban",
+        "group.member.restrict",
+        "group.admin.demote",
+        "group.admin.update_rights",
+        "group.permissions.set",
+        "group.info.set_title",
+        "group.info.set_description",
+        "group.info.set_photo",
+        "group.invite.revoke",
+        "group.join_requests.reject",
+        "group.delete",
+        "group.migrate",
+    }
+)
+RAW_WORDS = ("raw", "rpc", "graph", "method", "endpoint", "invoke", "passthrough")
+# A37: MCP handlers call the typed service layer; they never write SQLite or call an adapter.
+MCP_FORBIDDEN = (
+    "comms.core.campaigns",
+    "comms.core.delivery",
+    "comms.core.storage",
+    "comms.transports",
+    "whatsvault",
+)
 
 
 def _imports(path: Path) -> set[str]:
@@ -43,39 +71,67 @@ def _imports(path: Path) -> set[str]:
     return names
 
 
-def test_no_telegram_mcp_tool_is_a_transmission_primitive():
-    from comms.transports.telegram.contract import EXPECTED_TOOLS
-
-    assert len(EXPECTED_TOOLS) == 10
-    for name in EXPECTED_TOOLS:
-        assert not any(verb in name for verb in SEND_VERBS), name
+def _operation(tool_name: str) -> str:
+    """comms_group_member_remove -> group.member.remove (P §38 naming)."""
+    return tool_name.removeprefix("comms_").replace("_", ".")
 
 
-def _whatsvault_tool_names() -> set[str]:
-    """The keys of the dict ``build_tool_handlers`` returns: the registered tools."""
-    tree = ast.parse(WHATSVAULT_MCP.read_text(encoding="utf-8"))
-    builder = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "build_tool_handlers"
-    )
-    returned = [
-        node.value
-        for node in builder.body
-        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)
-    ]
-    assert len(returned) == 1, "the tool registry must be one literal dict"
-    return {key.value for key in returned[0].keys if isinstance(key, ast.Constant)}
+def test_the_ai_surface_is_exactly_the_catalog():
+    names = [spec.name for spec in TOOL_CATALOG]
+    assert [tool["name"] for tool in tools_list_payload()] == names
+    services = ServiceRegistry()
+    for spec in TOOL_CATALOG:
+        services.register(spec.service, lambda client, arguments: {})
+    assert sorted(Dispatcher(services)._tools) == sorted(names)
+    # The retired MCP servers are not reachable from any production entry (A14).
+    production = closure(T + "cli", T + "runtime.daemon")
+    assert production.isdisjoint({T + "server", T + "dispatch", T + "sensitive_dispatch"})
+    assert not (WHATSAPP / "apps" / "mcp").exists()
 
 
-def test_no_whatsvault_mcp_tool_is_a_transmission_primitive():
-    registered = _whatsvault_tool_names()
-    assert registered == WHATSVAULT_TOOLS
-    for name in registered:
-        assert not any(verb in name for verb in SEND_VERBS), name
+def test_write_tools_are_annotated_as_writes():
+    for spec in TOOL_CATALOG:
+        # A28: every mutating tool, local or provider, requires a request_id.
+        assert spec.read_only is not spec.requires_request_id, spec.name
+        if spec.destructive:
+            assert not spec.read_only, spec.name
 
 
-def test_whatsvault_has_no_network_client():
+def test_destructive_tools_are_annotated_destructive():
+    assert all(op.count(".") >= 1 for op in DESTRUCTIVE_OPERATIONS)
+    for spec in TOOL_CATALOG:
+        if (
+            spec.service in DESTRUCTIVE_OPERATIONS
+            or _operation(spec.name) in DESTRUCTIVE_OPERATIONS
+        ):
+            assert spec.destructive and not spec.read_only, spec.name
+
+
+def test_no_raw_rpc_tool():
+    for spec in TOOL_CATALOG:
+        words = spec.name.removeprefix("comms_").split("_") + spec.service.replace(".", "_").split(
+            "_"
+        )
+        assert not any(w in RAW_WORDS for w in words), spec.name
+
+
+def test_mcp_handlers_reach_the_service_layer_only():
+    paths = sorted(MCP.rglob("*.py"))
+    assert any(p.name == "dispatch.py" for p in paths), "an empty scan proves nothing"
+    for path in paths:
+        bad = [n for n in _imports(path) if n.startswith(MCP_FORBIDDEN)]
+        assert not bad, (path, bad)
+
+
+def test_the_mcp_guard_catches_a_planted_import(tmp_path, monkeypatch):
+    planted = tmp_path / "dispatch.py"
+    planted.write_text("from comms.core.delivery.freeze import send\n")
+    monkeypatch.setattr(sys.modules[__name__], "MCP", tmp_path)
+    with pytest.raises(AssertionError):
+        test_mcp_handlers_reach_the_service_layer_only()
+
+
+def test_whatsvault_still_has_no_network_client_outside_adapters():
     for path in [*WHATSVAULT.rglob("*.py"), *(WHATSAPP / "apps").rglob("*.py")]:
         assert not (_imports(path) & NETWORK), path
 
@@ -93,45 +149,18 @@ def test_the_dormant_dispatcher_is_unreachable_from_the_root():
         assert not any(n.startswith("whatsvault") for n in _imports(path)), path
 
 
-def test_send_commands_are_always_ask_in_claude_code():
-    """A UX interlock, not the authorization boundary (spec v0.2 §AI-boundary)."""
-    settings = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    ask = settings["permissions"]["ask"]
-    for rule in (
-        "Bash(comms campaign send:*)",
-        "Bash(uv run comms campaign send:*)",
-        "Bash(comms campaign retry-failed:*)",
-        "Bash(uv run comms campaign retry-failed:*)",
-    ):
-        assert rule in ask
+def test_the_destructive_guard_catches_an_unmarked_delete(monkeypatch):
+    from dataclasses import replace
 
-
-CAMPAIGN_CORE = ("comms.core.campaigns", "comms.core.delivery")
-
-
-def _ai_surfaces() -> list[Path]:
-    """Every module an MCP server or its dispatch can load (5b-4 design §1, R21)."""
-    transports = ROOT / "src" / "comms" / "transports"
-    paths = [
-        p
-        for p in transports.glob("*/*.py")
-        if p.name in {"server.py", "dispatch.py", "sensitive_dispatch.py"}
-    ]
-    paths += [p for p in transports.rglob("*.py") if "mcp" in p.parent.parts]
-    paths += sorted((WHATSAPP / "apps" / "mcp").glob("*.py"))
-    return sorted(set(paths))
-
-
-def test_no_ai_surface_imports_the_campaign_core():
-    surfaces = _ai_surfaces()
-    assert any(p.name == "server.py" for p in surfaces), "an empty scan proves nothing"
-    for path in surfaces:
-        assert not [n for n in _imports(path) if n.startswith(CAMPAIGN_CORE)], path
-
-
-def test_the_campaign_core_guard_catches_a_planted_import(tmp_path, monkeypatch):
-    planted = tmp_path / "server.py"
-    planted.write_text("from comms.core.delivery.freeze import send\n")
-    monkeypatch.setattr(sys.modules[__name__], "_ai_surfaces", lambda: [planted, planted])
+    seed = TOOL_CATALOG[0]
+    unmarked = replace(
+        seed,
+        name="comms_message_delete",
+        service="message.delete",
+        read_only=False,
+        requires_request_id=True,
+        destructive=False,
+    )
+    monkeypatch.setattr(sys.modules[__name__], "TOOL_CATALOG", (seed, unmarked))
     with pytest.raises(AssertionError):
-        test_no_ai_surface_imports_the_campaign_core()
+        test_destructive_tools_are_annotated_destructive()

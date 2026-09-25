@@ -46,6 +46,8 @@ class ResultKind(StrEnum):
 
 class SkipReason(StrEnum):
     PLATFORM_INELIGIBLE = "platform_ineligible"
+    CONTENT_UNSUPPORTED = "content_unsupported"  # the transport cannot carry this content
+    TEMPLATE_REQUIRED = "template_required"  # outside the free-form window, and no template
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,9 @@ class DeliveryIntent:
     transport: str
     identity: str = field(repr=False)
     content: Mapping[str, Any] = field(repr=False)
+    # Local facts the freeze copies in from comms.db inside its transaction, so prepare stays
+    # pure (S3): the mirrored customer-service window, the campaign's template binding (A22, A23).
+    facts: Mapping[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass(frozen=True)
@@ -80,7 +85,9 @@ class FrozenDelivery:
 @dataclass(frozen=True)
 class DeliveryResult:
     kind: ResultKind
-    provider_message_ref: str | None = None
+    # The provider's message id; for Telegram it names the chat, so never in a repr (C31).
+    provider_message_ref: str | None = field(default=None, repr=False)
+    retry_after: int | None = None  # seconds; a provider's documented back-off (FAILED_TRANSIENT)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kind", ResultKind(self.kind))

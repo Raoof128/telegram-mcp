@@ -32,5 +32,9 @@ def test_presence_argument_is_rejected():
 
 def test_no_presence_machinery_remains():
     assert not hasattr(admin, "PRESENCE_GATED")
-    assert set(inspect.signature(AdminRouter).parameters) == {"handlers", "control_handlers"}
+    assert set(inspect.signature(AdminRouter).parameters) == {
+        "handlers",
+        "control_handlers",
+        "surface",  # comms v0.3: the historical harness's seam, never a presence proof
+    }
     assert "approver" not in inspect.signature(serve_admin).parameters

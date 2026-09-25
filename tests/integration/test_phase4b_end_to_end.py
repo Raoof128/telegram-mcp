@@ -8,7 +8,7 @@ import uvicorn
 from telethon.tl import types
 
 from comms.transports.telegram.keys.store import provision_lease_seed, provision_missing
-from comms.transports.telegram.runtime.composition import build_runtime
+from comms.transports.telegram.runtime.legacy_composition import build_runtime
 from comms.transports.telegram.storage.db import open_db
 from comms.transports.telegram.telegram.telethon_adapter import TelegramConfig, TelethonSession
 from tests.authority_fixtures import PROJECT_REF, seed_authority_rows, seed_project_world

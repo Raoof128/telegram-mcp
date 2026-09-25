@@ -24,16 +24,7 @@ def _config(tmp_path):
         state_dir=tmp_path / "state",
         key_dir=tmp_path / "keys",
         api_id=1,
-        port=_port(),
     )
-
-
-def _port():
-    import socket
-
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def _provision(tmp_path):
@@ -92,7 +83,6 @@ async def test_production_shape_socket_is_group_0660_and_needs_the_installer(tmp
         state_dir=tmp_path / "state",
         key_dir=tmp_path / "keys",
         api_id=1,
-        port=_port(),
         admin_group=group,
     )
     with pytest.raises(DaemonError, match="installer"):

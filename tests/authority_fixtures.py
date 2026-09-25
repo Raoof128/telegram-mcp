@@ -49,7 +49,14 @@ def seed_authority_rows(conn) -> dict[str, int]:
     return {"account_id": 1, "principal_id": 1, "client_id": 1}
 
 
-def insert_committed_receipt(conn, *, disclosure_ref: str, records: int, size: int) -> None:
+def insert_committed_receipt(
+    conn,
+    *,
+    disclosure_ref: str,
+    records: int,
+    size: int,
+    committed_at: str = "2026-09-22T00:00:00Z",
+) -> None:
     """Insert one committed receipt row that satisfies the §12.3 trigger."""
     conn.execute(
         "INSERT INTO disclosure_receipts (disclosure_ref, committed_at, principal_id,"
@@ -57,10 +64,10 @@ def insert_committed_receipt(conn, *, disclosure_ref: str, records: int, size: i
         " project_scope_digest, project_count, effective_egress_level, records_disclosed,"
         " bytes_disclosed, partial, commit_status, consent_key_id, consent_challenge_digest,"
         " canonical_result_provenance_digest, proof_payload_sha256, proof_key_id,"
-        " proof_signature) VALUES (?, '2026-09-22T00:00:00Z', 1, 1, 1,"
+        " proof_signature) VALUES (?, ?, 1, 1, 1,"
         " 'telegram_get_messages', 1, 1, 'digest', 1, 'metadata_only', ?, ?, 0, 'committed',"
         " 'consent-key', 'challenge', 'provenance', 'payload-sha', 'proof-key', 'signature')",
-        (disclosure_ref, records, size),
+        (disclosure_ref, committed_at, records, size),
     )
     conn.commit()
 
@@ -137,3 +144,9 @@ def seed_second_project(conn) -> None:
             (row[0], now, now),
         )
     conn.commit()
+
+
+def drop_legacy_audit_guards(conn) -> None:
+    """Simulate an attacker with raw database access: drop the truncation-only guards (B17)."""
+    conn.execute("DROP TRIGGER IF EXISTS legacy_audit_events_truncation_only")
+    conn.execute("DROP TRIGGER IF EXISTS legacy_audit_checkpoints_never_deleted")

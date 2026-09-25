@@ -9,8 +9,8 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from comms.core.canonical import jcs_dumps
+from comms.core.storage.db import write_tx
 from comms.transports.telegram.disclosure import receipts
-from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
 from comms.transports.telegram.disclosure.keys import publish_verification_key
 from comms.transports.telegram.disclosure.verify import verify_persisted_receipt
 from comms.transports.telegram.storage.db import open_db
@@ -120,7 +120,7 @@ def _insert_v2(conn, seed, kid, *, soft: bool) -> str:
         **COMMON, disclosure_ref=ref, soft_threshold_exceeded=soft
     )
     signed = receipts.sign_payload(payload, private_seed=seed, proof_key_id=kid)
-    with immediate_transaction(conn):
+    with write_tx(conn):
         conn.execute(
             "INSERT INTO disclosure_receipts (disclosure_ref, committed_at, principal_id, client_id,"
             " account_id, tool_name, security_epoch, policy_epoch, project_scope_digest, project_count,"

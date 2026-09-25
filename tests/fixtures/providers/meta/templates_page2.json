@@ -1,0 +1,1 @@
+{"http_status": 200, "body": {"data": [{"name": "event_reminder", "language": "en", "status": "REJECTED", "category": "UTILITY", "id": "1113", "components": [{"type": "BODY", "text": "See you at {{1}}"}]}], "paging": {"cursors": {"before": "QVFD", "after": "QVFE"}}}}

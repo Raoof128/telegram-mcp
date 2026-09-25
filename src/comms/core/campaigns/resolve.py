@@ -16,7 +16,7 @@ from itertools import pairwise
 from typing import Any
 
 from comms.core import refs
-from comms.core.campaigns.directory import DirectoryError
+from comms.core.campaigns.directory import DirectoryError, DirectoryNotFound
 
 __all__ = ["Candidate", "Origin", "Targets", "check_targets", "path_is_valid", "resolve_targets"]
 
@@ -45,17 +45,17 @@ class Candidate:
 
 def check_targets(conn: Any, targets: Targets) -> list[tuple[str, str]]:
     if not isinstance(targets, Mapping) or not set(targets) <= set(_TARGET_KINDS):
-        raise DirectoryError("unknown target")
+        raise DirectoryNotFound("unknown target")
     found = []
     for key, kind in _TARGET_KINDS.items():
         values = targets.get(key, ())
         if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
-            raise DirectoryError("unknown target")
+            raise DirectoryNotFound("unknown target")
         for ref in values:
             try:
                 refs.check(ref, kind)
             except ValueError:
-                raise DirectoryError("unknown target") from None
+                raise DirectoryNotFound("unknown target") from None
             table = {
                 "audience": "audiences",
                 "location": "locations",
@@ -63,7 +63,7 @@ def check_targets(conn: Any, targets: Targets) -> list[tuple[str, str]]:
                 "recipient": "recipients",
             }[kind]
             if conn.execute(f"SELECT 1 FROM {table} WHERE ref = ?", (ref,)).fetchone() is None:
-                raise DirectoryError("unknown target")
+                raise DirectoryNotFound("unknown target")
             found.append((kind, ref))
     return sorted(set(found))
 

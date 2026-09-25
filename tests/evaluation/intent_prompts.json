@@ -1,0 +1,75 @@
+{
+  "source": "docs/provenance/comms-v0.3-proposal.md section 80",
+  "use": "owner-run acceptance only: a client is given each prompt and its tool calls are compared with this sequence; the gate checks only that the data is well formed",
+  "expect": {
+    "call": "the client may call the sequence once its targets resolve to one ref each",
+    "clarify": "the prompt names no single target; the client asks before any write, and the write is never reached on a guess"
+  },
+  "prompts": [
+    {
+      "prompt": "Remove Jack.",
+      "expect": "clarify",
+      "tools": ["comms_group_list", "comms_group_members_list", "comms_group_member_remove"],
+      "note": "no group is named; the client asks which group before the remove"
+    },
+    {
+      "prompt": "Remove Jack from MQ but not UNSW.",
+      "expect": "call",
+      "tools": ["comms_group_list", "comms_group_members_list", "comms_group_member_remove"],
+      "note": "exactly one remove, in the MQ group; the UNSW group is never written"
+    },
+    {
+      "prompt": "Make Sohrab moderator.",
+      "expect": "clarify",
+      "tools": ["comms_group_list", "comms_group_members_list", "comms_group_admin_promote"],
+      "arguments": {"comms_group_admin_promote": {"profile": "moderator"}},
+      "note": "no group is named; the promote carries the moderator profile"
+    },
+    {
+      "prompt": "Show me the last conversation about Friday.",
+      "expect": "call",
+      "tools": ["comms_group_list", "comms_context_search", "comms_context_around_message"],
+      "note": "read only"
+    },
+    {
+      "prompt": "Send this to all locations.",
+      "expect": "call",
+      "tools": [
+        "comms_location_list",
+        "comms_campaign_create",
+        "comms_campaign_set_content",
+        "comms_campaign_set_targets",
+        "comms_campaign_preview",
+        "comms_campaign_send"
+      ],
+      "note": "a campaign, not a loop of message sends; the preview precedes the send"
+    },
+    {
+      "prompt": "Send it as me.",
+      "expect": "call",
+      "tools": ["comms_message_send"],
+      "arguments": {"comms_message_send": {"actor": "telegram_user"}},
+      "note": "the owner's own account"
+    },
+    {
+      "prompt": "Send it from the bot.",
+      "expect": "call",
+      "tools": ["comms_message_send"],
+      "arguments": {"comms_message_send": {"actor": "telegram_bot"}},
+      "note": "the bot account"
+    },
+    {
+      "prompt": "Who can delete messages here?",
+      "expect": "call",
+      "tools": ["comms_group_admins_list"],
+      "note": "read only; 'here' is the group already in the conversation"
+    },
+    {
+      "prompt": "Create an invite link for tomorrow.",
+      "expect": "call",
+      "tools": ["comms_group_invite_create"],
+      "arguments": {"comms_group_invite_create": {"expire_date": "<tomorrow, epoch seconds>"}},
+      "note": "the expiry is tomorrow"
+    }
+  ]
+}

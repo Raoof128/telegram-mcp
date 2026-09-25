@@ -13,6 +13,7 @@ import pytest
 
 from comms.transports.telegram.ipc.admin import (
     ADMIN_COMMANDS,
+    RETIRED_ADMIN_COMMANDS,
     AdminRouter,
     serve_admin,
     verify_peer,
@@ -356,9 +357,13 @@ async def test_duplicate_admin_keys_never_dispatch(run_dir):
 
 def test_every_spec_command_is_routed_and_unknown_names_are_refused():
     router, _ = _router()
-    assert len(ADMIN_COMMANDS) == 49  # §33's 51 less the two consent commands (comms spec v0.2)
+    # §33's 51 less the two consent commands (comms spec v0.2), 29 of them retired in v0.3.
+    # + comms v0.3 D30's "tool call" (the comms CLI through the one dispatcher)
+    assert (len(ADMIN_COMMANDS), len(RETIRED_ADMIN_COMMANDS)) == (22, 29)  # + D31 operator
     for retired in ("consent status", "consent approve"):
         assert router.dispatch({"cmd": retired})["code"] == "UNKNOWN_COMMAND"
+    for retired in RETIRED_ADMIN_COMMANDS:
+        assert router.dispatch({"cmd": retired})["code"] == "RETIRED_IN_V0_3"
     for command in ADMIN_COMMANDS:
         response = router.dispatch({"cmd": command, "args": {}})
         assert response["ok"] is True or response["code"] == "NOT_AVAILABLE_IN_PHASE"

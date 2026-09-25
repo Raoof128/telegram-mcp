@@ -94,6 +94,10 @@ whatsvault import --path ~/Downloads/chat.txt --conversation-id cnv_… --accoun
 whatsvault doctor             # vault, search, ingest and MCP readiness
 ```
 
+> **Retired in comms v0.3.** The standalone WhatsVault MCP server (`whatsvault-mcp`,
+> `apps/mcp`) no longer ships: the comms MCP server serves WhatsApp and Telegram
+> together. What follows describes the retired server, for history.
+
 Then start the read-only MCP server:
 
 ```bash

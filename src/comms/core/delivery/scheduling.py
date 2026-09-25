@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from comms.core import timeutil
+from comms.core.audit.integrity import require_not_degraded
 from comms.core.campaigns.events import append_event
 from comms.core.delivery.engine import Engine, ExecutorLease, require_lease
 from comms.core.storage.db import write_tx
@@ -21,6 +22,7 @@ __all__ = ["run_due"]
 def run_due(lease: ExecutorLease, conn: Any, engine: Engine, *, now: datetime) -> list[str]:
     """Start and execute every SCHEDULED campaign whose send time is at or before ``now``."""
     require_lease(lease)
+    require_not_degraded(conn)  # A8: a scheduled start is a new effect
     stamp = timeutil.iso(now)
     due = [
         row[0]

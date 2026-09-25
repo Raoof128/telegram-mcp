@@ -1,8 +1,11 @@
-"""Project, grant and scope handlers (design §2.5)."""
+"""Project, grant and scope handlers (design §2.5): retired in comms v0.3, kept for history.
+
+They are driven through the historical surface; production answers RETIRED_IN_V0_3.
+"""
 
 import pytest
 
-from comms.transports.telegram.ipc.admin import AdminRouter
+from comms.transports.telegram.ipc.admin import LEGACY_ADMIN_SURFACE, AdminRouter
 from comms.transports.telegram.ipc.handlers.leases import auth_headers_handler
 from comms.transports.telegram.ipc.handlers.projects import project_handlers
 from comms.transports.telegram.ipc.leases import verify_lease
@@ -18,7 +21,7 @@ def router(tmp_path):
     seed_authority_rows(conn)
     conn.execute("DELETE FROM projects")
     conn.commit()
-    return conn, AdminRouter(project_handlers(conn))
+    return conn, AdminRouter(project_handlers(conn), surface=LEGACY_ADMIN_SURFACE)
 
 
 def _call(router, cmd, **args):

@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from comms.core.keys.purposes import PURPOSES
+
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "comms"
 CORE = SRC / "core"
@@ -27,12 +29,35 @@ ADDED_IN_5B4 = Counter(  # comms/core/domains.py
 )
 
 
+ADDED_IN_V03 = Counter(  # comms/core/domains.py, comms v0.3 Part A
+    {
+        "b'comms-audit-chain/v1\\x00'": 1,
+        "b'comms-audit-genesis/v1\\x00'": 1,
+        "b'comms-audit-checkpoint/v1\\x00'": 1,
+        "b'comms/audit-head-anchor/v1\\x00'": 1,
+        "b'comms-campaign-event/v1\\x00'": 1,
+        "b'comms-campaign-commit/v1\\x00'": 1,
+        "b'comms-backup-signature/v1\\x00'": 1,
+        "b'comms-backup-binding/v1\\x00'": 1,
+        "b'comms-backup/v1\\x00'": 1,
+        "b'comms-mtproto-random-id/v1\\x00'": 1,  # Part C, A20
+        "b'comms-request-digest/v1\\x00'": 1,  # Part D, A28
+        "b'comms-admin-op/v1\\x00'": 1,  # Part D, A28
+        "b'comms-cursor/v1\\x00'": 1,  # Part D, A30
+        "b'comms-local-lease/v1\\x00'": 1,  # Part D, A33
+        "'comms-loopback'": 1,  # Part D, A33: the cml1 audience
+    }
+)
+
+
 def _constants(path: Path) -> list[str]:
     found = []
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
             text = node.value.decode("latin-1") if isinstance(node.value, bytes) else node.value
-            if text.startswith("comms-"):
+            if text.startswith(("comms-", "comms/")):  # widened for comms/audit-head-anchor (A6)
+                if isinstance(node.value, str) and text in PURPOSES:
+                    continue  # a registered key purpose name (B4), never a wire domain
                 found.append(repr(node.value))
     return found
 
@@ -43,7 +68,7 @@ def _files(root: Path) -> list[Path]:
 
 def test_comms_wire_domains_are_exactly_the_pinned_multiset():
     found = Counter(c for p in _files(SRC) for c in _constants(p))
-    assert found == PINNED + ADDED_IN_5B4
+    assert found == PINNED + ADDED_IN_5B4 + ADDED_IN_V03
 
 
 def test_core_wire_domains_live_only_in_domains_py():

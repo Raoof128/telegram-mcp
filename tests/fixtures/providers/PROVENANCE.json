@@ -1,0 +1,410 @@
+{
+  "fixtures": {
+    "meta/err_100_invalid_parameter.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "8486bd141fe5f19d795befe698b7f40080f2230f4cdd70ad061f7ed0d223136c",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_100_template_exists.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "c45ae6911f929cdb2e8f3cc310876ef1ec7a25c7b2c1940bb796ac8324eea06b",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
+    },
+    "meta/err_130429_throughput.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "8c1351205cdfaf54e65dadc6de2004ff1d5949c070b702db359599ef45a09aa9",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_131000_generic.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "d2d2e1420cf6f8cde2523dff2e349e4007e5149e9b410ff6835f803203a24eb8",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_131026_undeliverable.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "5fbc97a27d33256e193cbc81ba2207bfd743485b727c0c659a4f3ad7146be4a3",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_131047_reengagement.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "12860368b814608e5b8dc84f665a0f7d076f63f8a7b4b4d0aa674d7c75e63a55",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_131056_pair_rate.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "0acb6995e4415a2fabcb3f033ce192990bba571776aacfa0a6f6e0fd59c8ce0c",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_132001_template_missing.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "7f560f65325bf503dc7740a81a35935051ffb08857d4c7074924dc85cee38bc2",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_132015_template_paused.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "acf6a6f51c43814e1ebf5edbc785aa1c1c7fb54bf6fb09c8521b4f368028afd1",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_190_token_expired.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "06fa3f87736ba38ea59f6d8c8f6566a9cf0ff01d8deb44689a7fb22d5ed0efa3",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/err_999999_unknown.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "849288204afe95b9ec287f5370aa390fb99f1e8ddc324367e988a6dc274024f6",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/http_502.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "00c90b679bca69c1bfb7d875626e287e19eecf473888c970553c95230c242593",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/malformed.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "18e53f22d5c077bad6e8b1d73b43c6ccf170c08a502a1834472f22de37be2582",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/send_ok.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "cd8a381ee74921edb6c8e040862a153c260a07064b460926b9c1acc978c3f94f",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/send_ok_without_id.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "2c81b010c819b53ab586f67af34981845ef4fd308e9929b0efe63d16d3607829",
+      "source": "https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes — hand-built from the documented error envelope, not a live capture"
+    },
+    "meta/template_created.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "76979b5f56de424f96e22daf2b3426e41d1e32303949460f5e8a94b8c718e32c",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
+    },
+    "meta/template_created_without_id.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "5e1c76e2bfc40cdc19e66e138657f8224cb721b1615d92223cd06bb0fe2e0646",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
+    },
+    "meta/template_success.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "de691b9363144b3842941abb73216c4ef96d153d360a735b273adcc3db4f8e5d",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
+    },
+    "meta/templates_page1.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "9c758f4bab266e69f82ae923ba7b7c68572c40bc3d404b584b5d132ec8acfd9e",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
+    },
+    "meta/templates_page2.json": {
+      "api_version": "Graph API v21.0",
+      "captured": "2026-09-25",
+      "provider": "meta_whatsapp_cloud_api",
+      "sha256": "4c082cb2b1d374171cce23c7fd330239f2b4c94933730df348f51b78aa55ae10",
+      "source": "https://developers.facebook.com/docs/whatsapp/business-management-api/message-templates — hand-built from the documented shapes, not a live capture"
+    },
+    "telegram_bot/admin_400_not_enough_rights.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "e2ef732ab73c2024c2eff2a2bd638e348d57ca9f6bea24c842e09fc11e3882dc",
+      "source": "https://core.telegram.org/bots/api#banchatmember — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/admin_400_not_enough_rights_promote.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "8694b6730d2e5d40ea4c427174ef3d6cde56df87613b3d03927c34957d96e030",
+      "source": "https://core.telegram.org/bots/api#promotechatmember — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/admin_400_not_modified.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "8d1309f8f54f7545a24c8e5688542e1bfd2b9ce3f1f5716d05b68a57be8dad27",
+      "source": "https://core.telegram.org/bots/api#promotechatmember — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/admin_400_user_is_admin.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "2b27b632ddab985c3e6be942a6dedb30fbf1294161818e412529464afc215ae8",
+      "source": "https://core.telegram.org/bots/api#banchatmember — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/admin_400_user_not_found.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "07dfde5c55bd2b5bcc4efe652c77a02cbf03efa21f9dbc3a11cab41f09e75338",
+      "source": "https://core.telegram.org/bots/api#banchatmember — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/admin_true.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "e6cf6d50f12ed8375e167ec2f07b31140f67f775e5dd5933a14caf98da944ff1",
+      "source": "https://core.telegram.org/bots/api#banchatmember — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/createChatInviteLink_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "f42af61c91fc709004fa365ed1bf4938373a58281ea45b08a9c59e792e7dbfd9",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/createForumTopic_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "2b86357b5368cc69b14ef63448fbac79bd58592abbdc7e1afb8840ef168516cf",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/create_ok_without_ref.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "a7d17a3f76262e592a90b1dd62acd73d465e334e356ffb72fd821e1aa29d0cf2",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatAdministrators_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "fac2d4c8d100d5ce79220e64cb415979f372c21c3f880313acb7412f4e1e874d",
+      "source": "https://core.telegram.org/bots/api#getchatadministrators — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatMemberCount_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "40c93039c1d6b24dc22af3339a1f53e294b87d773a631503dc242f245b029e16",
+      "source": "https://core.telegram.org/bots/api#getchatadministrators — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatMember_admin_subset.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "f13301c37d76d282145d3261f3727a3abd64abd35c11bc13a893132efc27e896",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatMember_creator.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "dec9cc0aad0db8f65fc4317f9478c03f9c1329088c08f9f31455274ab25fc9b8",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatMember_left.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "8a8ead3fe086fdfd8a25528be7edb4d1de95503419edb56674f135e8f61fa361",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatMember_member.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "1323b317ffb6c86ce6c85d57c8e8b3bf848954433e2ef231512854803d1ad743",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChatMember_restricted_no_send.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "792a9583ab6aaf0cfcc87821c003fd45378e9f756635691f5223a024ac4d106d",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChat_403_kicked.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "e9b6547858a676193b22301ec5f910a19ec1432d2df9db80941ac6112af1e8bd",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChat_private.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "132767bf6c76cea88f209bfb4705d0ce1d907f87537bda9df2dbca0968868afb",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChat_supergroup_forum.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "563a959ed3472bdde63f5c87d5cb68a114dba72049eb7d1d1dc00fb5867706eb",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getChat_supergroup_muted.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "ec97717840f72b7b3eaf01d2dd30a9225ced0452cd4fc42c39af1a3088628dad",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getMe_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "58157822e1a3a796fa85997c6df6f1eea5e4d3bcc1e26b4534165a819586b968",
+      "source": "https://core.telegram.org/bots/api#chatmember — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getUpdates_409_webhook_active.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "d46729d6d84dca474cb7bc9158be1853f891700522d791dceb23a48994c135a1",
+      "source": "https://core.telegram.org/bots/api#getupdates — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getUpdates_empty.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "1376b52edc71c22d7041028588dedff73b90bd9326e64b7aef54388f91c970d2",
+      "source": "https://core.telegram.org/bots/api#getupdates — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/getUpdates_two.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "b826c16ba5a56dc140b7d1833cef47e5adf4dc21368f5690f5a6aae79bcf736d",
+      "source": "https://core.telegram.org/bots/api#getupdates — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/join_400_hide_requester_missing.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "953d98c2dc9a167f43e7b718eddcd6ddd90ac51c36d0ee4975b0b30bd0c52ade",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/sendMessage_400_chat_not_found.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "2e2959b7a53d7d18c395917206b729a759cf5663a4fc4c99fd33a21ca0e50125",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_400_undocumented.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "39733296e9e1afc7d7404cf2e73226ad28bf3865ac646897079d1a9924b6eae8",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_401.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "c30e5ebcc0cb75a7fcd214554ab599c1b309c9b0ad517f50f161a7a8ff42f761",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_403_blocked.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "d1b78841913a820211a5810a62f7d0bd600e5f81a8a5d478d3450d057a3a8498",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_429.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "ec69aa461490ef0b3ab0982df43f4ebd037b196ec18204a0e2ef8887d1c99e56",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_429_no_retry_after.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "fd9bfbe5cb0d8625a1a23308c06650489b8c818b68bf9d36e0d2fa62feabe97a",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_500_envelope.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "4c74f59e317e957728d0a259ddffe37140a79ca0187337de101573fe6cd661e0",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_502.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "7152ea58bfa1ba4debe98f0f639d1608618a09b92c79f383862ba87c7a838ad0",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_malformed.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "e9474d18beb5e2ede1c0b4ac8ca4fce6db2b7941397962b10e5f12700d86c03e",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_no_ok_field.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "43d3db779da9c4e10bbb1843e27e15db3ad9e694c8ed4953002213c0b7064140",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/sendMessage_ok.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "22211893982c3b9a1e0163032c7a85174ab9ab765c5ccdd9e0f30192de0b11fc",
+      "source": "https://core.telegram.org/bots/api#making-requests — hand-built from the documented envelope, not a live capture"
+    },
+    "telegram_bot/topic_400_not_a_forum.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "e680b29dd4336903fe34c5f2ca330ecaa1aea5884ed3b3f0428443e9d890fa83",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
+    },
+    "telegram_bot/topic_400_not_modified.json": {
+      "api_version": "Bot API 9.x (envelope shape unchanged since 2.0)",
+      "captured": "2026-09-25",
+      "provider": "telegram_bot_api",
+      "sha256": "d56a1be6fb5fc297af074c7236879452ac5d3f0f24852a7852fd855f31083340",
+      "source": "https://core.telegram.org/bots/api#createchatinvitelink — hand-built from the documented types, not a live capture"
+    }
+  }
+}

@@ -104,7 +104,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip build
           python -m build
-      - name: Verify the wheel ships both packages and both entry points
+      - name: Verify the wheel ships both packages and the entry point
         run: |
           python - <<'PY'
           import glob, zipfile
@@ -114,7 +114,8 @@ jobs:
           assert any(n.startswith("whatsvault/") for n in names), "whatsvault/ missing"
           ep = next(n for n in names if n.endswith("entry_points.txt"))
           text = zipfile.ZipFile(whl).read(ep).decode()
-          assert "whatsvault-mcp" in text, "console script missing"
+          assert "whatsvault = whatsvault.cli.main:main" in text, "console script missing"
+          assert "whatsvault-mcp" not in text, "the retired MCP app is back (comms v0.3)"
           print("wheel verified:", whl)
           PY
       - uses: actions/upload-artifact@v4

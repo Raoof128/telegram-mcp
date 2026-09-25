@@ -13,6 +13,7 @@ from comms.transports.telegram.disclosure.audit.chain import (
 )
 from comms.transports.telegram.storage.db import open_db
 from comms.transports.telegram.storage.migrations import migrate
+from tests.authority_fixtures import drop_legacy_audit_guards
 
 _KEY = bytes(range(32))
 
@@ -28,9 +29,9 @@ def _append(conn, event):
     """Every append runs inside a caller-owned transaction; there is no
     convenience path that commits for you, because the coordinator must be
     able to put the receipt and the ledger rows in the same transaction."""
-    from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
+    from comms.core.storage.db import write_tx
 
-    with immediate_transaction(conn):
+    with write_tx(conn):
         return append_event(conn, _KEY, event)
 
 
@@ -114,6 +115,7 @@ def test_editing_a_row_breaks_verification(conn):
 def test_deleting_the_tail_breaks_verification(conn):
     _append(conn, _event())
     _append(conn, _event())
+    drop_legacy_audit_guards(conn)  # an attacker with raw DB access
     conn.execute("DELETE FROM audit_events WHERE chain_seq = 2")
     conn.commit()
     # Sequence continuity holds, but the head no longer matches what the
@@ -144,12 +146,12 @@ def test_concurrent_appends_never_fork(tmp_path):
     migrate(open_db(tmp_path / "meta.db"))
 
     def appender():
-        from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
+        from comms.core.storage.db import write_tx
 
         own = open_db(tmp_path / "meta.db")
         for _ in range(10):
             try:
-                with immediate_transaction(own):
+                with write_tx(own):
                     append_event(own, _KEY, _event())
             except Exception:  # noqa: BLE001, S110 -- contention is expected; forks are not
                 # A losing writer is the point of the test: SQLite refuses the

@@ -31,8 +31,8 @@ from comms.transports.telegram.ipc.handlers._wrapper import (
     admin_event,
     run_audited_tx,
 )
-from comms.transports.telegram.storage.authority_view import load_security
 from comms.transports.telegram.storage.db import bind_epoch_state, write_epoch_state
+from comms.transports.telegram.storage.owner_state import load_security
 from comms.transports.telegram.storage.settings import get_setting
 
 __all__ = ["audit_handlers"]

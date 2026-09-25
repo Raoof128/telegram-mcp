@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from comms.core.keys import ids
 from comms.transports.telegram.keys.registry import KEY_REGISTRY, KeySpec
 
 __all__ = [
@@ -198,13 +199,11 @@ def load_key(name: str) -> bytes:
     if spec.algorithm == "HMAC-SHA-256":
         if len(data) != _SEED_LEN:
             raise KeyStoreError(f"{ERR_MATERIAL}: {name}")
-        _FINGERPRINT_CACHE[name] = "hmac:sha256:" + hashlib.sha256(data).hexdigest()
+        _FINGERPRINT_CACHE[name] = ids.hmac_key_id(data)
     elif spec.algorithm == "Ed25519":
         if len(data) != _SEED_LEN:
             raise KeyStoreError(f"{ERR_MATERIAL}: {name}")
-        _FINGERPRINT_CACHE[name] = (
-            "ed25519:sha256:" + hashlib.sha256(_ed25519_public_halves(data)).hexdigest()
-        )
+        _FINGERPRINT_CACHE[name] = ids.ed25519_key_id(_ed25519_public_halves(data))
     else:
         # Reference/device-bound rows have no private file here.
         raise KeyStoreError(f"{ERR_MISSING}: {name}")
@@ -237,7 +236,7 @@ def fingerprint_for(name: str, public_bytes: bytes) -> str:
     if algorithm.startswith("Ed25519"):
         if len(public_bytes) != _SEED_LEN:
             raise KeyStoreError(f"{ERR_MATERIAL}: {name}")
-        return "ed25519:sha256:" + hashlib.sha256(public_bytes).hexdigest()
+        return ids.ed25519_key_id(public_bytes)
     if algorithm == "P-256 Secure Enclave":
         try:
             key = serialization.load_der_public_key(public_bytes)

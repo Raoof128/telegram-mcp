@@ -131,6 +131,29 @@ class FakeTelegram(_Fake):
         return fx.tg(raw)
 
 
+class KeyedTelegram(FakeTelegram):
+    """A telegram fake that names a provider request key, as the MTProto transport does."""
+
+    actor = "telegram_user"
+
+    def __init__(self, conn, key_of=lambda idem: "k-" + idem[:16], **kw):
+        super().__init__(conn=conn, **kw)
+        self.key_of = key_of
+        self.seen_keys = []
+
+    def provider_request_key(self, idempotency_key):
+        return self.key_of(idempotency_key)
+
+    def deliver(self, delivery):
+        row = self.conn.execute(
+            "SELECT a.provider_request_key, a.transport_actor FROM delivery_attempts a"
+            " JOIN delivery_jobs j ON j.id = a.job_id WHERE j.ref = ? ORDER BY a.attempt_no DESC",
+            (delivery.job_ref,),
+        ).fetchone()
+        self.seen_keys.append(tuple(row))  # what was durable when the call was made
+        return super().deliver(delivery)
+
+
 class FakeWhatsApp(_Fake):
     name = "whatsapp"
 

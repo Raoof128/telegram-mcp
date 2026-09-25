@@ -1,0 +1,1 @@
+{"http_status": 200, "body": {"ok": true, "result": [{"status": "creator", "user": {"id": 42, "is_bot": false, "first_name": "Ali"}, "is_anonymous": false}, {"status": "administrator", "user": {"id": 7000000001, "is_bot": true, "first_name": "Fixture bot"}, "can_manage_chat": true}]}}

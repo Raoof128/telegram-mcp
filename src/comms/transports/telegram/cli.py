@@ -1,7 +1,8 @@
-"""Operator entry point: `demo` (Phase 1) plus the Phase-2a runtime verbs.
+"""Operator entry point: the Phase-2a runtime verbs.
 
-``demo`` is untouched from Phase 1: it still serves the synthetic profile on
-loopback and never reaches Telegram.
+``demo`` and ``serve`` are retired in comms v0.3 (A3): each prints one fixed line
+naming ``comms mcp`` and exits ``EXIT_RETIRED``. The Telegram MCP surface they
+served is no longer reachable from any production entry.
 
 The Phase-2 verbs split exactly as design §2 requires. Bootstrap control —
 ``start``, ``stop``, ``status`` — works while the runtime is OFF and never
@@ -22,7 +23,6 @@ validation objects are never dumped, because they quote the offending value.
 import argparse
 import json
 import logging
-import os
 import socket
 import sys
 from pathlib import Path
@@ -38,11 +38,13 @@ EXIT_REFUSED = 4
 EXIT_NOT_IN_PHASE = 5
 # 6 was EXIT_PRESENCE (PRESENCE_REQUIRED); retired by comms spec v0.2, never reassigned.
 EXIT_PERMISSION = 7
+EXIT_RETIRED = 8  # a surface comms v0.3 retired (A3)
 
 _ADMIN_EXITS = {
     "MALFORMED_REQUEST": EXIT_USAGE,
     "UNKNOWN_COMMAND": EXIT_USAGE,
     "NOT_AVAILABLE_IN_PHASE": EXIT_NOT_IN_PHASE,
+    "RETIRED_IN_V0_3": EXIT_RETIRED,
     "PERMISSION_DENIED": EXIT_PERMISSION,
     "INTERNAL_ERROR": EXIT_FAILURE,
 }
@@ -71,38 +73,17 @@ def _mode_from(args: argparse.Namespace) -> str:
     return "local"
 
 
+def _retired(verb: str) -> int:
+    print(f"telegram-mcp {verb} is retired in comms v0.3; use comms mcp", file=sys.stderr)
+    return EXIT_RETIRED
+
+
 def _cmd_demo(args: argparse.Namespace) -> int:
-    from pydantic import ValidationError
-
-    from comms.transports.telegram.config import DemoConfig, validate_environment
-
-    try:
-        validate_environment(os.environ)
-        config = DemoConfig(host=args.host, port=args.port)
-    except (ValidationError, ValueError):
-        return _fail("invalid demo configuration.", EXIT_USAGE)
-
-    from comms.transports.telegram.server import create_app
-
-    app = create_app(config)
-    logger.info("telegram-mcp demo starting")
-    print(f"telegram-mcp demo listening on {config.host}:{config.port}/mcp (synthetic build)")
-    try:
-        import uvicorn
-
-        uvicorn.run(app, host=config.host, port=config.port, access_log=False)
-    except OSError:
-        return _fail("failed to bind demo server.", EXIT_FAILURE)
-    logger.info("telegram-mcp demo stopped")
-    return EXIT_OK
+    return _retired("demo")
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
-    return _fail(
-        "serve is not a separate verb in this build: use `telegram-mcp start`"
-        " (runtime) or `telegram-mcp demo` (synthetic).",
-        EXIT_NOT_IN_PHASE,
-    )
+    return _retired("serve")
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
@@ -270,7 +251,6 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
         key_dir=Path(args.store_dir),
         api_id=args.api_id,
         test_dc=test_dc,
-        port=args.port,
         admin_group=args.admin_group,
     )
     try:
@@ -287,9 +267,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # dest="verb": the admin subcommand owns the name "command".
     sub = parser.add_subparsers(dest="verb", required=True)
 
-    demo = sub.add_parser("demo", help="serve the synthetic profile on loopback")
-    demo.add_argument("--host", default="127.0.0.1")
-    demo.add_argument("--port", type=int, default=8766)
+    sub.add_parser("demo", help="retired in comms v0.3; use comms mcp")
 
     start = sub.add_parser("start", help="start the runtime and tunnel")
     modes = start.add_mutually_exclusive_group()
@@ -297,7 +275,7 @@ def _build_parser() -> argparse.ArgumentParser:
     modes.add_argument("--chatgpt", action="store_true", help="adds the tunnel client, port 8767")
     modes.add_argument("--all", action="store_true", help="both listeners")
 
-    sub.add_parser("serve", help="not a separate verb in this build; see start and demo")
+    sub.add_parser("serve", help="retired in comms v0.3; use comms mcp")
     sub.add_parser("stop", help="drain and stop every job (no-op while OFF)")
     sub.add_parser("status", help="report runtime state; works while OFF")
 
@@ -329,7 +307,6 @@ def _build_parser() -> argparse.ArgumentParser:
     daemon.add_argument("--store-dir", required=True)
     daemon.add_argument("--api-id", type=int, default=None)
     daemon.add_argument("--test-dc", default=None)
-    daemon.add_argument("--port", type=int, default=8766)
     daemon.add_argument("--admin-group", default=None, help="production: telegram-mcp-admin")
     return parser
 
@@ -348,7 +325,34 @@ _COMMANDS = {
 }
 
 
+# comms v0.3 D31: these verbs are comms's; telegram-mcp forwards them unchanged.
+_COMMS_VERBS = frozenset(
+    {
+        "mcp",
+        "campaign",
+        "location",
+        "audience",
+        "group",
+        "message",
+        "transport",
+        "credential",
+        "audit",
+        "retention",
+        "backup",
+        "cutover",
+        "client",
+        "oauth",
+    }
+)
+
+
 def main() -> None:
+    argv = sys.argv[1:]
+    if argv[:1] and argv[0] in _COMMS_VERBS:
+        import comms.cli
+
+        comms.cli.main(argv)
+        return
     args = _build_parser().parse_args()
     _init_safe_logging()
     code = _COMMANDS[args.verb](args)

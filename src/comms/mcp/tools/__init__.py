@@ -1,0 +1,24 @@
+"""The catalog's tool families, in P order (comms v0.3 D18–D24)."""
+
+from __future__ import annotations
+
+from comms.mcp.spec import ToolSpec
+from comms.mcp.tools.account import ACCOUNT_TOOLS
+from comms.mcp.tools.admin import ADMIN_TOOLS
+from comms.mcp.tools.campaigns import CAMPAIGN_TOOLS
+from comms.mcp.tools.context import CONTEXT_TOOLS
+from comms.mcp.tools.directory import DIRECTORY_TOOLS
+from comms.mcp.tools.groups import GROUP_TOOLS
+from comms.mcp.tools.messages import MESSAGE_TOOLS
+
+__all__ = ["FAMILIES"]
+
+FAMILIES: tuple[tuple[ToolSpec, ...], ...] = (
+    CONTEXT_TOOLS,
+    MESSAGE_TOOLS,
+    GROUP_TOOLS,
+    ADMIN_TOOLS,
+    CAMPAIGN_TOOLS,
+    DIRECTORY_TOOLS,
+    ACCOUNT_TOOLS,
+)

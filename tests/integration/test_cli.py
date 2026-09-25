@@ -9,7 +9,6 @@ argument handling.
 
 import asyncio
 import json
-import os
 import stat
 from pathlib import Path
 
@@ -139,10 +138,17 @@ async def test_admin_verb_proxies_to_a_live_socket(monkeypatch, capsys, tmp_path
 
         # a routed but unimplemented command is refused, not faked
         code = await asyncio.to_thread(
-            _run, ["admin", "project", "list", "--runtime-dir", "run"], monkeypatch
+            _run, ["admin", "audit", "verify", "--runtime-dir", "run"], monkeypatch
         )
         assert code == 5
         assert "NOT_AVAILABLE_IN_PHASE" in capsys.readouterr().err
+
+        # a command comms v0.3 retired says so (A3)
+        code = await asyncio.to_thread(
+            _run, ["admin", "project", "list", "--runtime-dir", "run"], monkeypatch
+        )
+        assert code == 8
+        assert "RETIRED_IN_V0_3" in capsys.readouterr().err
 
         # a mutating command runs on the peer's authority alone (comms spec v0.2)
         code = await asyncio.to_thread(_run, ["admin", "lock", "--runtime-dir", "run"], monkeypatch)
@@ -184,17 +190,11 @@ async def test_stop_reaches_the_framed_control_channel(monkeypatch, tmp_path):
         await server.wait_closed()
 
 
-def test_demo_config_failure_prints_one_fixed_line(monkeypatch, capsys):
-    monkeypatch.setenv("TELEGRAM_API_HASH", "not-allowed-in-safe-demo")
-    code = _run(["demo", "--host", "0.0.0.0", "--port", "8766"], monkeypatch)
-    captured = capsys.readouterr()
-    assert code == 2
-    assert captured.err.strip() == "telegram-mcp: invalid demo configuration."
-    assert "ValidationError" not in captured.err
-    assert "0.0.0.0" not in captured.err
-    assert os.environ["TELEGRAM_API_HASH"] == "not-allowed-in-safe-demo"
-
-
-def test_serve_points_at_start_and_exits_not_in_phase(monkeypatch, capsys):
-    assert _run(["serve"], monkeypatch) == 5  # EXIT_NOT_IN_PHASE
-    assert "telegram-mcp start" in capsys.readouterr().err
+def test_demo_and_serve_are_retired_with_one_fixed_line(monkeypatch, capsys):
+    for verb in ("demo", "serve"):
+        assert _run([verb], monkeypatch) == 8  # EXIT_RETIRED (comms v0.3 A3)
+        captured = capsys.readouterr()
+        assert (
+            captured.err.strip() == f"telegram-mcp {verb} is retired in comms v0.3; use comms mcp"
+        )
+        assert captured.out == ""

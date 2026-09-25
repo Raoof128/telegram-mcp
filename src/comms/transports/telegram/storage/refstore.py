@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from comms.core.opaque import mint_opaque_ref
-from comms.transports.telegram.disclosure.audit.chain import immediate_transaction
+from comms.core.storage.db import write_tx
 
 __all__ = ["PEER_TYPES", "PeerRow", "RefStore"]
 
@@ -91,7 +91,7 @@ class RefStore:
     def ensure_peer(
         self, peer_type: str, peer_id: int, *, display_name: str | None, username: str | None
     ) -> PeerRow:
-        with immediate_transaction(self._conn):
+        with write_tx(self._conn):
             return self.ensure_peer_in_tx(
                 peer_type, peer_id, display_name=display_name, username=username
             )
@@ -134,7 +134,7 @@ class RefStore:
 
     def message_ref(self, peer_row_id: int, message_id: int) -> str:
         now = _now()
-        with immediate_transaction(self._conn):
+        with write_tx(self._conn):
             row = self._conn.execute(
                 "SELECT message_ref FROM message_refs WHERE account_id = ? AND peer_id = ?"
                 " AND telegram_message_id = ?",

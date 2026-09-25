@@ -11,7 +11,14 @@ CORE = ROOT / "src" / "comms" / "core"
 TELEGRAM = ROOT / "src" / "comms" / "transports" / "telegram"
 WHATSAPP = ROOT / "transports" / "whatsapp" / "src" / "whatsvault"
 LEGACY = ROOT / "src" / "telegram_mcp"
-FORBIDDEN_FROM_CORE = ("comms.transports", "telegram_mcp", "whatsvault")
+FORBIDDEN_FROM_CORE = (
+    "comms.transports",
+    "comms.services",  # comms v0.3 D2: services depend on core, never the reverse
+    "comms.mcp",
+    "comms.runtime",
+    "telegram_mcp",
+    "whatsvault",
+)
 DYNAMIC = {"import_module", "__import__"}
 
 

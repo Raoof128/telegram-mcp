@@ -17,7 +17,8 @@ from whatsvault.db import connection as C
 from whatsvault.db import migrations as M
 from whatsvault.ops import launchd
 
-DAEMONS = ["apps.ingest.consumer", "apps.scheduler.scheduler", "apps.dispatcher.dispatch", "apps.mcp.server"]
+# apps.mcp.server was retired by comms v0.3 (the comms MCP server replaces it).
+DAEMONS = ["apps.ingest.consumer", "apps.scheduler.scheduler", "apps.dispatcher.dispatch"]
 
 
 @pytest.fixture
@@ -150,20 +151,6 @@ def test_validate_rejects_successfulexit_true(tmp_path):
     daemon needs, and it would loop on the not-available path."""
     f = _write_plist(tmp_path / "z.plist", KeepAlive={"SuccessfulExit": True})
     assert f["keepalive_true"] is False
-
-
-def test_mcp_preflight_reports_unprovisioned_keys_instead_of_raising():
-    """Raising KeyMissing exits non-zero and, under KeepAlive, restarts forever."""
-    from apps.mcp import server
-    from whatsvault.crypto import keystore as KS
-    from whatsvault.mcp import audit, auth
-
-    ks = KS.MemoryKeyStore()
-    rec = server.preflight(ks)
-    assert rec["status"] == "not_started" and rec["blocked_on"] == "keys_not_provisioned"
-    auth.provision_token(ks)
-    ks.provision(audit.AUDIT_KEY_NAME, 32)
-    assert server.preflight(ks) is None
 
 
 def test_every_shipped_plist_uses_crash_restart_without_hot_looping():

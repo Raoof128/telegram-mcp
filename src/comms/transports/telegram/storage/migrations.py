@@ -50,7 +50,9 @@ __all__ = [
     "migrate",
 ]
 
-SCHEMA_VERSION = 2  # 2: versioned receipts, owner-direct v2 (comms 5b-3 design §2.2)
+SCHEMA_VERSION = (
+    3  # 2: versioned receipts (5b-3 §2.2); 3: the v0.3 legacy audit seal (comms v0.3 A6)
+)
 
 # Spec §12.2 table order.
 SCHEMA_TABLES: tuple[str, ...] = (
@@ -609,9 +611,64 @@ _RECEIPTS_V2: tuple[str, ...] = (
 )
 
 
+# comms v0.3 cutover (spec A6, G3): the legacy seal is enforced by the database itself.
+_V03_SEAL = (
+    """
+    CREATE TRIGGER legacy_audit_sealed BEFORE INSERT ON audit_events
+      WHEN (SELECT value_json FROM settings WHERE key = 'audit.append_state') = '"sealed"'
+      BEGIN SELECT RAISE(ABORT, 'legacy chain is sealed'); END
+    """,
+    """
+    CREATE TRIGGER legacy_seal_one_way_u BEFORE UPDATE ON settings
+      WHEN OLD.key = 'audit.append_state' AND OLD.value_json = '"sealed"'
+      BEGIN SELECT RAISE(ABORT, 'legacy seal is one-way (sealed)'); END
+    """,
+    """
+    CREATE TRIGGER legacy_seal_one_way_d BEFORE DELETE ON settings
+      WHEN OLD.key = 'audit.append_state' AND OLD.value_json = '"sealed"'
+      BEGIN SELECT RAISE(ABORT, 'legacy seal is one-way (sealed)'); END
+    """,
+    """
+    CREATE TRIGGER legacy_tgml1_retired_u BEFORE UPDATE OF enabled ON mcp_clients
+      WHEN NEW.enabled = 1 AND NEW.auth_kind = 'bearer'
+       AND (SELECT value_json FROM settings WHERE key = 'auth.tgml1_state') = '"revoked"'
+      BEGIN SELECT RAISE(ABORT, 'tgml1 is retired'); END
+    """,
+    """
+    CREATE TRIGGER legacy_tgml1_retired_i BEFORE INSERT ON mcp_clients
+      WHEN NEW.auth_kind = 'bearer'
+       AND (SELECT value_json FROM settings WHERE key = 'auth.tgml1_state') = '"revoked"'
+      BEGIN SELECT RAISE(ABORT, 'tgml1 is retired'); END
+    """,
+    """
+    CREATE TRIGGER legacy_tgml1_one_way_u BEFORE UPDATE ON settings
+      WHEN OLD.key = 'auth.tgml1_state' AND OLD.value_json = '"revoked"'
+      BEGIN SELECT RAISE(ABORT, 'tgml1 revocation is one-way'); END
+    """,
+    """
+    CREATE TRIGGER legacy_tgml1_one_way_d BEFORE DELETE ON settings
+      WHEN OLD.key = 'auth.tgml1_state' AND OLD.value_json = '"revoked"'
+      BEGIN SELECT RAISE(ABORT, 'tgml1 revocation is one-way'); END
+    """,
+    # comms v0.3 B17 (G6, N8): legacy audit rows leave only by truncation behind a root.
+    "CREATE TABLE maintenance_flags (name TEXT PRIMARY KEY, value INTEGER NOT NULL CHECK (value IN (0, 1)))",
+    "INSERT INTO maintenance_flags (name, value) VALUES ('truncating', 0)",
+    """
+    CREATE TRIGGER legacy_audit_events_truncation_only BEFORE DELETE ON audit_events
+      WHEN (SELECT value FROM maintenance_flags WHERE name = 'truncating') IS NOT 1
+      BEGIN SELECT RAISE(ABORT, 'legacy audit deletes only by truncation'); END
+    """,
+    """
+    CREATE TRIGGER legacy_audit_checkpoints_never_deleted BEFORE DELETE ON audit_checkpoints
+      WHEN (SELECT value FROM maintenance_flags WHERE name = 'truncating') IS NOT 1
+      BEGIN SELECT RAISE(ABORT, 'legacy audit deletes only by truncation'); END
+    """,
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, _TABLES + _INDEXES + _TRIGGERS + _SEEDS),
     Migration(2, _RECEIPTS_V2, rebuild=True),
+    Migration(3, _V03_SEAL),
 )
 
 

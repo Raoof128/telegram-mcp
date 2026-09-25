@@ -15,6 +15,8 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "comms" / "transports" / "te
 PACKAGE = "comms.transports.telegram"
 ADAPTER = SRC / "telegram" / "telethon_adapter.py"
 COMPOSITION = SRC / "runtime" / "composition.py"
+# comms v0.3 A3: the retired MCP runtime, kept for retained tests; no production entry reaches it.
+LEGACY_COMPOSITION = SRC / "runtime" / "legacy_composition.py"
 
 # Design §3.3, as <module>.<Request>: the reviewer's copy, deliberately not
 # imported from the adapter, so a change to one without the other fails here.
@@ -34,9 +36,48 @@ REVIEWED_RPCS: frozenset[str] = frozenset(
         "help.GetConfigRequest",
         "messages.GetRepliesRequest",
         "messages.SearchRequest",
+        "auth.LogOutRequest",  # comms v0.3 B14: admin.revoke only
+        # comms v0.3 C14: the capability RPC sets, each reviewed in telegram-rpc-review.md
+        "channels.CreateChannelRequest",
+        "channels.DeleteChannelRequest",
+        "channels.DeleteMessagesRequest",
+        "channels.EditAdminRequest",
+        "channels.EditBannedRequest",
+        "channels.EditPhotoRequest",
+        "channels.EditTitleRequest",
+        "channels.GetAdminLogRequest",
+        "channels.GetParticipantRequest",
+        "channels.GetParticipantsRequest",
+        "channels.InviteToChannelRequest",
+        "messages.AddChatUserRequest",
+        "messages.CreateChatRequest",
+        "messages.CreateForumTopicRequest",
+        "messages.DeleteChatRequest",
+        "messages.DeleteChatUserRequest",
+        "messages.DeleteMessagesRequest",
+        "messages.EditChatAboutRequest",
+        "messages.EditChatAdminRequest",
+        "messages.EditChatDefaultBannedRightsRequest",
+        "messages.EditChatPhotoRequest",
+        "messages.EditChatTitleRequest",
+        "messages.EditExportedChatInviteRequest",
+        "messages.EditForumTopicRequest",
+        "messages.EditMessageRequest",
+        "messages.ExportChatInviteRequest",
+        "messages.ForwardMessagesRequest",
+        "messages.GetChatInviteImportersRequest",
+        "messages.GetExportedChatInvitesRequest",
+        "messages.GetForumTopicsRequest",
+        "messages.GetFullChatRequest",
+        "messages.HideChatJoinRequestRequest",
+        "messages.MigrateChatRequest",
+        "messages.SendMessageRequest",
+        "messages.UpdatePinnedMessageRequest",
     }
 )
 
+# comms v0.3 B14: the one administrative RPC, built only inside the adapter's admin.revoke path.
+SANCTIONED = {(ADAPTER, "LogOutRequest")}
 PROHIBITED = {
     "send_message",
     "send_file",
@@ -189,7 +230,7 @@ def test_no_prohibited_symbol_appears_in_src():
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                 else None
             )
-            if name in PROHIBITED:
+            if name in PROHIBITED and (path, name) not in SANCTIONED:
                 hits.append(f"{path}:{node.lineno}:{name}")
     assert hits == []
 
@@ -211,7 +252,7 @@ def test_only_composition_wires_a_backend():
         for path, tree in _modules()
         if _imports(tree) & CONCRETE_BACKENDS and path.parent != SRC / "telegram"
     }
-    assert importers <= {str(COMPOSITION)}
+    assert importers <= {str(COMPOSITION), str(LEGACY_COMPOSITION)}
 
 
 def test_the_demo_server_cannot_reach_sensitive_dispatch():
@@ -230,6 +271,7 @@ def test_the_demo_server_cannot_reach_sensitive_dispatch():
         "comms.transports.telegram.sensitive_dispatch",
         "comms.transports.telegram.runtime.ingress",
         "comms.transports.telegram.runtime.composition",
+        "comms.transports.telegram.runtime.legacy_composition",
         "comms.transports.telegram.disclosure.seams",
         *CONCRETE_BACKENDS,
     }

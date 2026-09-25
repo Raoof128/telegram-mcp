@@ -1,0 +1,1 @@
+{"http_status": 200, "body": {"ok": true, "result": {"id": 42, "type": "private", "first_name": "Fixture user"}}}

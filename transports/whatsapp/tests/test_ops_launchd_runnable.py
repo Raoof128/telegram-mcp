@@ -62,30 +62,8 @@ def test_known_broken_list_only_shrinks():
     assert KNOWN_BROKEN == {}, "a launchd unit regressed to having no entry point"
 
 
-def test_mcp_plist_does_not_use_system_python():
-    """System python3 has none of the deps (mcp, sqlcipher3, cryptography)."""
-    pl = next(_load(p) for p in _plists() if _load(p)["Label"] == "com.whatsvault.mcp")
-    argv = pl["ProgramArguments"]
-    assert argv[:2] != ["/usr/bin/env", "python3"], "system python cannot import the project's dependencies"
-    assert any("venv" in a or a.endswith("whatsvault-mcp") for a in argv), argv
-
-
-def test_mcp_plist_binds_loopback_only():
-    """The daemon must never be launched with a public bind (#18)."""
-    pl = next(_load(p) for p in _plists() if _load(p)["Label"] == "com.whatsvault.mcp")
-    blob = repr(pl)
-    assert "0.0.0.0" not in blob and "::" not in blob
-
-
-def test_mcp_console_entry_point_declared():
-    cfg = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    scripts = cfg["project"]["scripts"]
-    assert "whatsvault-mcp" in scripts, "no console entry point for the MCP daemon"
-    assert scripts["whatsvault-mcp"] == "apps.mcp.server:main"
-
-
 def test_apps_package_is_installable():
-    """`-m apps.mcp.server` and the console script both need `apps` packaged;
+    """The launchd units run `-m apps.<daemon>`, so `apps` must be packaged;
     packages.find previously looked only in src/, so an installed wheel had none."""
     cfg = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     find = cfg["tool"]["setuptools"]["packages"]["find"]

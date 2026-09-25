@@ -16,9 +16,18 @@ from typing import Any
 
 import sqlcipher3
 
-__all__ = ["CommsDbKeyError", "TransactionIOError", "io_guard", "open_comms_db", "write_tx"]
+__all__ = [
+    "KEY_ERROR",
+    "CommsDbKeyError",
+    "TransactionIOError",
+    "io_guard",
+    "open_comms_db",
+    "require_tx",
+    "write_tx",
+]
 
-_KEY_ERROR = "comms database key is invalid"
+KEY_ERROR = "comms database key is invalid"
+_KEY_ERROR = KEY_ERROR
 _PLAINTEXT_HEADER = b"SQLite format 3\x00"
 
 
@@ -51,6 +60,7 @@ def open_comms_db(path: Path, key: bytes) -> Any:
             raise CommsDbKeyError(_KEY_ERROR) from None
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA secure_delete = ON")  # freed pages are zeroed (A15, B19)
         if fresh:
             conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
             if path.read_bytes()[:16] == _PLAINTEXT_HEADER:
@@ -78,6 +88,12 @@ def write_tx(conn: Any) -> Iterator[Any]:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
+
+
+def require_tx(conn: Any) -> None:
+    """A ``*_in_tx`` write runs inside its caller's transaction, never on its own."""
+    if not conn.in_transaction:
+        raise RuntimeError("this write runs inside a comms.db transaction")
 
 
 def io_guard(conn: Any) -> None:

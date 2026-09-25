@@ -48,6 +48,8 @@ async def test_the_client_is_built_exactly_as_section_36_requires(tmp_path):
         "request_retries": 0,
         "flood_sleep_threshold": 0,
         "raise_last_call_error": True,
+        "auto_reconnect": False,  # comms v0.3 C14 (A21)
+        "connection_retries": 0,
     }
     assert stat.S_IMODE(os.stat(tmp_path / "session").st_mode) == 0o700
     await session.stop()
@@ -75,7 +77,8 @@ async def test_test_dc_is_applied_to_a_fresh_session(tmp_path):
         (errors.FloodWaitError(request=None, capture=7), "FLOOD_WAIT"),
         (errors.AuthKeyUnregisteredError(request=None), "SESSION_REVOKED"),
         (errors.SessionRevokedError(request=None), "SESSION_REVOKED"),
-        (errors.UserDeactivatedBanError(request=None), "SESSION_REVOKED"),
+        # comms v0.3 B15 (design §B.6): a banned account is not a revoked session.
+        (errors.UserDeactivatedBanError(request=None), "ACCOUNT_UNAVAILABLE"),
         (errors.ChannelPrivateError(request=None), "NOT_ACCESSIBLE"),
         (errors.MsgIdInvalidError(request=None), "MESSAGE_NOT_FOUND"),
         (errors.ServerError(request=None, message="x", code=500), "TELEGRAM_UNAVAILABLE"),

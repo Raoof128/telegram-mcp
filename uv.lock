@@ -1299,6 +1299,7 @@ source = { editable = "." }
 dependencies = [
     { name = "apscheduler" },
     { name = "cryptography" },
+    { name = "httpx" },
     { name = "jsonschema", extra = ["format"] },
     { name = "keyring" },
     { name = "mcp" },
@@ -1326,6 +1327,7 @@ dev = [
 requires-dist = [
     { name = "apscheduler", specifier = "==3.11.3" },
     { name = "cryptography", specifier = "==50.0.1" },
+    { name = "httpx", specifier = "==0.28.1" },
     { name = "jsonschema", extras = ["format"], specifier = "==4.26.0" },
     { name = "keyring", specifier = "==25.7.0" },
     { name = "mcp", specifier = "==2.2.0" },

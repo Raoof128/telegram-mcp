@@ -1,0 +1,201 @@
+{
+ "anchor": {
+  "anchor_mac": "a8a632477088b84c64a4660b3ea65fb5f8136d698936878546cb66d0554ec566",
+  "body": {
+   "chain_epoch": 1,
+   "chain_seq": 7,
+   "event_id": "evt_00000000000000000000000007",
+   "event_mac": "cb6a727f21aac5bc069ba50e2062465834071c37df69c27cc445bf27a49e607a",
+   "updated_at": "2026-09-24T00:00:09Z",
+   "version": 1
+  }
+ },
+ "chain_key_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+ "checkpoint": {
+  "message_hex": "74656c656772616d2d6d63702d636865636b706f696e742d76317b22636861696e5f65706f6368223a312c22636861696e5f736571223a372c22637265617465645f6174223a22323032362d30392d32345430303a30303a30382e3030303030305a222c226c6173745f6576656e745f6964223a226576745f3030303030303030303030303030303030303030303030303037222c226c6173745f6576656e745f6d6163223a2263623661373237663231616163356263303639626135306532303632343635383334303731633337646636396332376363343435626632376134396536303761227d",
+  "row": {
+   "chain_epoch": 1,
+   "chain_seq": 7,
+   "created_at": "2026-09-24T00:00:08.000000Z",
+   "last_event_id": "evt_00000000000000000000000007",
+   "last_event_mac": "cb6a727f21aac5bc069ba50e2062465834071c37df69c27cc445bf27a49e607a"
+  },
+  "signature_hex": "2beeeb85f1a11a9f3837d91429a14dab64722f733b11443342e6bd6f0a03d0cef6ffdd4e77977c52cc7aebdc004ed105d24f386df5a6c1f9ef7a7d14bc39d604"
+ },
+ "checkpoint_seed_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+ "events": [
+  {
+   "chain_epoch": 1,
+   "chain_seq": 1,
+   "event": {
+    "account_ref": null,
+    "client_ref": "tcl_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "disclosure_ref": null,
+    "duration_ms": 11,
+    "error_code": null,
+    "event_id": "evt_00000000000000000000000001",
+    "peer_ref": null,
+    "policy_epoch": 1,
+    "principal_ref": "prn_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "project_count": 1,
+    "project_ref": null,
+    "result_count": 0,
+    "status": "ok",
+    "telegram_rpc_count": 0,
+    "tool_name": "telegram_status",
+    "ts": "2026-09-24T00:00:01.000000Z"
+   },
+   "event_mac": "e66388b145338c00e6736123902f1ca5d2ca9608477368fcd7886a8adf8b47c2",
+   "prev_event_mac": "72593e851339c0bdb395cdb1e4fdb5651e4b45d96e865e67235ea6b8526a859d"
+  },
+  {
+   "chain_epoch": 1,
+   "chain_seq": 2,
+   "event": {
+    "account_ref": null,
+    "client_ref": "tcl_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "disclosure_ref": null,
+    "duration_ms": 12,
+    "error_code": null,
+    "event_id": "evt_00000000000000000000000002",
+    "peer_ref": null,
+    "policy_epoch": 1,
+    "principal_ref": "prn_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "project_count": 2,
+    "project_ref": null,
+    "result_count": 0,
+    "status": "ok",
+    "telegram_rpc_count": 0,
+    "tool_name": "admin.lock",
+    "ts": "2026-09-24T00:00:02.000000Z"
+   },
+   "event_mac": "01101244e024d7ef39b1a0fed284f798f24b47959eda479c80970f840cf9c700",
+   "prev_event_mac": "e66388b145338c00e6736123902f1ca5d2ca9608477368fcd7886a8adf8b47c2"
+  },
+  {
+   "chain_epoch": 1,
+   "chain_seq": 3,
+   "event": {
+    "account_ref": null,
+    "client_ref": "tcl_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "disclosure_ref": null,
+    "duration_ms": 13,
+    "error_code": null,
+    "event_id": "evt_00000000000000000000000003",
+    "peer_ref": null,
+    "policy_epoch": 1,
+    "principal_ref": "prn_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "project_count": 3,
+    "project_ref": null,
+    "result_count": 0,
+    "status": "ok",
+    "telegram_rpc_count": 0,
+    "tool_name": "telegram_status",
+    "ts": "2026-09-24T00:00:03.000000Z"
+   },
+   "event_mac": "a67e82fd3133c6b76393c70063a98f946231c6e495405e196ac4f976836c05a4",
+   "prev_event_mac": "01101244e024d7ef39b1a0fed284f798f24b47959eda479c80970f840cf9c700"
+  },
+  {
+   "chain_epoch": 1,
+   "chain_seq": 4,
+   "event": {
+    "account_ref": null,
+    "client_ref": "tcl_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "disclosure_ref": null,
+    "duration_ms": 14,
+    "error_code": null,
+    "event_id": "evt_00000000000000000000000004",
+    "peer_ref": null,
+    "policy_epoch": 1,
+    "principal_ref": "prn_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "project_count": 4,
+    "project_ref": null,
+    "result_count": 0,
+    "status": "ok",
+    "telegram_rpc_count": 0,
+    "tool_name": "admin.lock",
+    "ts": "2026-09-24T00:00:04.000000Z"
+   },
+   "event_mac": "2edfd843eafc7e313c6a872d4aa93341633d507a55913745e128a645f3c13d84",
+   "prev_event_mac": "a67e82fd3133c6b76393c70063a98f946231c6e495405e196ac4f976836c05a4"
+  },
+  {
+   "chain_epoch": 1,
+   "chain_seq": 5,
+   "event": {
+    "account_ref": null,
+    "client_ref": "tcl_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "disclosure_ref": null,
+    "duration_ms": 15,
+    "error_code": null,
+    "event_id": "evt_00000000000000000000000005",
+    "peer_ref": null,
+    "policy_epoch": 1,
+    "principal_ref": "prn_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "project_count": 5,
+    "project_ref": null,
+    "result_count": 0,
+    "status": "ok",
+    "telegram_rpc_count": 0,
+    "tool_name": "telegram_status",
+    "ts": "2026-09-24T00:00:05.000000Z"
+   },
+   "event_mac": "64656215c7eb8812e5cfe4c4b5562bd1fc5f3107ba84bfaed95bf2d1046f5f75",
+   "prev_event_mac": "2edfd843eafc7e313c6a872d4aa93341633d507a55913745e128a645f3c13d84"
+  },
+  {
+   "chain_epoch": 1,
+   "chain_seq": 6,
+   "event": {
+    "account_ref": null,
+    "client_ref": "tcl_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "disclosure_ref": null,
+    "duration_ms": 16,
+    "error_code": null,
+    "event_id": "evt_00000000000000000000000006",
+    "peer_ref": null,
+    "policy_epoch": 1,
+    "principal_ref": "prn_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "project_count": 6,
+    "project_ref": null,
+    "result_count": 0,
+    "status": "ok",
+    "telegram_rpc_count": 0,
+    "tool_name": "admin.lock",
+    "ts": "2026-09-24T00:00:06.000000Z"
+   },
+   "event_mac": "60ba53e19a11be2a38df5a92a43b6294e060c9f3b1c99c2234404bfc603e002a",
+   "prev_event_mac": "64656215c7eb8812e5cfe4c4b5562bd1fc5f3107ba84bfaed95bf2d1046f5f75"
+  },
+  {
+   "chain_epoch": 1,
+   "chain_seq": 7,
+   "event": {
+    "account_ref": null,
+    "client_ref": "tcl_bbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "disclosure_ref": null,
+    "duration_ms": 17,
+    "error_code": null,
+    "event_id": "evt_00000000000000000000000007",
+    "peer_ref": null,
+    "policy_epoch": 1,
+    "principal_ref": "prn_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "project_count": 7,
+    "project_ref": null,
+    "result_count": 0,
+    "status": "ok",
+    "telegram_rpc_count": 0,
+    "tool_name": "telegram_status",
+    "ts": "2026-09-24T00:00:07.000000Z"
+   },
+   "event_mac": "cb6a727f21aac5bc069ba50e2062465834071c37df69c27cc445bf27a49e607a",
+   "prev_event_mac": "60ba53e19a11be2a38df5a92a43b6294e060c9f3b1c99c2234404bfc603e002a"
+  }
+ ],
+ "genesis_mac": {
+  "1": "72593e851339c0bdb395cdb1e4fdb5651e4b45d96e865e67235ea6b8526a859d",
+  "2": "a817f038b84180d77b1aa592e296cb9241fe28c95753a28dfd5b685f32f16cfa"
+ },
+ "source": "c830d3f"
+}

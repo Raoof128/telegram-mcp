@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from comms.core.storage.db import write_tx
 from comms.transports.telegram.disclosure.audit.anchor import (
     AnchorError,
     latch_degraded,
@@ -28,7 +29,6 @@ from comms.transports.telegram.disclosure.audit.anchor import (
 from comms.transports.telegram.disclosure.audit.chain import (
     APPEND_GUARD,
     append_event,
-    immediate_transaction,
     mint_event_id,
 )
 from comms.transports.telegram.disclosure.budget import (
@@ -438,7 +438,7 @@ class DisclosureCoordinator:
             with APPEND_GUARD:
                 self._checkpoint("commit_disclosure")
                 try:
-                    with immediate_transaction(self._conn):
+                    with write_tx(self._conn):
                         # ONE transaction: ledger rows, receipt row, exactly one
                         # audit append (frozen spec §23A.3).
                         self._insert_receipt(prepared, snapshot)

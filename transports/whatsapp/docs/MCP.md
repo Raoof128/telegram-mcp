@@ -1,5 +1,9 @@
 # MCP Reference
 
+> **Retired in comms v0.3.** The standalone WhatsVault MCP server (`whatsvault-mcp`,
+> `apps/mcp`) no longer ships: the comms MCP server serves WhatsApp and Telegram
+> together. What follows describes the retired server, for history.
+
 The WhatsVault MCP server exposes a **read-only** view of your vault over
 Streamable HTTP on loopback.
 

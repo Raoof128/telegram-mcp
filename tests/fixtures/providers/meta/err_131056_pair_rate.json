@@ -1,0 +1,1 @@
+{"http_status": 400, "body": {"error": {"message": "(Business Account, Consumer Account) pair rate limit hit", "type": "OAuthException", "code": 131056, "fbtrace_id": "AFixtureTraceId"}}}

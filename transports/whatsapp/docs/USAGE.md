@@ -85,6 +85,10 @@ is a derived artefact and can be rebuilt.
 
 ## Run the MCP server
 
+> **Retired in comms v0.3.** The standalone WhatsVault MCP server (`whatsvault-mcp`,
+> `apps/mcp`) no longer ships: the comms MCP server serves WhatsApp and Telegram
+> together. What follows describes the retired server, for history.
+
 ```bash
 whatsvault-mcp
 ```

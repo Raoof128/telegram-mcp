@@ -5,7 +5,7 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "comms" / "transports" / "telegram"
 HANDLERS = SRC / "ipc" / "handlers"
-TX_NAMES = {"immediate_transaction", "commit", "rollback"}
+TX_NAMES = {"write_tx", "immediate_transaction", "commit", "rollback"}
 
 
 def _names(tree: ast.AST) -> set[str]:
@@ -28,7 +28,7 @@ def test_only_the_wrapper_owns_an_admin_transaction():
 def _is_tx(expr: ast.expr) -> bool:
     func = expr.func if isinstance(expr, ast.Call) else None
     name = getattr(func, "attr", None) or getattr(func, "id", None)
-    return name == "immediate_transaction"
+    return name in {"write_tx", "immediate_transaction"}
 
 
 def test_no_await_inside_a_transaction():

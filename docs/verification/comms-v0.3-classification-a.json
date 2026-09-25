@@ -1,0 +1,19 @@
+{
+  "removed_with": {
+    "tests/security/test_ai_boundary.py::test_no_telegram_mcp_tool_is_a_transmission_primitive": "v0.2_no_send_guard (D5, owner_full_admin)",
+    "tests/security/test_ai_boundary.py::test_send_commands_are_always_ask_in_claude_code": "v0.2_claude_code_ask_rules (D5: host prompts belong to the host)"
+  },
+  "replaced_by": {
+    "tests/integration/test_cli.py::test_demo_config_failure_prints_one_fixed_line": "tests/integration/test_cli.py::test_demo_and_serve_are_retired_with_one_fixed_line",
+    "tests/integration/test_cli.py::test_serve_points_at_start_and_exits_not_in_phase": "tests/integration/test_cli.py::test_demo_and_serve_are_retired_with_one_fixed_line",
+    "tests/integration/test_whatsvault_provenance.py::test_the_subtree_is_the_measured_tree": "tests/integration/test_whatsvault_provenance.py::test_the_subtree_differs_from_the_measured_tree_only_by_ruled_changes",
+    "tests/security/test_ai_boundary.py::test_no_ai_surface_imports_the_campaign_core": "tests/security/test_ai_boundary.py::test_mcp_handlers_reach_the_service_layer_only",
+    "tests/security/test_ai_boundary.py::test_no_whatsvault_mcp_tool_is_a_transmission_primitive": "tests/security/test_v03_retired_surfaces.py::test_whatsvault_mcp_app_is_absent",
+    "tests/security/test_ai_boundary.py::test_the_campaign_core_guard_catches_a_planted_import": "tests/security/test_ai_boundary.py::test_the_mcp_guard_catches_a_planted_import",
+    "tests/security/test_ai_boundary.py::test_whatsvault_has_no_network_client": "tests/security/test_ai_boundary.py::test_whatsvault_still_has_no_network_client_outside_adapters"
+  },
+  "whatsvault": {
+    "collected_before": 539,
+    "removed_with_whatsvault_mcp_app": "comms-v0.3-whatsvault-removed-a16.txt"
+  }
+}

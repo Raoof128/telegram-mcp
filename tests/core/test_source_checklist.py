@@ -21,7 +21,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "docs" / "provenance" / "comms-gateway-v0.1.md"
 
 SECTION_31 = {
-    "AI cannot obtain send primitive": "tests/security/test_ai_boundary.py::test_no_ai_surface_imports_the_campaign_core",
+    # comms v0.3 (D5, owner_full_admin) supersedes this line: sends are legitimate AI tools,
+    # reached only through the typed service layer, never a raw primitive (A37, P §37).
+    "AI cannot obtain send primitive": "tests/security/test_ai_boundary.py::test_mcp_handlers_reach_the_service_layer_only",
     "operator send requires no secondary permission": "tests/core/test_source_checklist.py::test_operator_send_requires_no_secondary_permission",
     "one send command creates one immutable snapshot": "tests/core/test_freeze.py::test_one_send_creates_one_immutable_generation",
     "all-locations resolves only configured locations": "tests/core/test_resolve.py::test_all_locations_resolves_only_configured_enabled_locations",

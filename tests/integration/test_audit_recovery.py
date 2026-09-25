@@ -13,6 +13,7 @@ from comms.transports.telegram.disclosure.audit.anchor import (
 from comms.transports.telegram.disclosure.verify import verify_persisted_receipt
 from comms.transports.telegram.keys.store import key_id, load_key
 from comms.transports.telegram.storage.settings import get_setting
+from tests.authority_fixtures import drop_legacy_audit_guards
 from tests.coordinator_fixtures import build_coordinator
 
 
@@ -66,6 +67,7 @@ async def test_repair_refuses_when_the_chain_does_not_extend(tmp_path):
 
     # Anchor ahead of the head: the database lost committed history. Moving
     # the pointer would launder the evidence, so repair must refuse.
+    drop_legacy_audit_guards(conn)  # an attacker with raw DB access
     conn.execute("DELETE FROM audit_events")
     conn.commit()
     assert derive_integrity(conn, chain_key, path) == FAIL_CLOSED

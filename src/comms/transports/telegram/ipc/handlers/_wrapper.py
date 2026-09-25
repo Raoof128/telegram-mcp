@@ -1,6 +1,6 @@
 """The only place an admin transaction commits (Phase-5 design §2.1).
 
-``_transaction`` is ``chain.immediate_transaction`` plus one thing: lock
+``_transaction`` is ``comms.core.storage.db.write_tx`` plus one thing: lock
 contention on ``BEGIN IMMEDIATE`` becomes the fixed ``ValueError(BUSY)``
 instead of an ``OperationalError`` the router would log as a crash.
 
@@ -94,7 +94,7 @@ def _busy(exc: sqlite3.OperationalError) -> bool:
 
 @contextmanager
 def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
-    """``immediate_transaction``, with lock contention as a fixed refusal (Review Focus #1)."""
+    """``write_tx``, with lock contention as a fixed refusal (Review Focus #1)."""
     try:
         conn.execute("BEGIN IMMEDIATE")
     except sqlite3.OperationalError as exc:
