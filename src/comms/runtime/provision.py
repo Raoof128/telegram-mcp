@@ -9,6 +9,8 @@ the daemon takes: it refuses while a daemon runs. It is idempotent and never ove
   cutover genesis yet) a first version is registered without an audit event, as the audit keys
   always were; the genesis then covers them. After the genesis a missing purpose is minted by
   the audited rotation;
+- the legacy key store the retained legacy side of the daemon needs (its chain, login) is
+  completed the same way (``provision_missing``: missing files only);
 - existing material that does not load, or does not match its recorded key id, is refused and
   left untouched: it is never replaced silently.
 
@@ -43,6 +45,7 @@ from comms.core.storage.migrations import migrate
 from comms.core.storage.rekey import ITEM as DB_KEY
 from comms.core.storage.rekey import KeyPointer, open_with_recovery
 from comms.runtime.paths import CommsPaths
+from comms.transports.telegram.keys.store import provision_missing
 from comms.transports.telegram.runtime.lock import RuntimeActive, acquire_lock
 
 __all__ = ["PROVISIONED_KEYS", "ProvisionRefused", "ProvisionReport", "provision"]
@@ -65,10 +68,11 @@ class ProvisionRefused(Exception):
 @dataclass(frozen=True)
 class ProvisionReport:
     created: tuple[str, ...]
+    legacy_created: tuple[str, ...] = ()
 
 
 def _private_dir(path: Path) -> None:
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.mkdir(mode=0o700, exist_ok=True)  # the parent must exist: never create a tree
     if stat.S_IMODE(path.stat().st_mode) != 0o700:
         raise ProvisionRefused("the comms directories must be 0700")
 
@@ -106,7 +110,13 @@ def provision(
         raise ProvisionRefused("a daemon is running for this runtime directory") from None
     conn = None
     try:
-        for directory in (paths.root, paths.secrets_dir, paths.slots_dir, paths.anchor_dir):
+        for directory in (
+            Path(paths.state_dir),
+            paths.root,
+            paths.secrets_dir,
+            paths.slots_dir,
+            paths.anchor_dir,
+        ):
             _private_dir(directory)
         secrets, store = FileSecretStore(paths.secrets_dir), KeySlotStore(paths.slots_dir)
         created: list[str] = []
@@ -132,7 +142,9 @@ def provision(
                 )
         created.extend(missing)
         installation_ref(conn, now=now)
-        return ProvisionReport(tuple(created))
+        _private_dir(paths.legacy_keys)
+        legacy = provision_missing(paths.legacy_keys, phases=(2, 3))  # never overwrites
+        return ProvisionReport(tuple(created), tuple(legacy))
     finally:
         if conn is not None:
             conn.close()

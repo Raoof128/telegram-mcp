@@ -36,6 +36,13 @@ def build_parser() -> argparse.ArgumentParser:
     mcp.add_argument("--client-seed", type=Path, required=True, help="this client's 0600 seed file")
     mcp.add_argument("--daemon", default="http://127.0.0.1:8765", help="the daemon's /mcp origin")
     mcp.add_argument("--runtime-dir", default=None, help="where the daemon's admin socket lives")
+    selftest = sub.add_parser(
+        "selftest-daemon",
+        help="run the real daemon over deterministic local providers (never production)",
+        allow_abbrev=False,
+    )
+    selftest.add_argument("--state-dir", default=None)
+    selftest.add_argument("--runtime-dir", default=None)
     add_tool_parsers(sub)  # D30: campaign, location, audience, group, message
     add_operator_parsers(sub)  # D31: the owner's commands, never MCP tools
     return parser
@@ -118,7 +125,53 @@ def _provision(args: argparse.Namespace) -> int:
     except ProvisionRefused as refused:
         print(f"comms: {refused}", file=sys.stderr)
         return 4
-    print(json.dumps({"provisioned": list(report.created)}, indent=2, sort_keys=True))
+    printed = {
+        "provisioned": list(report.created),
+        "legacy_provisioned": list(report.legacy_created),
+    }
+    print(json.dumps(printed, indent=2, sort_keys=True))
+    return 0
+
+
+def _daemon(args: argparse.Namespace, *, selftest: bool) -> int:
+    """``comms daemon`` / ``comms selftest-daemon`` (D39-PRE E6): one daemon, one code path.
+
+    The selftest variant differs only in the injected adapter factory (deterministic local
+    providers) and in never starting Telethon.
+    """
+    import asyncio
+
+    from comms.runtime.paths import CommsPaths, default_state_dir
+    from comms.runtime.settings import SettingsError, load_settings
+    from comms.transports.telegram.runtime.bootstrap import _runtime_dir
+    from comms.transports.telegram.runtime.daemon import DaemonConfig, DaemonError, run_daemon
+
+    state = Path(args.state_dir) if args.state_dir else default_state_dir()
+    paths = CommsPaths(state)
+    try:
+        settings = load_settings(paths.settings)
+    except SettingsError as refused:
+        print(f"comms: {refused}", file=sys.stderr)
+        return 4
+    factory = None
+    if selftest:
+        from comms.runtime.selftest import selftest_adapters
+
+        factory = selftest_adapters
+    store = getattr(args, "store_dir", None)
+    config = DaemonConfig(
+        runtime_dir=_runtime_dir(args.runtime_dir),
+        state_dir=state,
+        key_dir=Path(store) if store else paths.legacy_keys,
+        api_id=None if selftest else settings.telegram_api_id,
+        comms=True,
+        adapters_factory=factory,
+    )
+    try:
+        asyncio.run(run_daemon(config))
+    except DaemonError as refused:
+        print(f"comms: {refused}", file=sys.stderr)
+        return 4
     return 0
 
 
@@ -168,6 +221,11 @@ def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] and argv[0] in FAMILIES:
         code = _tool(build_parser().parse_args(argv))
+        if code:
+            raise SystemExit(code)
+        return
+    if argv[:1] in (["daemon"], ["selftest-daemon"]):
+        code = _daemon(build_parser().parse_args(argv), selftest=argv[0] == "selftest-daemon")
         if code:
             raise SystemExit(code)
         return

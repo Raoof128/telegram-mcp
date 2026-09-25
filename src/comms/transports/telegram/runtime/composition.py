@@ -10,7 +10,7 @@ legacy one.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -70,16 +70,18 @@ def build_admin(
     key_dir: Path,
     anchor_path: Path,
     telegram: Any = None,
+    comms_handlers: Mapping[str, Callable[[dict[str, Any]], Any]] | None = None,
+    control_handlers: Mapping[str, Callable[[dict[str, Any]], Any]] | None = None,
 ) -> AdminRouter:
-    """The daemon's production surface: the admin socket's router, nothing else (v0.3 A3)."""
+    """The daemon's admin socket router: the retained legacy handlers (v0.3 A3) plus, since
+    D39-PRE E6, the comms runtime's ``tool call``, ``operator`` and ``hello``."""
     set_store_dir(key_dir)
+    handlers = admin_handlers(conn, key_dir=key_dir, anchor_path=anchor_path, telegram=telegram)
+    clash = set(handlers) & set(comms_handlers or {})
+    if clash:
+        raise ValueError("an admin command has two handlers")
     return AdminRouter(
-        admin_handlers(
-            conn,
-            key_dir=key_dir,
-            anchor_path=anchor_path,
-            telegram=telegram,
-        )
+        {**handlers, **(comms_handlers or {})}, control_handlers=dict(control_handlers or {})
     )
 
 

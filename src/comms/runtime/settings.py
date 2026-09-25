@@ -10,7 +10,7 @@ atomically.
 
 Schema::
 
-    {"local_port": 8766, "webhook_port": 8768,
+    {"local_port": 8766, "webhook_port": 8768, "telegram_api_id": 12345,
      "telegram_delivery_actor": "telegram_bot" | "telegram_user",
      "meta": {"phone_number_id": "…", "waba_id": "…"},
      "backup_recipient": "age1…",
@@ -38,6 +38,7 @@ LOCAL_PORT = 8766  # comms.transports.telegram.runtime.bootstrap.LOCAL_PORT
 _SECRETISH = ("token", "secret", "key", "password", "seed")
 _TOP = {
     "host",
+    "telegram_api_id",
     "local_port",
     "webhook_port",
     "telegram_delivery_actor",
@@ -71,6 +72,7 @@ class DaemonSettings:
     adapter: AdapterSettings = field(default_factory=AdapterSettings)
     remote: RemoteSettings | None = None
     backup_recipient: str | None = None
+    telegram_api_id: int | None = None  # public app id; api_hash stays in the Keychain
 
 
 def _no_secrets(value: Any) -> None:
@@ -158,7 +160,13 @@ def load_settings(path: Path) -> DaemonSettings:
     if actor not in ("telegram_bot", "telegram_user"):
         raise SettingsError("comms.json: telegram_delivery_actor is telegram_bot or telegram_user")
     meta = _object(top.get("meta", {}), _META, "meta")
+    api_id = top.get("telegram_api_id")
+    if api_id is not None and (
+        isinstance(api_id, bool) or not isinstance(api_id, int) or api_id < 1
+    ):
+        raise SettingsError("comms.json: telegram_api_id is a positive integer")
     return DaemonSettings(
+        telegram_api_id=api_id,
         local_port=_port(top.get("local_port", LOCAL_PORT)),
         webhook_port=None if top.get("webhook_port") is None else _port(top["webhook_port"]),
         adapter=AdapterSettings(

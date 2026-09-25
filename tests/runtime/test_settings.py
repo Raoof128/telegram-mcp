@@ -32,7 +32,7 @@ def test_absent_file_gives_loopback_defaults(root):
 
 def test_a_full_file_loads(root):
     path = _write(root, {
-        "host": "127.0.0.1", "local_port": 9001, "webhook_port": 9003,
+        "host": "127.0.0.1", "local_port": 9001, "telegram_api_id": 12345, "webhook_port": 9003,
         "telegram_delivery_actor": "telegram_user",
         "meta": {"phone_number_id": "1234567890", "waba_id": "987"},
         "backup_recipient": AGE,
@@ -42,7 +42,7 @@ def test_a_full_file_loads(root):
     })  # fmt: skip
     s = load_settings(path)
     assert (s.local_port, s.webhook_port, s.backup_recipient) == (9001, 9003, AGE)
-    assert s.adapter.telegram_delivery_actor == "telegram_user"
+    assert s.adapter.telegram_delivery_actor == "telegram_user" and s.telegram_api_id == 12345
     assert s.adapter.meta_phone_number_id == "1234567890"
     assert s.remote.client == CLIENT and s.remote.port == 9002
     assert s.remote.oauth.resource == "https://comms.example.org/mcp"
@@ -73,6 +73,7 @@ def test_a_full_file_loads(root):
         ({"local_port": True}, "1024"),
         ({"telegram_delivery_actor": "whatsapp_cloud"}, "telegram_delivery_actor"),
         ({"backup_recipient": "not-age"}, "backup_recipient"),
+        ({"telegram_api_id": "12345"}, "telegram_api_id"),
     ],
 )
 def test_refusals(root, body, message):

@@ -35,7 +35,8 @@ def test_first_provision_creates_an_encrypted_db_and_every_key(tmp_path, run):
     report = provision(paths, now=NOW, runtime_dir=run)
     assert paths.db.read_bytes()[:16] != b"SQLite format 3\x00"
     assert set(report.created) == {"comms-db-key", *PROVISIONED_KEYS}
-    for directory in (paths.root, paths.secrets_dir, paths.slots_dir, paths.anchor_dir):
+    for directory in (paths.state_dir, paths.root, paths.secrets_dir, paths.slots_dir,
+                      paths.anchor_dir):  # fmt: skip
         assert stat.S_IMODE(directory.stat().st_mode) == 0o700
     assert stat.S_IMODE(paths.db_key_pointer.stat().st_mode) == 0o600
     conn = _open(paths)
@@ -44,13 +45,16 @@ def test_first_provision_creates_an_encrypted_db_and_every_key(tmp_path, run):
         load_active(conn, store, purpose)  # material loads, key id recomputes
     assert conn.execute("SELECT count(*) FROM installation").fetchone()[0] == 1
     assert head(conn, COMMS) is None  # no event before the genesis: the cutover can still run
+    assert {"audit-chain-key", "audit-checkpoint-key", "privacy-key"} <= set(report.legacy_created)
+    assert stat.S_IMODE(paths.legacy_keys.stat().st_mode) == 0o700
 
 
 def test_provision_is_idempotent(tmp_path, run):
     paths = CommsPaths(tmp_path / "state")
     provision(paths, now=NOW, runtime_dir=run)
     files = {p: p.read_bytes() for p in paths.root.rglob("*") if p.is_file()}
-    assert provision(paths, now=NOW, runtime_dir=run).created == ()
+    again = provision(paths, now=NOW, runtime_dir=run)
+    assert again.created == () and again.legacy_created == ()
     after = {p: p.read_bytes() for p in paths.root.rglob("*") if p.is_file()}
     assert set(after) == set(files)
     assert all(after[p] == files[p] for p in files if p.parent != paths.root)  # key material
@@ -109,8 +113,8 @@ def test_after_the_genesis_a_missing_purpose_is_minted_by_the_audited_rotation(t
     from tests.core.audit.legacy_fixtures import legacy_port
 
     paths = CommsPaths(tmp_path / "state")
-    for d in (paths.root, paths.secrets_dir, paths.slots_dir, paths.anchor_dir):
-        d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    for d in (paths.state_dir, paths.root, paths.secrets_dir, paths.slots_dir, paths.anchor_dir):
+        d.mkdir(mode=0o700)
     secrets, store = FileSecretStore(paths.secrets_dir), KeySlotStore(paths.slots_dir)
     secrets.put("comms-db-key", 1, b"k" * 32)
     KeyPointer(paths.db_key_pointer).set(1)

@@ -7,11 +7,10 @@ in production code or the smoke (unit tests of the builder itself may call it).
 import ast
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 SMOKE = ROOT / "scripts" / "e2e_smoke.py"
 DAEMON = ROOT / "src" / "comms" / "transports" / "telegram" / "runtime" / "daemon.py"
+SERVE = ROOT / "src" / "comms" / "runtime" / "serve.py"
 
 
 def _calls(path, name):
@@ -33,6 +32,7 @@ def test_the_smoke_uses_assemble_runtime():
     assert _calls(SMOKE, "assemble_runtime")
 
 
-@pytest.mark.xfail(strict=True, reason="Task E6 wires the daemon through assemble_runtime")
 def test_the_daemon_uses_assemble_runtime():
-    assert _calls(DAEMON, "assemble_runtime")
+    """E6: the daemon starts the comms side through CommsServer, which calls the one root."""
+    assert _calls(DAEMON, "CommsServer")
+    assert _calls(SERVE, "assemble_runtime")

@@ -103,7 +103,7 @@ def build_adapters(
     *,
     clock: Callable[[], datetime],
     monotonic: Callable[[], float],
-    archive: Archive,
+    archive: Archive | None,
     telegram_session: Any = None,
     run: Runner | None = None,
 ) -> Adapters:
@@ -181,12 +181,12 @@ def _webhooks(
     secrets: SecretStore,
     clock: Callable[[], datetime],
     monotonic: Callable[[], float],
-    archive: Archive,
+    archive: Archive | None,
 ) -> None:
     secret_version = _configured(conn, secrets, "meta-app-secret")
     token_version = _configured(conn, secrets, "meta-webhook-secret")
-    if secret_version is None or token_version is None:
-        return
+    if secret_version is None or token_version is None or archive is None:
+        return  # D39-PRE: never accept an event the inbox could not archive
     inbox = Inbox(conn, clock=clock)
     adapters.inbox = inbox
     adapters.worker = WebhookWorker(conn, archive, clock=clock)

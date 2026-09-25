@@ -4,6 +4,7 @@ Pure path arithmetic: nothing here creates, opens or reads a file. The layout un
 installer's state directory (``/var/db/telegram-mcp`` by default)::
 
     meta.db                 the legacy Telegram database (unchanged)
+    keys/                   the legacy key store (the retained legacy chain and login)
     comms/comms.db          SQLCipher
     comms/db-key.pointer    0600, the active comms-db-key version
     comms/secrets/          0700, the secret store (comms-db-key, provider credentials)
@@ -65,6 +66,10 @@ class CommsPaths:
     @property
     def settings(self) -> Path:
         return self.root / "comms.json"
+
+    @property
+    def legacy_keys(self) -> Path:
+        return Path(self.state_dir) / "keys"
 
     @property
     def legacy_db(self) -> Path:

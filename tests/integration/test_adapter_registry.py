@@ -145,3 +145,13 @@ def test_the_bot_poller_exists_exactly_when_the_bot_token_is_configured(world):
     assert _build(world).poller is None
     _configure(world, "telegram-bot-token")
     assert _build(world).poller is not None
+
+
+def test_the_webhook_is_not_served_without_an_archive(world):
+    """D39-PRE: an event the inbox cannot archive is never accepted."""
+    _configure(world, "meta-app-secret", "meta-webhook-secret")
+    adapters = build_adapters(world["conn"], world["secrets"], SETTINGS, clock=lambda: NOW,
+                              monotonic=lambda: 0.0, archive=None)  # fmt: skip
+    assert (
+        adapters.webhook is None and adapters.worker is None and "webhook" not in adapters.listeners
+    )
