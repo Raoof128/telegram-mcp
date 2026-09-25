@@ -350,14 +350,19 @@ def _apply_directory(conn: Any, directory: Mapping[str, Any], stamp: str) -> Non
             )
     recipients = _ids(conn, "recipients")
     for row in directory["recipients"]:
+        # a payload from before D39-PRE carries no display_name: the local label is kept
+        name = row.get("display_name")
         if row["ref"] in recipients:
             conn.execute(
-                "UPDATE recipients SET enabled = ? WHERE ref = ?", (row["enabled"], row["ref"])
+                "UPDATE recipients SET enabled = ?, display_name = coalesce(?, display_name)"
+                " WHERE ref = ?",
+                (row["enabled"], name, row["ref"]),
             )
         else:
             conn.execute(
-                "INSERT INTO recipients (ref, enabled, created_at) VALUES (?, ?, ?)",
-                (row["ref"], row["enabled"], row["created_at"]),
+                "INSERT INTO recipients (ref, display_name, enabled, created_at)"
+                " VALUES (?, ?, ?, ?)",
+                (row["ref"], name, row["enabled"], row["created_at"]),
             )
     locations, recipients = _ids(conn, "locations"), _ids(conn, "recipients")
     destinations = _ids(conn, "destinations")

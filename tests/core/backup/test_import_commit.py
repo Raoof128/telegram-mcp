@@ -48,6 +48,7 @@ def env(tmp_path):
     person(source["conn"], phone="+61400000001")
     _rcp, pts = person(source["conn"], phone="+61400000002")
     d.set_enabled(source["conn"], pts["wa"], False, now=NOW)
+    named = d.add_recipient(source["conn"], now=NOW, display_name="Sara Karimi")  # D7's label
     identity = age.generate_identity()
     key_file = tmp_path / "age.key"
     key_file.write_text(identity + "\n")
@@ -70,7 +71,7 @@ def env(tmp_path):
         adopt=True,
         now=NOW,
     )
-    return {"source": source, "target": target, "staged": staged, "stage": stage}
+    return {"source": source, "target": target, "staged": staged, "stage": stage, "named": named}
 
 
 def _commit(env, **kw):
@@ -127,3 +128,14 @@ def test_round_trip_export_import_equal_directory(env):
     for section in source:
         imported = [row for row in target[section] if row in source[section]]
         assert imported == source[section], section
+
+
+def test_a_recipients_display_name_survives_the_round_trip(env):
+    """D39-PRE E10c found: the backup predated D7's display_name, so a restore dropped names."""
+    _commit(env)
+    row = (
+        env["target"]["conn"]
+        .execute("SELECT display_name FROM recipients WHERE ref = ?", (env["named"],))
+        .fetchone()
+    )
+    assert row == ("Sara Karimi",)
