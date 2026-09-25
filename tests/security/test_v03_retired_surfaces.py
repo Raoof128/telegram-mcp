@@ -44,8 +44,10 @@ def test_no_production_composition_registers_the_legacy_mcp_server():
 
 def test_the_demo_server_is_not_an_entry_point():
     scripts = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["scripts"]
-    assert set(scripts) == {"comms", "telegram-mcp"}
-    assert set(scripts.values()) == {"comms.transports.telegram.cli:main"}
+    assert scripts == {  # D29: comms is its own CLI (mcp --stdio), forwarding operator verbs
+        "comms": "comms.cli:main",
+        "telegram-mcp": "comms.transports.telegram.cli:main",
+    }
 
 
 def test_legacy_verify_imports_no_policy_or_coordinator():

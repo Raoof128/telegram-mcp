@@ -21,7 +21,7 @@ dependencies = [
 
 [project.scripts]
 telegram-mcp = "comms.transports.telegram.cli:main"
-comms = "comms.transports.telegram.cli:main"
+comms = "comms.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

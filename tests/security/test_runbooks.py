@@ -3,7 +3,7 @@
 ``telegram-mcp …`` lines are parsed by the real CLI parser, and ``telegram-mcp admin …``
 must name an admin command. The ``comms`` CLI arrives in Part D (D30/D31): until then its
 lines are checked against the operator surface below, the contract D31 implements; D29
-replaces this set with the real parser.
+parses ``comms mcp …`` with the real parser, and D31 replaces the rest of the set.
 """
 
 import re
@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from comms.cli import build_parser
 from comms.transports.telegram.cli import _build_parser
 from comms.transports.telegram.ipc.admin import ADMIN_COMMANDS
 
@@ -79,5 +80,16 @@ def test_every_runbook_command_exists_and_has_a_handler(where, argv):
         if rest[0] == "admin":
             assert " ".join(a for a in rest[1:] if not a.startswith("-")) in ADMIN_COMMANDS, where
         return
+    if rest[:1] == ["mcp"]:  # D29: the real comms parser
+        build_parser().parse_args(rest)
+        return
     words = tuple(a for a in rest if not a.startswith("-"))
     assert any(words[: len(c)] == c for c in COMMS_SURFACE), (where, argv)
+
+
+def test_comms_mcp_is_parsed_by_the_real_cli():
+    args = build_parser().parse_args(["mcp", "--stdio", "--client-seed", "/tmp/seed"])
+    assert args.stdio and args.client_seed == Path("/tmp/seed")
+    for bad in (["mcp"], ["mcp", "--stdio"], ["mcp", "--stdio", "--seed", "x"]):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(bad)

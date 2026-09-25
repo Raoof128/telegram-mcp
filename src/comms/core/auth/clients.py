@@ -1,7 +1,7 @@
 """Local MCP clients and their seeds, split daemon/helper (comms v0.3 Task D27; A33, A38).
 
 ``add_client`` mints a ``cli_`` ref and a 32-byte seed. The daemon keeps its verifier copy as
-a ``cml1-client-seed`` key-slot version named by the client's row; the client's copy is written
+a ``cml1-client-seed`` key-slot version named by the client's row; the client's copy (its ref and seed, ``lease_format.helper_bytes``) is written
 **once**, to a 0600 file at a path the operator names, created exclusively (an existing file
 is refused, never overwritten). ``rotate_client`` replaces both copies and destroys the old
 version; ``disable_client`` refuses the client from then on. Seeds are never logged or shown.
@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from comms.core import refs, timeutil
+from comms.core.auth.lease_format import helper_bytes
 from comms.core.keys.slots import KeySlotStore
 from comms.core.storage.db import write_tx
 
@@ -36,7 +37,7 @@ class ClientError(Exception):
     """A client operation was refused. Fixed messages, never a seed or a path's content."""
 
 
-def _write_helper(path: Path, seed: bytes) -> None:
+def _write_helper(path: Path, cli: str, seed: bytes) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(path, flags, 0o600)
@@ -45,7 +46,7 @@ def _write_helper(path: Path, seed: bytes) -> None:
     except OSError:
         raise ClientError("the helper file cannot be written") from None
     try:
-        os.write(fd, seed)
+        os.write(fd, helper_bytes(cli, seed))
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -70,9 +71,9 @@ def add_client(
     if not isinstance(name, str) or not name.strip() or len(name) > _NAME_MAX:
         raise ClientError("a client name is required")
     seed = os.urandom(SEED_BYTES)
-    _write_helper(Path(helper_path), seed)  # first: a failure leaves no client behind
-    version = store.write_version(SEED_PURPOSE, seed)
     cli = refs.mint("client")
+    _write_helper(Path(helper_path), cli, seed)  # first: a failure leaves no client behind
+    version = store.write_version(SEED_PURPOSE, seed)
     with write_tx(conn):
         conn.execute(
             "INSERT INTO clients (ref, name, seed_version, created_at) VALUES (?, ?, ?, ?)",
@@ -89,7 +90,7 @@ def rotate_client(
     if not enabled:
         raise ClientError("the client is disabled")
     seed = os.urandom(SEED_BYTES)
-    _write_helper(Path(helper_path), seed)
+    _write_helper(Path(helper_path), cli, seed)
     version = store.write_version(SEED_PURPOSE, seed)
     with write_tx(conn):
         conn.execute(

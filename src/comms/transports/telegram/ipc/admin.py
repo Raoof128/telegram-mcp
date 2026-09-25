@@ -139,7 +139,8 @@ RETIRED_ADMIN_COMMANDS: tuple[str, ...] = (
 LEGACY_ADMIN_SURFACE: tuple[str, ...] = ADMIN_COMMANDS + RETIRED_ADMIN_COMMANDS
 
 # Bootstrap control requests, outside the §33 surface (design §2).
-CONTROL_REQUESTS: tuple[str, ...] = ("stop",)
+# ``hello`` (comms v0.3 D29): the current non-secret security epoch, for the stdio proxy.
+CONTROL_REQUESTS: tuple[str, ...] = ("stop", "hello")
 
 
 @dataclass(frozen=True)

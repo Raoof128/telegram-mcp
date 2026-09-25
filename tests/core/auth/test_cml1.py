@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from comms.core import domains
-from comms.core.auth import clients, leases
+from comms.core.auth import clients, lease_format, leases
 from comms.core.auth.leases import LeaseRefused
 from comms.core.canonical import jcs_dumps
 from comms.core.keys.slots import KeySlotStore
@@ -36,7 +36,7 @@ def world(tmp_path):
 
 
 def _seed(world):
-    return world["helper"].read_bytes()
+    return lease_format.read_helper(world["helper"])[1]
 
 
 def _b64(data: bytes) -> str:
@@ -78,6 +78,7 @@ def test_valid_lease_accepted(world):
 def test_helper_copy_is_written_once_0600(world):
     mode = stat.S_IMODE(world["helper"].stat().st_mode)
     assert mode == 0o600 and len(_seed(world)) == 32
+    assert lease_format.read_helper(world["helper"])[0] == world["cli"]
     with pytest.raises(clients.ClientError):  # never overwritten
         clients.add_client(world["conn"], world["store"], "x", now=NOW, helper_path=world["helper"])
 
@@ -142,7 +143,9 @@ def test_rotated_seed_version_refused(world):
     clients.rotate_client(world["conn"], world["store"], world["cli"], now=NOW, helper_path=fresh)
     with pytest.raises(LeaseRefused):
         _verify(world, old)
-    new = leases.mint(fresh.read_bytes(), world["cli"], security_epoch(world["conn"]), now=NOW)
+    new = leases.mint(
+        lease_format.read_helper(fresh)[1], world["cli"], security_epoch(world["conn"]), now=NOW
+    )
     assert _verify(world, new) == world["cli"]
 
 
@@ -198,7 +201,7 @@ def test_seed_never_logged(world, caplog):
     fresh = world["tmp"] / "helper" / "seed3"
     clients.rotate_client(world["conn"], world["store"], world["cli"], now=NOW, helper_path=fresh)
     text = caplog.text + repr(clients) + repr(world["store"])
-    for secret in (seed, fresh.read_bytes()):
+    for secret in (seed, lease_format.read_helper(fresh)[1]):
         assert secret.hex() not in text and _b64(secret) not in text
 
 

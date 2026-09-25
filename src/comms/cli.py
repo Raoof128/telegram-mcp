@@ -1,0 +1,84 @@
+"""The ``comms`` command (comms v0.3 Part D).
+
+``comms mcp --stdio --client-seed <path>`` runs the unprivileged stdio proxy (D29). The
+remaining verbs arrive with D30–D31; until then every other verb is the operator CLI that
+``comms`` has always forwarded to.
+"""
+
+from __future__ import annotations
+
+import argparse
+import socket
+import sys
+from pathlib import Path
+from typing import Any
+
+__all__ = ["build_parser", "main"]
+
+EXIT_USAGE = 2
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="comms", allow_abbrev=False)
+    sub = parser.add_subparsers(dest="verb", required=True)
+    mcp = sub.add_parser("mcp", help="serve MCP to one local client", allow_abbrev=False)
+    mcp.add_argument("--stdio", action="store_true", required=True, help="speak MCP over stdio")
+    mcp.add_argument("--client-seed", type=Path, required=True, help="this client's 0600 seed file")
+    mcp.add_argument("--daemon", default="http://127.0.0.1:8765", help="the daemon's /mcp origin")
+    mcp.add_argument("--runtime-dir", default=None, help="where the daemon's admin socket lives")
+    return parser
+
+
+def _hello(runtime_dir: str | None) -> Any:
+    """The daemon's non-secret security epoch, over the admin socket's ``hello`` control."""
+    from comms.transports.telegram.ipc.framing import decode_json_frame, encode_json_frame
+    from comms.transports.telegram.runtime.bootstrap import ADMIN_SOCK_NAME, _runtime_dir
+
+    path = _runtime_dir(runtime_dir) / ADMIN_SOCK_NAME
+
+    def hello() -> int:
+        payload = encode_json_frame({"control": "hello"})
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(5.0)
+            sock.connect(str(path))
+            sock.sendall(len(payload).to_bytes(4, "big") + payload)
+            size = int.from_bytes(sock.recv(4), "big")
+            body = b""
+            while len(body) < size:
+                chunk = sock.recv(size - len(body))
+                if not chunk:
+                    break
+                body += chunk
+        response = decode_json_frame(body)
+        if response.get("ok") is not True:
+            raise OSError("the daemon did not answer hello")
+        return int(response["data"]["security_epoch"])
+
+    return hello
+
+
+def _mcp(args: argparse.Namespace) -> int:
+    import anyio
+
+    from comms.mcp.stdio_proxy import Proxy, ProxyError, http_post, serve
+
+    try:
+        proxy = Proxy(args.client_seed, hello=_hello(args.runtime_dir), post=http_post(args.daemon))
+    except ProxyError as refused:
+        print(f"comms: {refused}", file=sys.stderr)
+        return EXIT_USAGE
+    anyio.run(serve, proxy)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] != ["mcp"]:
+        from comms.transports.telegram.cli import main as operator_main
+
+        sys.argv = ["comms", *argv]
+        operator_main()
+        return
+    code = _mcp(build_parser().parse_args(argv))
+    if code:
+        raise SystemExit(code)

@@ -12,16 +12,21 @@ the payload (compared in constant time); and ``sec`` equal to the current securi
 
 from __future__ import annotations
 
-import base64
-import binascii
-import hashlib
 import hmac
-import os
 from datetime import datetime
 from typing import Any
 
-from comms.core import domains, refs
+from comms.core import refs
 from comms.core.auth.clients import client_seed
+from comms.core.auth.lease_format import (
+    AUDIENCE,
+    MAX_LIFETIME_S,
+    NONCE_BYTES,
+    PREFIX,
+    decode,
+    mac,
+    mint,
+)
 from comms.core.canonical import jcs_dumps
 from comms.core.keys.slots import KeySlotStore
 from comms.core.security import security_epoch
@@ -29,12 +34,8 @@ from comms.core.strict_json import strict_json_loads
 
 __all__ = ["AUDIENCE", "LeaseRefused", "mint", "verify"]
 
-PREFIX = "cml1"
-AUDIENCE = domains.LOCAL_LEASE_AUDIENCE
 MAX_TOKEN = 1024
-MAX_LIFETIME_S = 60
 SKEW_S = 30
-NONCE_BYTES = 16
 SOURCES = frozenset({"loopback", "admin_peer"})
 _KEYS = frozenset({"aud", "cid", "exp", "iat", "nonce", "sec", "v"})
 
@@ -46,41 +47,11 @@ class LeaseRefused(Exception):
         super().__init__("lease refused")
 
 
-def _encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
 def _decode(text: str) -> bytes:
-    if not text or not text.isascii():
-        raise LeaseRefused
     try:
-        data = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-    except (binascii.Error, ValueError):
+        return decode(text)
+    except ValueError:
         raise LeaseRefused from None
-    if _encode(data) != text:  # one encoding only
-        raise LeaseRefused
-    return data
-
-
-def _mac(seed: bytes, payload: bytes) -> bytes:
-    return hmac.new(seed, domains.LOCAL_LEASE + payload, hashlib.sha256).digest()
-
-
-def mint(seed: bytes, cid: str, sec: int, *, now: datetime, lifetime: int = MAX_LIFETIME_S) -> str:
-    """A lease for the client helper (it holds the seed; the daemon only verifies)."""
-    iat = int(now.timestamp())
-    payload = jcs_dumps(
-        {
-            "aud": AUDIENCE,
-            "cid": cid,
-            "exp": iat + lifetime,
-            "iat": iat,
-            "nonce": _encode(os.urandom(NONCE_BYTES)),
-            "sec": sec,
-            "v": 1,
-        }
-    )
-    return f"{PREFIX}.{_encode(payload)}.{_encode(_mac(seed, payload))}"
 
 
 def _integer(value: Any) -> int:
@@ -111,7 +82,7 @@ def verify(conn: Any, store: KeySlotStore, token: str, *, now: datetime, source:
     except ValueError:
         raise LeaseRefused from None
     seed = client_seed(conn, store, cid)
-    if seed is None or not hmac.compare_digest(_mac(seed, payload), given):
+    if seed is None or not hmac.compare_digest(mac(seed, payload), given):
         raise LeaseRefused
     iat, exp, clock = _integer(claims["iat"]), _integer(claims["exp"]), int(now.timestamp())
     if claims["aud"] != AUDIENCE or claims["v"] != 1 or type(claims["v"]) is not int:

@@ -9,7 +9,7 @@ import pytest
 import uvicorn
 from mcp.types import CLIENT_CAPABILITIES_META_KEY, PROTOCOL_VERSION_META_KEY
 
-from comms.core.auth import clients, leases
+from comms.core.auth import clients, lease_format, leases
 from comms.core.keys.slots import KeySlotStore
 from comms.core.security import security_epoch
 from comms.mcp.catalog import TOOL_CATALOG, tools_list_payload
@@ -35,7 +35,7 @@ async def served(tmp_path):
     cli = clients.add_client(
         conn, store, "claude-code", now=datetime.now(UTC), helper_path=tmp_path / "helper" / "seed"
     )
-    seed = (tmp_path / "helper" / "seed").read_bytes()
+    _cli, seed = lease_format.read_helper(tmp_path / "helper" / "seed")
     seen = []
     services = ServiceRegistry()
     for spec in TOOL_CATALOG:
