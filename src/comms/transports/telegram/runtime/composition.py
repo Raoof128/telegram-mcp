@@ -97,9 +97,10 @@ def build_telegram(
     test_dc: tuple[int, str, int] | None,
     api_hash: str,
     client_factory: Callable[..., Any] | None = None,
+    receive_updates: bool = False,
 ) -> TelethonSession:
     return TelethonSession(
-        TelegramConfig(api_id, session_dir, test_dc),
+        TelegramConfig(api_id, session_dir, test_dc, receive_updates=receive_updates),
         api_hash=api_hash,
         client_factory=client_factory,
     )

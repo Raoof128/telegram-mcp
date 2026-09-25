@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -37,6 +38,7 @@ import uvicorn
 from comms.core.audit.cutover import current_phase
 from comms.core.audit.integrity import latch_degraded
 from comms.core.delivery.engine import ExecutorLease
+from comms.runtime.adapters import UPDATE_OWNER
 from comms.runtime.assemble import AdaptersFactory, assemble_runtime, production_adapters
 from comms.runtime.operator import LegacySide
 from comms.runtime.operator.cutover import CUTOVER_PENDING
@@ -46,6 +48,8 @@ from comms.runtime.state import CommsState, StateRefused, open_comms_state
 from comms.runtime.workers import DaemonStop, Workers, build_workers, startup_recovery
 
 __all__ = ["CommsServer", "CommsStartRefused", "legacy_side"]
+
+_logger = logging.getLogger("comms.serve")
 
 Handler = Callable[[dict[str, Any]], Any]
 
@@ -109,6 +113,8 @@ class CommsServer:
     lock: Any  # the daemon's runtime LockHandle: the campaign engine's executor lease
     stop_event: asyncio.Event
     legacy_conn: Any = None  # the daemon's meta.db: verify --all and the cutover
+    telegram_session: Any = None  # E10a: the one TelethonSession, on its own thread
+    telegram_run: Callable[[Any], Any] | None = None  # E10a: TelethonThread.run
     adapters_factory: AdaptersFactory | None = None
     admin_handlers: Mapping[str, Handler] = field(default_factory=dict)
     control_handlers: Mapping[str, Handler] = field(default_factory=dict)
@@ -121,6 +127,7 @@ class CommsServer:
     _lease: Any = None
     _workers_stop: asyncio.Event | None = None
     _webhook_served: bool = False
+    _loop: asyncio.AbstractEventLoop | None = None
 
     def __repr__(self) -> str:
         return "CommsServer(<redacted>)"
@@ -146,7 +153,11 @@ class CommsServer:
         lease = ExecutorLease(self.lock)
         startup_recovery(state, lease, now=_now())
         factory = self.adapters_factory or production_adapters(
-            clock=_now, monotonic=time.monotonic, archive=None
+            clock=_now,
+            monotonic=time.monotonic,
+            archive=None,
+            telegram_session=self.telegram_session,
+            run=self.telegram_run,
         )
         legacy = None if self.legacy_conn is None else legacy_side(self.legacy_conn, paths)
 
@@ -162,7 +173,9 @@ class CommsServer:
             )
 
         self._assemble, self._lease = assemble, lease
+        self._loop = asyncio.get_running_loop()
         assembled = assemble()
+        self._bind_updates(assembled.adapters)
         runtime = assembled.runtime
         self._dispatcher = runtime.dispatcher
         self.admin_handlers = runtime.admin_handlers
@@ -216,6 +229,26 @@ class CommsServer:
         finally:
             watcher.cancel()
 
+    def _bind_updates(self, adapters: Any) -> None:
+        """Point the session's update stream at this generation's consumer (E10a). Telethon
+        calls the sink on its own thread; the batch is posted to this loop, which owns the one
+        SQLite connection."""
+        consumer, session, loop = adapters.updates, self.telegram_session, self._loop
+        if consumer is None or session is None or loop is None:
+            return
+
+        def consume(updates: Any) -> None:
+            try:
+                consumer.consume(updates)
+            except Exception:  # noqa: BLE001 -- a write that failed is a safety failure
+                _logger.error("update_consume_failed")
+                if self._state is not None:
+                    latch_degraded(self._state.conn, reason="UPDATE_CONSUME_FAILURE", now=_now())
+
+        session.set_update_sink(
+            UPDATE_OWNER, lambda updates: loop.call_soon_threadsafe(consume, updates)
+        )
+
     def reload(self) -> dict[str, Any]:
         """Rebuild the adapters after a credential change (D39-PRE E8a).
 
@@ -227,6 +260,7 @@ class CommsServer:
         if self._assemble is None or self._dispatcher is None:
             return {"reloaded": False}
         assembled = self._assemble()
+        self._bind_updates(assembled.adapters)
         self._dispatcher.rebind(assembled.runtime.dispatcher.registry)
         self._start_workers(assembled.adapters)
         webhook_waits = assembled.runtime.listeners.webhook is not None and not self._webhook_served

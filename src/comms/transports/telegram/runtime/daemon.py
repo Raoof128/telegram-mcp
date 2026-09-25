@@ -97,7 +97,9 @@ async def run_daemon(
     except RuntimeActive:
         raise DaemonError("a daemon is already running for this runtime directory") from None
     session: Any = None
-    keeper: asyncio.Task[None] | None = None
+    admin_session: Any = None  # what the login handlers see (loop-bound under comms)
+    telethon: Any = None  # the comms daemon's TelethonThread (D39-PRE E10a)
+    keeper: Any = None
     closers: list[Any] = []
     conn = None
     comms_server: Any = None
@@ -122,10 +124,8 @@ async def run_daemon(
                     test_dc=config.test_dc,
                     api_hash=api_hash,
                     client_factory=client_factory,
+                    receive_updates=config.comms,  # the comms daemon consumes the stream
                 )
-                await session.start()
-                if session.readiness() == "TELEGRAM_UNAVAILABLE":
-                    _logger.warning("Telegram unreachable at start; retrying in the background")
 
                 async def keep_connected(link: Any = session) -> None:
                     while True:
@@ -133,7 +133,23 @@ async def run_daemon(
                         if not link.connected and not link.logged_out:
                             await link.reconnect()
 
-                keeper = asyncio.create_task(keep_connected())
+                if config.comms:  # E10a: Telethon on its own thread; the adapters block on it
+                    from comms.transports.telegram.runtime.telethon_thread import (
+                        LoopBoundSession,
+                        TelethonThread,
+                    )
+
+                    telethon = TelethonThread()
+                    telethon.start()
+                    telethon.run(session.start())
+                    keeper = asyncio.run_coroutine_threadsafe(keep_connected(), telethon.loop)
+                    admin_session = LoopBoundSession(session, telethon)
+                else:
+                    await session.start()
+                    keeper = asyncio.create_task(keep_connected())
+                    admin_session = session
+                if session.readiness() == "TELEGRAM_UNAVAILABLE":
+                    _logger.warning("Telegram unreachable at start; retrying in the background")
         if config.comms:
             from comms.runtime.serve import CommsServer, CommsStartRefused
 
@@ -146,6 +162,8 @@ async def run_daemon(
                 stop_event=stop_event,
                 adapters_factory=config.adapters_factory,
                 legacy_conn=conn,
+                telegram_session=session if telethon is not None else None,
+                telegram_run=None if telethon is None else telethon.run,
             )
             try:
                 await comms_server.start()
@@ -155,7 +173,7 @@ async def run_daemon(
             conn,
             key_dir=Path(config.key_dir),
             anchor_path=state / "anchor" / "anchor.json",
-            telegram=session,
+            telegram=admin_session,
             comms_handlers=None if comms_server is None else comms_server.admin_handlers,
             control_handlers=None if comms_server is None else comms_server.control_handlers,
             audit_writer=None if comms_server is None else comms_server.writer,
@@ -176,14 +194,20 @@ async def run_daemon(
             await comms_server.stop()
         if keeper is not None:
             keeper.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await keeper
+            if telethon is None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await keeper
         for closer in closers:
             closer.close()
             with contextlib.suppress(Exception):
                 await closer.wait_closed()
         if session is not None:
-            await session.stop()  # disconnect only
+            if telethon is not None:
+                with contextlib.suppress(Exception):
+                    telethon.run(session.stop())  # disconnect only, on its own loop
+                telethon.stop()
+            else:
+                await session.stop()  # disconnect only
         if conn is not None:
             conn.close()
         with contextlib.suppress(FileNotFoundError):

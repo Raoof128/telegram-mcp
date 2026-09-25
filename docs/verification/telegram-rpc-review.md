@@ -114,3 +114,38 @@ dropped link fails the in-flight call and only the daemon's keeper reconnects.
 Transport requests Telethon issues on the sender directly (not through
 `_call`): `InvokeWithLayer`, `InitConnection`, `InvokeWithoutUpdates`, `Ping`,
 `help.GetConfig`, `auth.ExportAuthorization`, `auth.ImportAuthorization`.
+
+## comms v0.3 D39-PRE (Task E10a): what Telethon sends on its own, and the update stream
+
+The recorder sees only requests that pass through the adapter's `_call_reviewed`. Telethon
+1.45.0 also sends requests itself. Reading `connect`, `_on_login`, `get_me`,
+`is_user_authorized`, `set_receive_updates`, `_update_loop`, `_keepalive_loop` and
+`_updates/messagebox.py` gives this set, pinned as `UPDATE_RPCS` and checked against the
+installed Telethon source by `tests/telegram/test_update_rpcs.py`:
+
+| Request | Sent by | What it reads | Effect at Telegram |
+|---|---|---|---|
+| `help.GetConfigRequest` (inside `InvokeWithLayer`/`InitConnection`) | `connect`, every connection | the DC configuration | none |
+| `users.GetUsersRequest` | `connect` → `get_me`, when the saved update state is empty | the account's own user | none |
+| `updates.GetStateRequest` | `connect` → `_on_login` (same condition); `is_user_authorized`; `set_receive_updates` | the account's update state (pts, qts, date, seq) | none |
+| `updates.GetDifferenceRequest` | `connect` → `_on_login` (same condition); the update loop on a gap | updates missed since a state | none |
+| `updates.GetChannelDifferenceRequest` | the update loop on a channel gap | a channel's missed updates | none |
+
+The keepalive is the MTProto service ping (`_keepalive_ping`), a transport message with no
+account effect.
+
+**Correction to the sections above.** The "absent in every phase" list names
+`updates.GetDifferenceRequest`, and the transport list omits `users.GetUsers` and
+`updates.GetState`. Both are wrong for `connect`: whenever the session's saved update state is
+empty (a fresh session file), Telethon's `connect` sends `get_me` and `_on_login`, which is
+`users.GetUsers`, `updates.GetState` and `updates.GetDifference`, **whether or not updates are
+received**. The 4b login path does not call `GetDifference` itself; `connect` does. All three
+are reads of the account's own state.
+
+**The update stream.** The comms daemon opts in (`TelegramConfig.receive_updates=True`); the
+legacy construction stays `receive_updates=False`. With it, the update loop adds
+`updates.GetDifference`/`GetChannelDifference` on a gap. One `events.Raw` handler translates
+each update (`neutral_updates`) and hands it only to the sink of the single claimed owner
+(A24); before a sink exists an update is dropped. The daemon runs Telethon on its own thread
+and loop, and posts each batch to its own loop, where `UserUpdateConsumer` writes it (one
+SQLite connection, one thread).
