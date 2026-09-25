@@ -38,14 +38,15 @@ from comms.core.audit.cutover import current_phase
 from comms.core.audit.integrity import latch_degraded
 from comms.core.delivery.engine import ExecutorLease
 from comms.runtime.assemble import AdaptersFactory, assemble_runtime, production_adapters
+from comms.runtime.operator import LegacySide
+from comms.runtime.operator.cutover import CUTOVER_PENDING
 from comms.runtime.paths import CommsPaths
 from comms.runtime.settings import SettingsError, load_settings
 from comms.runtime.state import CommsState, StateRefused, open_comms_state
 from comms.runtime.workers import DaemonStop, Workers, build_workers, startup_recovery
 
-__all__ = ["CUTOVER_PENDING", "CommsServer", "CommsStartRefused"]
+__all__ = ["CommsServer", "CommsStartRefused", "legacy_side"]
 
-CUTOVER_PENDING = "CUTOVER_PENDING"
 Handler = Callable[[dict[str, Any]], Any]
 
 
@@ -57,11 +58,42 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def legacy_side(legacy_conn: Any, paths: CommsPaths) -> LegacySide:
+    """The retained legacy chain, from the daemon's ``meta.db`` and the legacy key store (bound
+    by the daemon before this runs)."""
+    from comms.transports.telegram.disclosure.keys import checkpoint_public_for
+    from comms.transports.telegram.keys.store import load_key
+    from comms.transports.telegram.runtime.cutover_barrier import (
+        CutoverGate,
+        TelegramLegacyPort,
+        legacy_verifier,
+    )
+
+    chain_key = load_key("audit-chain-key")
+
+    def port() -> TelegramLegacyPort:
+        return TelegramLegacyPort(
+            legacy_conn,
+            chain_key,
+            load_key("audit-checkpoint-key"),
+            paths.legacy_anchor,
+            CutoverGate(),  # v0.3 has no legacy ingress: nothing is ever in flight
+            paths.legacy_keys,
+        )
+
+    return LegacySide(
+        conn=legacy_conn,
+        port=port,
+        verify=legacy_verifier(chain_key, checkpoint_public_for(legacy_conn)),
+    )
+
+
 @dataclass
 class CommsServer:
     state_dir: Path
     lock: Any  # the daemon's runtime LockHandle: the campaign engine's executor lease
     stop_event: asyncio.Event
+    legacy_conn: Any = None  # the daemon's meta.db: verify --all and the cutover
     adapters_factory: AdaptersFactory | None = None
     admin_handlers: Mapping[str, Handler] = field(default_factory=dict)
     control_handlers: Mapping[str, Handler] = field(default_factory=dict)
@@ -91,8 +123,14 @@ class CommsServer:
         factory = self.adapters_factory or production_adapters(
             clock=_now, monotonic=time.monotonic, archive=None
         )
+        legacy = None if self.legacy_conn is None else legacy_side(self.legacy_conn, paths)
         assembled = assemble_runtime(
-            state, settings, adapters_factory=factory, clock=_now, monotonic=time.monotonic
+            state,
+            settings,
+            adapters_factory=factory,
+            clock=_now,
+            monotonic=time.monotonic,
+            legacy=legacy,
         )
         runtime = assembled.runtime
         self.admin_handlers = runtime.admin_handlers

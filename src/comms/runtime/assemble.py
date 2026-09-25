@@ -16,6 +16,7 @@ from typing import Any
 
 from comms.runtime.adapters import Adapters
 from comms.runtime.comms_runtime import CommsRuntime, RemoteConfig, build_comms_runtime
+from comms.runtime.operator import LegacySide
 from comms.runtime.settings import DaemonSettings
 from comms.runtime.state import CommsState
 
@@ -67,6 +68,7 @@ def assemble_runtime(
     adapters_factory: AdaptersFactory,
     clock: Callable[[], datetime],
     monotonic: Callable[[], float],
+    legacy: LegacySide | None = None,
 ) -> Assembled:
     adapters = adapters_factory(state, settings)
     remote = None
@@ -86,5 +88,6 @@ def assemble_runtime(
         host=settings.host,
         local_port=settings.local_port,
         remote=remote,
+        legacy=legacy,
     )
     return Assembled(runtime=runtime, adapters=adapters)

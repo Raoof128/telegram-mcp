@@ -32,8 +32,12 @@ OPERATOR_COMMANDS: Mapping[tuple[str, ...], Sequence[Arg]] = {
     ("doctor",): (("--production", "switch"),),
     ("keys", "provision"): (("--state-dir", "optional"), ("--runtime-dir", "optional")),
     ("keys", "list"): (),
-    ("keys", "rotate"): (("purpose", "positional"),),
-    ("keys", "mark-signer"): (("--key-id", "optional"),),
+    ("keys", "rotate"): (
+        ("purpose", "positional"),
+        ("--state-dir", "optional"),  # comms-db-key only: it rotates locally, daemon stopped
+        ("--runtime-dir", "optional"),
+    ),
+    ("keys", "mark-signer"): (("--key-id", "required"), ("--state", "required")),
     ("audit", "verify"): (("--all", "switch"),),
     ("audit", "repair"): (),
     ("backup", "export"): (("--out", "optional"),),

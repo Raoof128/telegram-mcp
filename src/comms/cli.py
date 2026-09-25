@@ -133,6 +133,24 @@ def _provision(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rekey(args: argparse.Namespace) -> int:
+    """``comms keys rotate comms-db-key`` (A14): local, under the runtime lock, daemon stopped."""
+    import json
+
+    from comms.runtime.paths import CommsPaths, default_state_dir
+    from comms.runtime.provision import ProvisionRefused, rotate_db_key
+    from comms.transports.telegram.runtime.bootstrap import _runtime_dir
+
+    paths = CommsPaths(Path(args.state_dir) if args.state_dir else default_state_dir())
+    try:
+        version = rotate_db_key(paths, runtime_dir=_runtime_dir(args.runtime_dir))
+    except ProvisionRefused as refused:
+        print(f"comms: {refused}", file=sys.stderr)
+        return 4
+    print(json.dumps({"purpose": "comms-db-key", "version": version}, indent=2, sort_keys=True))
+    return 0
+
+
 def _daemon(args: argparse.Namespace, *, selftest: bool) -> int:
     """``comms daemon`` / ``comms selftest-daemon`` (D39-PRE E6): one daemon, one code path.
 
@@ -226,6 +244,11 @@ def main(argv: list[str] | None = None) -> None:
         return
     if argv[:1] in (["daemon"], ["selftest-daemon"]):
         code = _daemon(build_parser().parse_args(argv), selftest=argv[0] == "selftest-daemon")
+        if code:
+            raise SystemExit(code)
+        return
+    if argv[:3] == ["keys", "rotate", "comms-db-key"]:
+        code = _rekey(build_parser().parse_args(argv))
         if code:
             raise SystemExit(code)
         return

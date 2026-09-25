@@ -145,6 +145,7 @@ async def run_daemon(
                 lock=lock,
                 stop_event=stop_event,
                 adapters_factory=config.adapters_factory,
+                legacy_conn=conn,
             )
             try:
                 await comms_server.start()

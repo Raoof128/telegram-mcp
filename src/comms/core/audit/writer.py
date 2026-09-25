@@ -138,6 +138,11 @@ class AuditWriter:
     ) -> None:
         self.conn, self._keys, self._anchor, self._clock = conn, keys, Path(anchor_path), clock
 
+    @property
+    def anchor_path(self) -> Path:
+        """Where this writer anchors the head (``audit verify`` and ``audit repair`` read it)."""
+        return self._anchor
+
     def key_id(self) -> str:
         """The ID of the chain key new events are MACed under."""
         return self._keys.current_id()

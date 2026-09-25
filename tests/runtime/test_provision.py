@@ -156,3 +156,69 @@ def test_the_default_state_dir_is_the_installers(monkeypatch):
     assert default_state_dir() == Path("/var/db/telegram-mcp")
     monkeypatch.setenv("TELEGRAM_MCP_STATE_DIR", "/elsewhere")
     assert default_state_dir() == Path("/elsewhere")
+
+
+def test_a_fresh_install_gets_an_empty_legacy_chain_anchored_so_the_cutover_can_seal_it(
+    tmp_path, run
+):
+    """R-E9: with no legacy history, an authenticated anchor at sequence 0 names the empty
+    legacy chain (the core rule reads that as CLEAN); without it the cutover can never run."""
+    from comms.transports.telegram.disclosure.audit.anchor import derive_integrity
+    from comms.transports.telegram.keys.store import load_key, set_store_dir
+    from comms.transports.telegram.storage.db import open_db
+
+    paths = CommsPaths(tmp_path / "state")
+    provision(paths, now=NOW, runtime_dir=run)
+    assert stat.S_IMODE(paths.legacy_anchor.stat().st_mode) == 0o600
+    set_store_dir(paths.legacy_keys)
+    legacy = open_db(paths.legacy_db)
+    assert derive_integrity(legacy, load_key("audit-chain-key"), paths.legacy_anchor) == "CLEAN"
+
+
+def test_an_existing_legacy_database_is_never_touched(tmp_path, run):
+    paths = CommsPaths(tmp_path / "state")
+    paths.state_dir.mkdir(mode=0o700)
+    paths.legacy_db.write_bytes(b"an existing legacy database")
+    provision(paths, now=NOW, runtime_dir=run)
+    assert paths.legacy_db.read_bytes() == b"an existing legacy database"
+    assert not paths.legacy_anchor.exists()
+
+
+def test_the_database_key_rotates_locally_and_the_new_key_opens_the_database(tmp_path, run, capsys):
+    import json
+
+    from comms.cli import main
+
+    paths = CommsPaths(tmp_path / "state")
+    provision(paths, now=NOW, runtime_dir=run)
+    before = KeyPointer(paths.db_key_pointer).get()
+    main(
+        [
+            "keys",
+            "rotate",
+            "comms-db-key",
+            "--state-dir",
+            str(paths.state_dir),
+            "--runtime-dir",
+            str(run),
+        ]
+    )
+    assert json.loads(capsys.readouterr().out) == {"purpose": "comms-db-key", "version": before + 1}
+    assert KeyPointer(paths.db_key_pointer).get() == before + 1
+    assert FileSecretStore(paths.secrets_dir).versions("comms-db-key") == [before + 1]
+    _open(paths).close()
+
+
+def test_the_database_key_is_not_rotated_while_a_daemon_runs(tmp_path, run):
+    from comms.cli import main
+
+    paths = CommsPaths(tmp_path / "state")
+    provision(paths, now=NOW, runtime_dir=run)
+    held = acquire_lock(run / "runtime.lock", mode="daemon")
+    try:
+        with pytest.raises(SystemExit):
+            main(["keys", "rotate", "comms-db-key", "--state-dir", str(paths.state_dir),
+                  "--runtime-dir", str(run)])  # fmt: skip
+    finally:
+        held.release()
+    assert KeyPointer(paths.db_key_pointer).get() == 1

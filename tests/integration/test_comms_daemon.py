@@ -147,3 +147,30 @@ def test_a_key_that_does_not_open_comms_db_refuses_the_start(tmp_path, monkeypat
     assert d.proc.wait(timeout=30) != 0
     assert "does not open comms.db" in d.proc.stderr.read()
     assert not (d.run / "admin.sock").exists()
+
+
+def test_the_cutover_releases_writes_then_a_write_replays_and_verify_all_is_clean(daemon):
+    daemon.comms("client", "add", "--name", "t", "--helper-path", "seed")
+    status = json.loads(daemon.comms("cutover", "status").stdout)
+    assert status["phase"] == "NONE" and status["writes_held"] is True
+    done = json.loads(daemon.comms("cutover", "run").stdout)
+    assert done == {"phase": "COMPLETE", "writes_released": True}
+
+    request = "req_" + "b" * 26
+
+    async def writes(session):
+        args = {"name": "Parramatta", "request_id": request}
+        first = await session.call_tool("comms_location_create", args)
+        again = await session.call_tool("comms_location_create", args)
+        listed = await session.call_tool("comms_location_list", {})
+        return first, again, listed
+
+    first, again, listed = asyncio.run(daemon.mcp("seed", writes))
+    assert not first.is_error and first.structured_content["location"].startswith("loc_")
+    assert again.structured_content["location"] == first.structured_content["location"]
+    assert again.structured_content["replayed"] is True
+    names = [item["name"] for item in listed.structured_content["items"]]
+    assert names.count("Parramatta") == 1  # the replay made no second effect
+
+    report = json.loads(daemon.comms("audit", "verify", "--all").stdout)
+    assert report == {"ok": True, "legacy": "ok", "lineage": "ok", "comms": "ok", "problems": []}
