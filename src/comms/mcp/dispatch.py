@@ -115,6 +115,15 @@ class Dispatcher:
         self._inputs = {s.name: Draft202012Validator(dict(s.input_schema)) for s in TOOL_CATALOG}
         self._outputs = {s.name: Draft202012Validator(dict(s.output_schema)) for s in TOOL_CATALOG}
 
+    @property
+    def registry(self) -> ServiceRegistry:
+        return self._services
+
+    def rebind(self, services: ServiceRegistry) -> None:
+        """Swap the service registry: a provider credential changed and the daemon rebuilt its
+        adapters (D39-PRE E8a). The catalog, the schemas and every listener are unchanged."""
+        self._services = services
+
     def call(
         self, client: AuthenticatedClient, name: str, arguments: Mapping[str, Any]
     ) -> ToolResult:

@@ -101,9 +101,19 @@ class CommsServer:
     _state: CommsState | None = None
     _servers: list[uvicorn.Server] = field(default_factory=list)
     _tasks: list[asyncio.Task[Any]] = field(default_factory=list)
+    _assemble: Callable[[], Any] | None = None
+    _dispatcher: Any = None
+    _lease: Any = None
+    _workers_stop: asyncio.Event | None = None
+    _webhook_served: bool = False
 
     def __repr__(self) -> str:
         return "CommsServer(<redacted>)"
+
+    @property
+    def writer(self) -> Any:
+        """The comms audit writer (the legacy session revoke records through it)."""
+        return None if self._state is None else self._state.writer
 
     async def start(self) -> None:
         paths = CommsPaths(self.state_dir)
@@ -124,15 +134,22 @@ class CommsServer:
             clock=_now, monotonic=time.monotonic, archive=None
         )
         legacy = None if self.legacy_conn is None else legacy_side(self.legacy_conn, paths)
-        assembled = assemble_runtime(
-            state,
-            settings,
-            adapters_factory=factory,
-            clock=_now,
-            monotonic=time.monotonic,
-            legacy=legacy,
-        )
+
+        def assemble() -> Any:
+            return assemble_runtime(
+                state,
+                settings,
+                adapters_factory=factory,
+                clock=_now,
+                monotonic=time.monotonic,
+                legacy=legacy,
+                reload=self.reload,
+            )
+
+        self._assemble, self._lease = assemble, lease
+        assembled = assemble()
         runtime = assembled.runtime
+        self._dispatcher = runtime.dispatcher
         self.admin_handlers = runtime.admin_handlers
         self.control_handlers = runtime.control_handlers
         apps = [(runtime.listeners.local, settings.local_port)]
@@ -140,6 +157,7 @@ class CommsServer:
             apps.append((runtime.listeners.remote, settings.remote.port))
         if runtime.listeners.webhook is not None and settings.webhook_port is not None:
             apps.append((runtime.listeners.webhook, settings.webhook_port))
+            self._webhook_served = True
         for app, port in apps:
             server = uvicorn.Server(
                 uvicorn.Config(app, host=settings.host, port=port, log_level="warning")
@@ -150,15 +168,45 @@ class CommsServer:
             if any(t.done() for t in self._tasks):
                 raise CommsStartRefused("a comms listener could not bind its port")
             await asyncio.sleep(0.01)
-        workers: Workers = build_workers(state, assembled.adapters, lease, clock=_now)
-        self._tasks.append(asyncio.create_task(self._supervise(workers)))
+        self._start_workers(assembled.adapters)
 
-    async def _supervise(self, workers: Workers) -> None:
+    def _start_workers(self, adapters: Any) -> None:
+        assert self._state is not None
+        if self._workers_stop is not None:
+            self._workers_stop.set()  # the previous generation finishes its step and returns
+        self._workers_stop = asyncio.Event()
+        workers: Workers = build_workers(self._state, adapters, self._lease, clock=_now)
+        self._tasks.append(asyncio.create_task(self._supervise(workers, self._workers_stop)))
+
+    async def _supervise(self, workers: Workers, generation: asyncio.Event) -> None:
+        async def daemon_stopped() -> None:
+            await self.stop_event.wait()
+            generation.set()
+
+        watcher = asyncio.create_task(daemon_stopped())
         try:
-            await workers.run(self.stop_event)
+            await workers.run(generation)
         except DaemonStop:
             self.failed = True
             self.stop_event.set()
+        finally:
+            watcher.cancel()
+
+    def reload(self) -> dict[str, Any]:
+        """Rebuild the adapters after a credential change (D39-PRE E8a).
+
+        The services are re-assembled over the new adapters and the one dispatcher is rebound
+        to them, so every listener and the admin socket use the new credential at once; the
+        workers restart on the new adapters. A webhook listener that was not served at start
+        needs a restart to bind its port, and the reply says so.
+        """
+        if self._assemble is None or self._dispatcher is None:
+            return {"reloaded": False}
+        assembled = self._assemble()
+        self._dispatcher.rebind(assembled.runtime.dispatcher.registry)
+        self._start_workers(assembled.adapters)
+        webhook_waits = assembled.runtime.listeners.webhook is not None and not self._webhook_served
+        return {"reloaded": True, "restart_needed": webhook_waits}
 
     async def stop(self) -> None:
         self.stop_event.set()

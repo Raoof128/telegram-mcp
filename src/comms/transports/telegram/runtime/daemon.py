@@ -158,6 +158,7 @@ async def run_daemon(
             telegram=session,
             comms_handlers=None if comms_server is None else comms_server.admin_handlers,
             control_handlers=None if comms_server is None else comms_server.control_handlers,
+            audit_writer=None if comms_server is None else comms_server.writer,
         )
         closers.append(
             await serve_admin(

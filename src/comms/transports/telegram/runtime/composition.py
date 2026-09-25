@@ -42,6 +42,7 @@ def admin_handlers(
     key_dir: Path,
     anchor_path: Path,
     telegram: Any,
+    audit_writer: Any = None,
 ) -> dict[str, Callable[[dict[str, Any]], Any]]:
     """The one assembly point for the production admin handler map (Phase-5 design §2).
 
@@ -60,7 +61,8 @@ def admin_handlers(
         **inspect_handlers(conn, lineage=NoRestoreLineage()),
     }
     if telegram is not None:
-        handlers.update(auth_handlers(conn, telegram))
+        # D39-PRE E8a: with the comms writer, ``auth revoke-this-session`` is registered too
+        handlers.update(auth_handlers(conn, telegram, writer=audit_writer))
     return handlers
 
 
@@ -72,11 +74,14 @@ def build_admin(
     telegram: Any = None,
     comms_handlers: Mapping[str, Callable[[dict[str, Any]], Any]] | None = None,
     control_handlers: Mapping[str, Callable[[dict[str, Any]], Any]] | None = None,
+    audit_writer: Any = None,
 ) -> AdminRouter:
     """The daemon's admin socket router: the retained legacy handlers (v0.3 A3) plus, since
     D39-PRE E6, the comms runtime's ``tool call``, ``operator`` and ``hello``."""
     set_store_dir(key_dir)
-    handlers = admin_handlers(conn, key_dir=key_dir, anchor_path=anchor_path, telegram=telegram)
+    handlers = admin_handlers(
+        conn, key_dir=key_dir, anchor_path=anchor_path, telegram=telegram, audit_writer=audit_writer
+    )
     clash = set(handlers) & set(comms_handlers or {})
     if clash:
         raise ValueError("an admin command has two handlers")

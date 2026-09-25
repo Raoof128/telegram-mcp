@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -33,6 +33,9 @@ class OperatorContext:
     clock: Callable[[], datetime]
     oauth: Any = None  # the remote authorization server, when the remote listener is configured
     legacy: LegacySide | None = None  # absent outside the daemon (the smoke, unit tests)
+    secrets: Any = None  # the provider-credential store (credential commands)
+    proofs: Mapping[str, Callable[[bytes], None]] | None = None  # A13 live proofs by purpose
+    reload: Callable[[], dict[str, Any]] | None = None  # rebuild the adapters after a change
 
     @property
     def conn(self) -> Any:

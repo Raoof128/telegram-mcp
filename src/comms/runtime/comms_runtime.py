@@ -92,6 +92,9 @@ def build_comms_runtime(
     local_port: int,
     remote: RemoteConfig | None = None,
     legacy: LegacySide | None = None,
+    secrets: Any = None,
+    proofs: Mapping[str, Callable[[bytes], None]] | None = None,
+    reload: Callable[[], dict[str, Any]] | None = None,
 ) -> CommsRuntime:
     capability = CapabilityService(adapters.capability, clock=clock)
     executor = MutationExecutor(writer, adapters.admin)
@@ -142,7 +145,16 @@ def build_comms_runtime(
         admin_handlers={
             "tool call": tool_call_handler(dispatcher),
             "operator": operator_handler(
-                OperatorContext(writer=writer, store=store, clock=clock, oauth=oauth, legacy=legacy)
+                OperatorContext(
+                    writer=writer,
+                    store=store,
+                    clock=clock,
+                    oauth=oauth,
+                    legacy=legacy,
+                    secrets=secrets,
+                    proofs=proofs,
+                    reload=reload,
+                )
             ),
         },
         control_handlers={"hello": hello_handler(conn)},

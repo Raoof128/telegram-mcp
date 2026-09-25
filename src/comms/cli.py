@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from comms.cli_commands.operator import (
+    CLI_FLOWS,
     LOCAL_COMMANDS,
     LOCAL_GROUPS,
     OPERATOR_GROUPS,
@@ -88,11 +89,62 @@ def _tool(args: argparse.Namespace) -> int:
     return 0 if response["data"].get("error") is None else 4
 
 
+def _read_credential() -> str:
+    """A credential value, typed at the owner's terminal and never echoed (D39-PRE E8a)."""
+    import getpass
+
+    if not sys.stdin.isatty():
+        raise ValueError("credential values are entered interactively, at a terminal")
+    return getpass.getpass("value (not echoed): ")
+
+
+def _telegram_flow(words: tuple[str, ...]) -> int:
+    """``transport telegram login|revoke-session`` (D39-PRE E8a): CLI-driven steps over the
+    daemon's retained login admin commands. Phone and code are prompted; a 2FA password is read
+    only through ``getpass``; nothing is echoed back."""
+    import getpass
+    import json
+
+    command = CLI_FLOWS[words]
+
+    def step(args: dict[str, Any]) -> dict[str, Any]:
+        response = _admin_request(None, {"cmd": command, "args": args})
+        if response.get("ok") is not True:
+            raise ValueError(str(response.get("code", "INTERNAL_ERROR")))
+        data: dict[str, Any] = response["data"]
+        return data
+
+    try:
+        if words[-1] == "revoke-session":
+            result = step({})
+        else:
+            if not sys.stdin.isatty():
+                raise ValueError("the Telegram login is entered interactively, at a terminal")
+            reply = step({"step": "start", "phone": input("phone (+61…): ").strip()})
+            handle = reply["login"]
+            reply = step({"step": "code", "login": handle, "code": input("code: ").strip()})
+            if reply.get("next") == "password":
+                password = getpass.getpass("two-step password (not echoed): ")
+                reply = step({"step": "password", "login": handle, "password": password})
+            result = reply
+    except OSError:
+        print("comms: the daemon is not reachable", file=sys.stderr)
+        return 3
+    except ValueError as refused:
+        print(f"comms: {refused}", file=sys.stderr)
+        return 4
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def _operator(args: argparse.Namespace) -> int:
     import json
 
+    if tuple(args.operator) in CLI_FLOWS:
+        return _telegram_flow(tuple(args.operator))
+
     try:
-        request = operator_request(args, stdin=sys.stdin)
+        request = operator_request(args, read_value=_read_credential)
     except ValueError as refused:
         print(f"comms: {refused}", file=sys.stderr)
         return EXIT_USAGE

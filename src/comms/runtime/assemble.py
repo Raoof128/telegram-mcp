@@ -9,7 +9,7 @@ provider clients), tests and ``selftest-daemon`` pass fakes. Nothing else calls
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -17,6 +17,7 @@ from typing import Any
 from comms.runtime.adapters import Adapters
 from comms.runtime.comms_runtime import CommsRuntime, RemoteConfig, build_comms_runtime
 from comms.runtime.operator import LegacySide
+from comms.runtime.proofs import build_proofs
 from comms.runtime.settings import DaemonSettings
 from comms.runtime.state import CommsState
 
@@ -69,6 +70,8 @@ def assemble_runtime(
     clock: Callable[[], datetime],
     monotonic: Callable[[], float],
     legacy: LegacySide | None = None,
+    reload: Callable[[], dict[str, Any]] | None = None,
+    proofs: Mapping[str, Callable[[bytes], None]] | None = None,
 ) -> Assembled:
     adapters = adapters_factory(state, settings)
     remote = None
@@ -89,5 +92,10 @@ def assemble_runtime(
         local_port=settings.local_port,
         remote=remote,
         legacy=legacy,
+        secrets=state.secrets,
+        proofs=proofs
+        if proofs is not None
+        else build_proofs(phone_number_id=settings.adapter.meta_phone_number_id),
+        reload=reload,
     )
     return Assembled(runtime=runtime, adapters=adapters)

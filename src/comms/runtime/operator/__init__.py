@@ -16,6 +16,7 @@ from typing import Any
 from comms.runtime.operator.audit import AUDIT_HANDLERS
 from comms.runtime.operator.clients import CLIENT_HANDLERS
 from comms.runtime.operator.context import LegacySide, OperatorContext, OperatorHandler
+from comms.runtime.operator.credentials import CREDENTIAL_HANDLERS
 from comms.runtime.operator.cutover import CUTOVER_HANDLERS
 from comms.runtime.operator.keys import KEY_HANDLERS
 
@@ -26,6 +27,7 @@ OPERATOR_HANDLERS: Mapping[tuple[str, ...], OperatorHandler] = {
     **KEY_HANDLERS,
     **AUDIT_HANDLERS,
     **CUTOVER_HANDLERS,
+    **CREDENTIAL_HANDLERS,
 }
 
 
