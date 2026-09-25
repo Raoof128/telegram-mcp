@@ -475,3 +475,110 @@ Registered: R-D38. The ledger (`.superpowers/sdd/2026-09-24-comms-v0.3/progress.
 `comms-v0.3-part-d` is an annotated tag, pushed with the owner's approval on 2026-09-25 (merge `272dd8b`): tag object `ebcc9ed8d3beab59f81c129fcbe6a8189ae544d3` → commit `26047e820220d395fefe777217fbc014a5fd6188`.
 
 No production claim.
+
+## D39-PRE: Runtime Completion (tasks E0–E11)
+
+Plan `docs/superpowers/plans/2026-09-25-comms-v0.3-d39-pre.md`, approved by the owner on 2026-09-25 with four amendments. Branch `comms-v0.3-d39pre` off `main` (`272dd8b`). This tranche closes missing production composition: it adds no new product layer.
+
+### What exists now
+
+- **`comms keys provision`** creates the encrypted state locally, before any daemon, under the daemon's runtime lock. It is idempotent, never overwrites, and refuses damaged material. A fresh install's empty legacy chain is anchored so the cutover can seal it (R-E4, R-E9).
+- **`open_comms_state`** fails closed on a wrong key, a failed migration, a failed integrity check or a corrupt key. The bootstrap state (`PROVISIONED`, `CHAIN_INITIALIZED`, `READY`) is derived, never stored, and a stale anchor starts the daemon degraded.
+- **`comms.json`** holds non-secret settings, is 0600, binds loopback only, and is strict (R-E5).
+- **One composition root.** `assemble_runtime` is shared by the daemon and the smoke; the adapter factory is the only seam.
+- **The daemon.**
+  - It holds `comms.db` and serves the local, remote and webhook listeners and the admin socket (legacy handlers plus `tool call`, `operator` and `hello`).
+  - It runs startup recovery and supervised workers: deliver, schedule, bot updates, the webhook inbox and daily retention, under two failure classes.
+  - Writes are held until the cutover completes (R-E7).
+  - SIGTERM stops it cleanly.
+- **Every operator command works or is absent** (R-E3):
+  - keys, audit, cutover;
+  - credentials, proved live and reloaded without a restart (R-E6, R-E10);
+  - the Telegram login flows;
+  - retention and backup, moved in chunks over the socket (R-E11);
+  - a read-only `comms doctor`.
+- **The Telegram user actor** runs on its own Telethon thread with the update stream live. Every request Telethon sends on its own is pinned (R-E13).
+- **A comms-native WhatsApp archive** is the `whatsapp_webhook_archive` context source, and the webhook listener is served (R-E14).
+- **The egress sweeps** now cover proxy frames, webhook responses and backups (R-E15).
+
+### D39-A: runtime acceptance against a real daemon
+
+`scripts/e2e_smoke.py` `phase_v03_daemon` drives `comms selftest-daemon` in its own process. It uses only the installed `comms` binary, the admin Unix socket, the stdio proxy under a real MCP client, and HTTP `/mcp` with fresh `cml1` leases. The selftest daemon is the production daemon with deterministic local providers injected, plus a real Bot API poller over a scripted transport and the real webhook pipeline. All 25 checks pass:
+
+- provision creates the encrypted state;
+- a fresh daemon holds writes until the cutover;
+- `cutover run` completes and releases writes;
+- the doctor is `ok` once retention has run;
+- stdio `tools/list` equals the catalog, and a read reaches the daemon;
+- a write over HTTP succeeds, and its request-id replay has no second effect;
+- `audit verify --all` is clean;
+- a second daemon is refused;
+- `credential set` without a terminal is refused;
+- SIGTERM exits cleanly;
+- restart after SIGTERM, and kill -9 then restart, both verify clean;
+- a stale anchor starts the daemon degraded and `audit repair` restores writes;
+- a wrong key refuses the start;
+- a backup restore seeds the directory;
+- a CLI campaign is delivered;
+- a scheduled campaign survives kill -9 and runs once;
+- a cursor-key rotation invalidates old cursors;
+- verify stays clean after all of it;
+- retained bot updates are served as `telegram_local`, with nothing re-ingested after a restart;
+- the webhook listener's challenge and signature rules hold;
+- kill -9 during webhook delivery recovers.
+
+### What driving the real daemon found
+
+Each finding is fixed and has a test unless it's listed under Follow-ups.
+
+- **No send was ever delivered.** `campaign.send` only froze the campaign, and nothing ran the delivery engine.
+- **A fresh install could never cut over.** The empty legacy chain had no anchor (R-E9).
+- **A fresh daemon would never deliver.** Effect loops exited for good on the integrity latch (R-E12).
+- **Nothing ran retention.** Every install would have read `MAINTENANCE_OVERDUE` (R-E12).
+- **The bot's local context had no producer.** The Bot API poller was never built.
+- **No WhatsApp context source existed** (R-E14).
+- **Telethon's own requests were not reviewed.** `connect` sends `users.GetUsers`, `updates.GetState` and `updates.GetDifference` itself, unreviewed until now (R-E13).
+- **A restore dropped every person's name.** The backup lacked `display_name` (R-E15).
+- **A restored group was invisible.** It had no `grp_` ref (R-E16).
+- **Two copies of the reader rule.** The facade kept its own copy (R-E17).
+- **The doctor counted every client seed as an orphan.**
+- **The ruff cache hid misordered imports on `main`.**
+- **The install runbook was out of order.** It ran `keys list` before the daemon, and the doctor before the cutover.
+
+### Counts (gate at the D39-PRE head)
+
+| Check | Result |
+|---|---|
+| `uv run pytest -q` | **5160 passed**, 4 skipped (opt-in host and live tests) |
+| `scripts/e2e_smoke.py` | **99/99** (25 in `phase_v03_daemon`) |
+| `pytest tests/formal` | 57 passed |
+| ruff (no cache), ruff format, mypy, `uv build` | clean |
+| WhatsVault suite | **450 passed** |
+
+### Rulings
+
+R-A20 (decided), R-E1 to R-E3 (the owner's), and R-E4 to R-E17 are in `docs/verification/comms-v0.3-rulings.md`. Owner decisions taken during the tranche:
+- R-A20 and R-E1 to R-E6, with the four plan amendments;
+- the comms-native WhatsApp archive (R-E14);
+- the directory to be managed through MCP catalog tools (carried to the amendment plan below).
+
+### Follow-ups
+
+- **The catalog-amendment plan** (A39), before D39-B:
+  - the owner's `comms_directory_*` tools to add people, contact points and destinations;
+  - WhatsApp groups as destinations, and a per-person context route, so the WhatsApp archive becomes reachable over MCP (R-E17);
+  - the 13 not-offered tools (implement, gate by capability, or remove).
+- **`grp_` refs are not in backups**, so a restore on a fresh installation mints new ones (R-E15).
+- **Provider credentials can't be scripted.** Values are read from a terminal only (R-E6), so D39-B credential entry is interactive.
+
+### Waiting on the owner
+
+- **The catalog-amendment plan:** approve it before any of it is built.
+- **Merge and push** of `comms-v0.3-d39pre`.
+- **D39-B:** live acceptance of the 15 P §88 rows, after the amendment.
+
+### Tag
+
+`comms-v0.3-d39-pre` is an annotated local tag, **not pushed**: @TAG@.
+
+No production claim.

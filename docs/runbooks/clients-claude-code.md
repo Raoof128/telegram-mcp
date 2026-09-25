@@ -2,9 +2,10 @@
 
 Owner-run, against disposable groups only (P §84); its results are evidence, never a gate.
 
-**Prerequisite not yet met.** The daemon does not yet open `comms.db` and serve the comms
-composition (a known gap of Part D; the smoke assembles it in process). Until it does, this run
-cannot happen and every field below stays `PENDING OWNER`.
+**Prerequisites.** The daemon now serves the comms surface (D39-PRE; install with
+`docs/runbooks/install.md`, including `comms cutover run`). The directory entries this run needs
+(the disposable groups and people) arrive with the catalog amendment's `comms_directory_*` tools,
+or a backup restore; until one of those, every field below stays `PENDING OWNER`.
 
 ## Connect
 

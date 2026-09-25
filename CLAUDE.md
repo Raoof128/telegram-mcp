@@ -71,6 +71,15 @@ CLI, three isolated listeners, and the smoke over the real comms composition. No
 daemon serving `comms.db` (blocks every P §88 owner acceptance row), 13 tools `NOT_OFFERED`,
 most operator commands. Evidence: `docs/verification/comms-v0.3.md`; rulings
 `docs/verification/comms-v0.3-rulings.md`.
+**D39-PRE / Runtime Completion** (branch `comms-v0.3-d39pre`; plan
+`docs/superpowers/plans/2026-09-25-comms-v0.3-d39-pre.md`): `comms daemon` holds `comms.db` and
+serves everything — `comms keys provision` first (local), then `comms daemon`, `comms cutover run`
+(writes are held until it completes), `comms doctor` (read-only). One composition root
+(`src/comms/runtime/assemble.py`); `comms selftest-daemon` is the same daemon with local providers
+injected, and the smoke's `phase_v03_daemon` (D39-A) drives it through the installed binary only.
+Operator commands live in `src/comms/runtime/operator/`. Next: the catalog-amendment plan (the
+owner's `comms_directory_*` tools, a WhatsApp MCP route, the 13 not-offered tools), then D39-B.
+Evidence: `docs/verification/comms-v0.3.md` (D39-PRE); rulings R-E1 to R-E17.
 Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 
 ## Non-negotiables
@@ -98,8 +107,8 @@ Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 5023 passed, 4 skipped
-uv run python scripts/e2e_smoke.py                # 74 checks, end to end
+uv run pytest -q                                  # 5160 passed, 4 skipped
+uv run python scripts/e2e_smoke.py                # 99 checks, end to end (25 against a real daemon)
 uv run pytest tests/formal -q -s                  # 57 passed: 544 states/22 assertions; campaign 96,528/11; operations 4,728
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
@@ -144,7 +153,8 @@ CLI forwarder.
 | Campaign core: `comms.db`, directory, freeze, reducer, engine, recovery (repo root) | `src/comms/core/`, `formal/campaign_model.py` |
 | Services: every read and write (repo root) | `src/comms/services/` |
 | MCP catalog, dispatch, HTTP, stdio proxy, OAuth (repo root) | `src/comms/mcp/` |
-| Comms composition, facades, listeners (repo root) | `src/comms/runtime/` |
+| Comms composition, facades, listeners, the daemon's comms side (repo root) | `src/comms/runtime/` (`assemble.py`, `serve.py`, `workers.py`, `state.py`, `provision.py`) |
+| Operator commands (repo root) | `src/comms/runtime/operator/` |
 | `comms` CLI (repo root) | `src/comms/cli.py`, `src/comms/cli_commands/` |
 | Evidence, gates, deviations | `docs/verification/` |
 
