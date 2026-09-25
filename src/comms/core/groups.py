@@ -13,7 +13,14 @@ from typing import Any
 from comms.core import refs, timeutil
 from comms.core.storage.db import write_tx
 
-__all__ = ["GroupError", "destination_of", "group_ref", "group_view", "list_groups"]
+__all__ = [
+    "GroupError",
+    "destination_of",
+    "group_identity",
+    "group_ref",
+    "group_view",
+    "list_groups",
+]
 
 
 class GroupError(Exception):
@@ -98,3 +105,20 @@ def list_groups(
     return [_view(r) for r in rows[:limit]], (
         int(rows[limit - 1][0]) if len(rows) > limit else None
     )
+
+
+def group_identity(conn: Any, grp: str) -> tuple[str, str]:
+    """``(destination ref, delivery identity)`` of a group — for building provider targets only;
+    never returned to a caller (the runtime facades use it, D30)."""
+    try:
+        refs.check(grp, "group")
+    except ValueError:
+        raise GroupError("unknown group") from None
+    row = conn.execute(
+        "SELECT d.ref, i.identity FROM groups g JOIN destinations d ON d.id = g.destination_id"
+        " JOIN delivery_identities i ON i.id = d.identity_id WHERE g.ref = ? AND d.enabled = 1",
+        (grp,),
+    ).fetchone()
+    if row is None:
+        raise GroupError("unknown group")
+    return str(row[0]), str(row[1])

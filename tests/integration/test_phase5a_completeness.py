@@ -19,6 +19,8 @@ LATER_IN_PHASE_5 = {"auth revoke-this-session"}
 #  release verify        -- Phase 7
 # (`consent approve` / `consent status` are retired by comms spec v0.2: not routed.)
 DEFERRED = {"tunnel rotate-binding", "release verify"}
+# comms v0.3 D30: served by the Comms composition's dispatcher (D34), not this handler map.
+COMMS_COMPOSITION = {"tool call"}
 
 
 @pytest.fixture
@@ -46,7 +48,7 @@ async def handlers(tmp_path):
 
 async def test_exactly_the_named_commands_lack_a_handler(handlers):
     missing = set(ADMIN_COMMANDS) - set(handlers)
-    assert missing == CLI_ONLY | LATER_IN_PHASE_5 | DEFERRED
+    assert missing == CLI_ONLY | LATER_IN_PHASE_5 | DEFERRED | COMMS_COMPOSITION
 
 
 async def test_every_missing_admin_command_answers_not_available(handlers):

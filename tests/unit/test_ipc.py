@@ -358,7 +358,8 @@ async def test_duplicate_admin_keys_never_dispatch(run_dir):
 def test_every_spec_command_is_routed_and_unknown_names_are_refused():
     router, _ = _router()
     # §33's 51 less the two consent commands (comms spec v0.2), 29 of them retired in v0.3.
-    assert (len(ADMIN_COMMANDS), len(RETIRED_ADMIN_COMMANDS)) == (20, 29)
+    # + comms v0.3 D30's "tool call" (the comms CLI through the one dispatcher)
+    assert (len(ADMIN_COMMANDS), len(RETIRED_ADMIN_COMMANDS)) == (21, 29)
     for retired in ("consent status", "consent approve"):
         assert router.dispatch({"cmd": retired})["code"] == "UNKNOWN_COMMAND"
     for retired in RETIRED_ADMIN_COMMANDS:

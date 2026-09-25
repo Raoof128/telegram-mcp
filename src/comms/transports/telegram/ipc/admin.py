@@ -97,6 +97,7 @@ ADMIN_COMMANDS: tuple[str, ...] = (
     "release verify",
     "doctor",
     "serve",
+    "tool call",  # comms v0.3 D30: the comms CLI's operations, through the one dispatcher
 )
 
 # Retired by comms v0.3 (A3, spec §33 less the disclosure-on-read authority): projects,
