@@ -478,6 +478,14 @@ CREATE TABLE clients (id INTEGER PRIMARY KEY, ref TEXT NOT NULL UNIQUE, name TEX
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
   seed_version INTEGER NOT NULL UNIQUE CHECK (seed_version >= 1),
   created_at TEXT NOT NULL, rotated_at TEXT);
+-- D32 (A35): OAuth refresh tokens, stored hashed; one family per authorization, rotated on use
+CREATE TABLE oauth_refresh_tokens (id INTEGER PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64), family TEXT NOT NULL,
+  client_id TEXT NOT NULL, subject TEXT NOT NULL, scopes TEXT NOT NULL, resource TEXT NOT NULL,
+  security_epoch INTEGER NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0 CHECK (used IN (0,1)),
+  revoked INTEGER NOT NULL DEFAULT 0 CHECK (revoked IN (0,1)));
+CREATE INDEX oauth_refresh_family ON oauth_refresh_tokens (family);
 CREATE TRIGGER mutations_born_in_flight BEFORE INSERT ON mutations WHEN NEW.state <> 'IN_FLIGHT'
   BEGIN SELECT RAISE(ABORT, 'a mutation is born IN_FLIGHT'); END;
 CREATE TRIGGER mutations_binding_immutable BEFORE UPDATE OF op_ref, authenticated_client, request_id,
