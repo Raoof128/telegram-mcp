@@ -1,7 +1,7 @@
 """CLI commands generated from the catalog (comms v0.3 Task D30).
 
-``comms <family> <verb> --<arg> …`` for the campaign, location, audience, group and message
-families: one command per catalog tool, one flag per input property (objects and arrays as
+``comms <family> <verb> --<arg> …`` for the campaign, location, audience, group, message and
+template families (``template`` carries the ``comms_whatsapp_template_*`` tools, D38): one command per catalog tool, one flag per input property (objects and arrays as
 JSON). A write gets a fresh ``req_`` id here, printed with the result's ``op_`` ref. The
 command becomes one ``tool call`` admin request; the daemon runs it through the same
 dispatcher MCP uses, so the CLI never touches storage or a service itself.
@@ -20,10 +20,14 @@ from comms.mcp.spec import ToolSpec
 
 __all__ = ["FAMILIES", "add_tool_parsers", "command_request", "tool_commands"]
 
-FAMILIES = ("campaign", "location", "audience", "group", "message")
+FAMILIES = ("campaign", "location", "audience", "group", "message", "template")
+_PREFIXES = {"comms_whatsapp_template_": "template"}  # design D.7: a family under another name
 
 
 def _split(spec: ToolSpec) -> tuple[str, str]:
+    for prefix, group in _PREFIXES.items():
+        if spec.name.startswith(prefix):
+            return group, spec.name.removeprefix(prefix).replace("_", "-")
     family, _sep, verb = spec.name.removeprefix("comms_").partition("_")
     return family, verb.replace("_", "-")
 

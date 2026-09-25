@@ -1584,6 +1584,9 @@ def phase_v03_comms(ledger: Ledger) -> None:
     ledger.run(
         area, "client add and oauth approve over the admin socket", lambda: verdict("operator")
     )
+    ledger.run(
+        area, "audit verify --all is clean after every surface wrote", lambda: verdict("verify_all")
+    )
     ledger.run(area, "a degraded audit trail refuses new writes", lambda: verdict("degraded"))
 
 
@@ -1602,7 +1605,9 @@ async def _comms_drive(root: Path) -> dict[str, Any]:
 
     sys.path.insert(0, str(REPO))
     from comms.core import refs
+    from comms.core.audit import cutover
     from comms.core.audit.integrity import latch_degraded
+    from comms.core.audit.verify_all import verify_all
     from comms.core.auth import clients, lease_format
     from comms.core.keys import rotate as rot
     from comms.core.objects import message_identity, object_ref
@@ -1617,6 +1622,7 @@ async def _comms_drive(root: Path) -> dict[str, Any]:
     from comms.transports.telegram.user.admin import UserAdmin
     from comms.transports.whatsapp.cloud.groups import WhatsAppAdmin
     from tests.core import fakes
+    from tests.core.audit.legacy_fixtures import verify_keys
     from tests.services.context_fixtures import Source
     from tests.services.group_fixtures import (
         WA_PHONE,
@@ -1631,6 +1637,7 @@ async def _comms_drive(root: Path) -> dict[str, Any]:
     now = lambda: datetime.now(UTC)
     w = group_world(root)
     conn = w["conn"]
+    cutover.run_cutover(conn, w["port"], w["writer"], now=now())  # so verify --all has a lineage
     for purpose in ("campaign-commit-key", "cursor-key", "oauth-signing-key"):
         rot.rotate(
             w["writer"],
@@ -1943,6 +1950,12 @@ async def _comms_drive(root: Path) -> dict[str, Any]:
             ).json()["access_token"]
         remote = await http_call(ports[1], token, "comms_capability_list", {})
         out["oauth"] = remote.status_code == 200 and not remote.json()["result"]["isError"]
+
+        # -- the whole trail verifies after every surface wrote ---------------------------
+        report = verify_all(conn, w["port"].conn, verify_keys(w))
+        out["verify_all"] = (
+            report.ok and (report.legacy, report.lineage, report.comms) == ("ok",) * 3
+        ) or report
 
         # -- last: the degraded latch -----------------------------------------------------
         latch_degraded(conn, reason="ANCHOR_REFRESH_FAILED", now=now())

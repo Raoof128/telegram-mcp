@@ -1,6 +1,7 @@
 # Telegram MCP gateway — working agreement
 
-Read-only Telegram MCP gateway for one owner, with project isolation and
+Telegram and WhatsApp comms gateway for one owner (read-only through comms
+v0.2; typed writes under `owner_full_admin` since v0.3), with project isolation and
 accountable disclosure. Since comms spec v0.2 (`docs/comms-spec-v0.2.md`) an
 owner command is the authorization: there is no consent ceremony and no Touch
 ID anywhere. The frozen product specification is
@@ -59,6 +60,17 @@ boundary is `deliver`, cancel/retry/resolution/provider updates, a scheduling ti
 gate, and recovery that never resends. It is proved by a bounded model
 (`formal/campaign_model.py`) and a differential walk. No CLI or real adapter yet
 (5d/5e). Evidence: `docs/verification/comms-5b4.md`.
+**Comms v0.3** (branch `comms-v0.3`; local tags `comms-v0.3-part-{a,b,c,d}`, none pushed):
+spec `docs/comms-spec-v0.3.md` (D5 `owner_full_admin`: typed writes; host permission UX is the
+only prompt layer). Part A sealed the legacy chain into the comms chain; B added durability,
+audit, keys, retention, recovery and backup; C built four adapters (`telegram_bot`,
+`telegram_user`, `whatsapp_cloud`, `whatsapp_webhooks`); D built the service layer
+(`src/comms/services/`), the 109-tool catalog (`src/comms/mcp/`, digest pinned), `comms mcp`
+(stdio proxy with `cml1` leases; HTTP `/mcp`, `cml1` locally and OAuth remotely), the generated
+CLI, three isolated listeners, and the smoke over the real comms composition. Not yet: the
+daemon serving `comms.db` (blocks every P §88 owner acceptance row), 13 tools `NOT_OFFERED`,
+most operator commands. Evidence: `docs/verification/comms-v0.3.md`; rulings
+`docs/verification/comms-v0.3-rulings.md`.
 Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 
 ## Non-negotiables
@@ -86,14 +98,14 @@ Nothing here has ever touched Telegram; the Test DC harness is owner-run.
 ```bash
 uv sync --locked
 uv run python scripts/extract_contracts.py --check
-uv run pytest -q                                  # 2215 passed, 4 skipped
-uv run python scripts/e2e_smoke.py                # 52 checks, end to end
-uv run pytest tests/formal -q -s                  # 544 states/22 assertions; campaign model 96,528/11
+uv run pytest -q                                  # 5023 passed, 4 skipped
+uv run python scripts/e2e_smoke.py                # 74 checks, end to end
+uv run pytest tests/formal -q -s                  # 57 passed: 544 states/22 assertions; campaign 96,528/11; operations 4,728
 uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
 uv run mypy src/comms src/telegram_mcp
 uv build
-(cd transports/whatsapp && ../../.venv/bin/python -m pytest -p no:randomly -p no:cacheprovider)  # WhatsVault: 539 passed
+(cd transports/whatsapp && ../../.venv/bin/python -m pytest -p no:randomly -p no:cacheprovider)  # WhatsVault: 450 passed
 ```
 
 Host-touching tests are opt-in and never run by default:
@@ -130,6 +142,10 @@ CLI forwarder.
 | Health checks | `doctor.py` |
 | Plans and design | `docs/superpowers/` |
 | Campaign core: `comms.db`, directory, freeze, reducer, engine, recovery (repo root) | `src/comms/core/`, `formal/campaign_model.py` |
+| Services: every read and write (repo root) | `src/comms/services/` |
+| MCP catalog, dispatch, HTTP, stdio proxy, OAuth (repo root) | `src/comms/mcp/` |
+| Comms composition, facades, listeners (repo root) | `src/comms/runtime/` |
+| `comms` CLI (repo root) | `src/comms/cli.py`, `src/comms/cli_commands/` |
 | Evidence, gates, deviations | `docs/verification/` |
 
 ## Frozen wires — changing these breaks both halves

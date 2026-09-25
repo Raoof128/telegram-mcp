@@ -138,3 +138,19 @@ def test_output_is_json_serialisable():
     args = build_parser().parse_args(["campaign", "create", "--title", "T"])
     tool, arguments = command_request(args)
     json.dumps(tool_call_handler(dispatcher)({"tool": tool, "arguments": arguments}))
+
+
+def test_template_group_maps_the_whatsapp_template_tools():
+    """Task D38: design D.7 lists a ``template`` group; it carries comms_whatsapp_template_*."""
+    commands = tool_commands()
+    template = {
+        verb: spec.name for (family, verb), spec in commands.items() if family == "template"
+    }
+    assert template == {
+        verb: f"comms_whatsapp_template_{verb}"
+        for verb in ("list", "get", "create", "edit", "delete")
+    }
+    args = build_parser().parse_args(["template", "delete", "--name", "nowruz_offer"])
+    tool, arguments = command_request(args)
+    assert tool == "comms_whatsapp_template_delete" and arguments["request_id"].startswith("req_")
+    assert "template" in FAMILIES and "whatsapp" not in {family for family, _verb in commands}

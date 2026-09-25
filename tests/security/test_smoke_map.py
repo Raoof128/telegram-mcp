@@ -68,6 +68,7 @@ REQUIRED = (
     "capability for a group names every actor",
     "OAuth: a local AS issues a token the remote /mcp accepts",
     "request-id replay returns the first result, no second effect",
+    "audit verify --all is clean after every surface wrote",  # D38
 )
 
 

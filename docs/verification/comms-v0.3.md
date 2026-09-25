@@ -205,3 +205,273 @@ Unchanged: the R-A20 `.claude/settings.json` change, and the out-of-repo runbook
 `comms-v0.3-part-c` is an annotated local tag, **not pushed**: tag object `b7501031a7608a62334d8d1132af23bde811289c` → commit `631b776fead53fdfde02096e37fbf807a8860dfe`.
 
 No production claim.
+
+## Part D: services, MCP, CLI, ingress, OAuth, smoke, client runbooks
+
+Commits `4ef3cf5` … this section, after the `comms-v0.3-part-c` tag (`631b776`).
+
+### Catalog inventory
+
+`TOOL_CATALOG` (`src/comms/mcp/catalog.py`, families under `src/comms/mcp/tools/`) holds **109 tools**, pinned by order, per-tool digest and overall digest in `tests/mcp/catalog_pin.json`. The catalog digest is `4380d08525605e6f5842a03d4c7b58fc740e73d774a73fddbe5191aff6ce6514`.
+
+| Family | Tools |
+|---|---|
+| group | 39 |
+| campaign | 15 |
+| message | 12 |
+| whatsapp (templates, account, phone, webhook) | 8 |
+| context | 7 |
+| audience | 7 |
+| location | 6 |
+| capability | 5 |
+| media | 4 |
+| account | 3 |
+| telegram (bot, user status) | 2 |
+| admin (`comms_admin_identity_inspect`) | 1 |
+
+- **Reads and writes:** 52 are read-only and 57 are writes that require a `req_` request id.
+- **Annotations:** 19 are destructive and 79 are open-world.
+- **Egress:** every tool declares its class in `EGRESS_MATRIX` (`src/comms/mcp/egress.py`).
+- **Not offered: 13 tools.** `facades.NOT_OFFERED` answers `PROVIDER_UNSUPPORTED` without reaching a provider:
+  - message.forward;
+  - media upload and download;
+  - group.members_get, permissions_get, topic_get and topic_list, invite_list, join_requests_list, admin_log and create;
+  - account.profile;
+  - whatsapp.phone_status.
+
+  The adapters or services for these are not built.
+- **CLI:** the `comms` CLI generates one command per tool for the campaign, location, audience, group, message and template families (`template` carries `comms_whatsapp_template_*`, design D.7).
+
+### Capability inventory
+
+`core/providers/capability.py` defines 68 capability ids and 8 states. Only an explicit `AVAILABLE` counts as available.
+
+| Adapter | Capabilities advertised |
+|---|---|
+| `telegram_user` | 37 (every Telegram capability) |
+| `telegram_bot` | 26 |
+| `whatsapp_cloud` | 29, of which 8 are Groups capabilities reported only when discovery finds them |
+
+Resolution follows P §68 (`services/capability.py`), and the provider's answer is final (A25).
+
+### Versions
+
+| Component | Version |
+|---|---|
+| MCP SDK | `mcp` 2.2.0 |
+| MCP protocol | `2026-07-28` (stateless; the stdio proxy pins it) |
+| Telethon | 1.45.0 |
+| Meta Graph API | v21.0 |
+| Bot API | 9.x method set |
+| Web stack | httpx 0.28.1, starlette 1.6.0, uvicorn 0.53.0, pydantic 2.13.5 |
+| Database | sqlcipher3 0.6.2 |
+
+Schema v4 adds the following:
+
+- groups;
+- mutations and operation records;
+- `recipients.display_name`;
+- ctx handles and cursors;
+- `security_epoch`;
+- clients;
+- `oauth_refresh_tokens`.
+
+### Counts (gate at the Part D head)
+
+| Check | Result |
+|---|---|
+| `uv run pytest -q` | **5023 passed**, 4 skipped (opt-in host and live tests) |
+| `scripts/e2e_smoke.py` | **74/74** |
+| `pytest tests/formal` | 57 passed: 544 states / 22 assertions; campaign model 96,528 states; audit, keys and operations models (4,728 states, 0 violations, 7 mutations caught) within the 57 |
+| ruff, ruff format, mypy, `uv build` | clean |
+| WhatsVault suite | **450 passed** |
+
+### Canaries
+
+`tests/security/test_v03_egress.py` plants eight canaries in a running world:
+
+- a message body;
+- a display name;
+- a phone number;
+- a Telegram user id;
+- a chat id;
+- a bot token (in the secret store);
+- a `cml1` lease seed;
+- an OAuth owner code.
+
+It then drives all 109 tools through the real facades and dispatcher, and sweeps every output, the CLI's printed JSON, the root logger and every `comms.db*` file. The results:
+
+- **Bodies:** appear only in `untrusted_text`, and only in the body-bearing reads.
+- **Names:** appear only under `untrusted`, and only in listing reads.
+- **Identities:** appear only in `comms_admin_identity_inspect`.
+- **Secrets:** appear nowhere.
+- **Database files:** no canary appears in plaintext in the encrypted files.
+
+The Part C adapter canaries (`tests/security/test_adapter_canaries.py`) still pass.
+
+**Not swept:** the stdio proxy's frames (they relay the HTTP answers unchanged), backup sidecars and webhook responses (fixed bodies).
+
+### `audit verify --all`
+
+The smoke's comms phase runs the cutover when it builds its world. It then drives every surface: stdio, local HTTP, remote OAuth, the CLI over the admin socket, a campaign, an admin operation, a WhatsApp write and a replay. After that it runs `verify_all` over the legacy chain, the lineage and the comms chain. The check "audit verify --all is clean after every surface wrote" passes, with all three parts `ok`.
+
+The operator command `comms audit verify --all` parses, but it is not yet wired to a handler. See the follow-ups.
+
+### Release gate (P §88)
+
+Every row is owner-run acceptance (Task D39). None has run, and the gate proves none of them. The runbooks are `docs/runbooks/live-acceptance-{telegram,whatsapp}.md` and `docs/runbooks/clients-{claude-code,codex,chatgpt}.md`.
+
+| Row | Status |
+|---|---|
+| Telegram read/context | PENDING OWNER |
+| Telegram bot writes | PENDING OWNER |
+| Telegram user writes | PENDING OWNER |
+| Campaign delivery | PENDING OWNER |
+| WhatsApp Cloud sending | PENDING OWNER |
+| WhatsApp webhooks | PENDING OWNER |
+| Capability discovery | PENDING OWNER |
+| Admin actions | PENDING OWNER |
+| Context provenance | PENDING OWNER |
+| MCP ChatGPT | PENDING OWNER |
+| MCP Codex | PENDING OWNER |
+| MCP Claude Code | PENDING OWNER |
+| Audit | PENDING OWNER |
+| Crash recovery | PENDING OWNER |
+| Privacy | PENDING OWNER |
+| WhatsApp Groups (optional; may be `UNAVAILABLE`) | PENDING OWNER |
+
+**Blocker for every row.** The daemon does not yet open `comms.db` and serve the comms composition. The smoke assembles the composition in process. Until the daemon does this, no client can connect to a running daemon.
+
+### Claim boundary (D5, verbatim from `docs/comms-spec-v0.3.md`)
+
+> `owner_full_admin` intentionally grants the connected MCP host authority to invoke typed write tools. Comms does not require an independent human-presence ceremony.
+>
+> **Claim boundary.** Comms does **not** guarantee that a model will perform only the writes that match the owner's semantic intent. Content retrieved from Telegram or WhatsApp is untrusted, and a model may be misled by it. The defences against model or tool misuse are:
+>
+> - typed tools, with no raw-RPC tool (P §37);
+> - explicit opaque targets, and ambiguity refusal (`AMBIGUOUS_TARGET`, P §41);
+> - capability checks, with the provider's response as final authority (A25);
+> - host permission UX and honest annotations (P §3);
+> - request-id idempotency and durable operation records (A27, A28);
+> - audit evidence on an anchored chain (A7, A8).
+>
+> Two further limits are not claimed:
+>
+> - **Cross-client duplicates.** Two independently issued, semantically identical instructions from different clients are not detected as duplicates. Only one operation identity, `(authenticated_client, request_id)`, is protected.
+> - **Tool selection.** A model's choice of tool is acceptance evidence, never a proven property.
+
+### What the tests found
+
+- **Dispatcher (D26).** The dispatcher called services directly, so a `CommsError` escaped as an exception instead of becoming a structured error. It now calls through `ServiceRegistry.call`.
+- **Request ids (D12, D13).**
+  - A malformed request id reached SQLite as an `IntegrityError`; it is now `INVALID_ARGUMENT` before storage.
+  - Adapters did not validate saga steps before recording; every step is now validated first.
+- **Transactions (D15).** The 5b-4 core wrote in its own never-nested transaction, so a service write could not share the executor's audited transaction. Each core write was split into a `*_in_tx` body.
+- **OAuth clients (D37).** The remote OAuth client must be a registered clients row: a bare `cli_` ref is refused as disabled. The smoke now registers it, which is the production contract.
+- **The SDK (D32–D34).** Found while testing it:
+  - redirect URIs must be `AnyUrl`;
+  - a `Route` given a function treats it as a request handler;
+  - token expiry is checked against real time;
+  - the SDK needs a lifespan, which the router forwards.
+- **Flaky assertion (D13).** A resolve assertion could match random base32 refs by chance.
+
+### The exit gate
+
+`tests/security/test_v03_part_d_exit.py` reads design D.1–D.11 from the design itself and maps each item to its owning tests. It re-runs every owning test in a fresh process, and none may fail, be skipped or be deselected. The plan's D38 names "the Part D list" but spells out no list of its own.
+
+It also checks:
+
+- every client runbook records the D.11 fields;
+- this section names what D38 requires.
+
+The P §80 intent prompts are pinned as data in `tests/evaluation/intent_prompts.json`, for owner-run acceptance. P §81 is deterministic (`tests/evaluation/test_ambiguity_deterministic.py`):
+
+- two people named Ali, two MQ groups and several matching messages each give `AMBIGUOUS_TARGET` with no mutation row;
+- every write target is a ref pattern, so a name never reaches a write service.
+
+The operations model (`formal/operations_model.py`) explores 4,728 states with no violations, and all seven planted mutations are caught. The differential walk replays 300 seeds against the real executor.
+
+### Rulings made in Part D
+
+Registered: R-D38. The ledger (`.superpowers/sdd/2026-09-24-comms-v0.3/progress.md`) records every ruling in full, task by task. In short:
+
+- **D1–D5:** schema v4 and operation records.
+  - `groups` maps 1:1 to destinations.
+  - `CommsError` holds P §54's codes plus four of our own.
+  - The request-id check is exact.
+  - Mutation persistence is a core API.
+  - On replay, a CREATE is resolve-only and a SET_STATE gets one same-key retry.
+  - Crash seams sit at the call boundary.
+- **D6–D11:**
+  - P §68 actor resolution, applied literally.
+  - Name resolution, where more than one match is always ambiguous.
+  - P §71 bounds as constants.
+  - The security epoch.
+  - Live-or-local context by capability.
+  - Pinned provenance per transport.
+- **D12–D17:** the service layer.
+  - Every step is validated before it is recorded.
+  - Object refs are minted for created invites and topics.
+  - Message writes are added to the admin adapters.
+  - The core is split into `*_in_tx` bodies.
+  - Directory renames.
+  - WhatsApp account-level template and media writes.
+- **D18–D25:** the catalog.
+  - One ordered tuple from family modules.
+  - A shared write-result schema and actor enum.
+  - Group list/get reads.
+  - Explicit P §74 profiles.
+  - Open-world campaign sends.
+  - Local directory tools.
+  - Account-level results.
+  - The pin.
+- **D26–D29:** the transport layer.
+  - Registry dispatch.
+  - A clients table with the seed version in a key slot.
+  - The HTTP guards in one copy.
+  - The pure lease format and the privilege-free proxy.
+- **D30–D31:**
+  - Facades bind tool arguments to services, with the 13 tools not offered.
+  - One declarative operator table, of which only client add/rotate/disable and oauth approve are wired.
+- **D32–D34:**
+  - The SDK's auth handlers over a Comms provider with one public client and PKCE S256, behind an owner code.
+  - Remote `/mcp` validates the token on every request.
+  - Three exact-path listeners.
+- **D35–D37:**
+  - The operations model and the walk.
+  - Typed egress.
+  - The smoke's move to the comms composition.
+
+**R-D38.**
+
+- **Name resolution.** The catalog has no name-resolution tool, because P §22–35 names none. The design D.4's "resolution tools return `AMBIGUOUS_TARGET`" is therefore met by the service resolver (`services/resolve.py`) together with ref-only write targets. The model resolves names through list reads.
+- **The exit test.** It keys on design D.1–D.11.
+- **The CLI.** The missing D.7 `template` group was added.
+- **The smoke.** Its comms phase gained `verify --all`.
+
+### Follow-ups
+
+- **The daemon (blocks every P §88 row).** It must open `comms.db` and the secret store, call `build_comms_adapters` and `build_comms_runtime`, and serve the three listeners.
+- **Operator commands.** These parse, but refuse with a fixed message until a handler exists:
+  - transport, credential, keys, audit, retention, backup and cutover;
+  - client and oauth are wired.
+- **The 13 tools not offered.** They need their adapter operations and services.
+- **Egress not swept:** the stdio proxy frames, backup sidecars and webhook responses.
+- **`cml1` replay.** A lease replayed within its 60 s window is not tracked, so the nonce is not remembered.
+- **Carried from Part C and not addressed here:**
+  - the live update-stream switch (`receive_updates`);
+  - the WhatsVault archive binding;
+  - per-recipient template language.
+- **Group photos.** `chat.set_photo` is served as `comms_group_info_set_photo`, but it takes a `med_` ref that only the (not offered) media upload would mint.
+
+### Waiting on the owner
+
+- **R-A20:** the `.claude/settings.json` always-ask rules.
+- **P §88 acceptance:** D39, after the owner-approved merge.
+- **Out-of-repo runbook steps.**
+
+### Tag
+
+`comms-v0.3-part-d` is an annotated local tag, **not pushed**: the tag object and commit are recorded by the commit that follows the tag.
+
+No production claim.

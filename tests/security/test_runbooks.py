@@ -28,6 +28,9 @@ EXPECTED = {
     "cutover",
     "live-acceptance-telegram",  # comms v0.3 C32
     "live-acceptance-whatsapp",  # comms v0.3 C32
+    "clients-claude-code",  # comms v0.3 D38
+    "clients-codex",  # comms v0.3 D38
+    "clients-chatgpt",  # comms v0.3 D38
 }
 
 
