@@ -104,7 +104,7 @@ def test_each_retired_name_is_tool_not_found_with_zero_effects(world):
 def test_a_known_tool_reaches_exactly_its_service(world):
     result = world["dispatcher"].call(CLIENT, "comms_capability_list", {})
     assert result.to_mcp()["isError"] is False
-    assert result.to_mcp()["structuredContent"] == {"capabilities": []}
+    assert result.to_mcp()["structuredContent"] == {"capabilities": [], "next_actions": []}
     assert world["recorder"].calls == [(CLIENT, {})]
 
 

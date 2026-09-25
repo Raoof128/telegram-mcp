@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -19,7 +20,14 @@ from comms.core.canonical import jcs_dumps
 from comms.mcp.spec import ToolSpec
 from comms.mcp.tools import FAMILIES
 
-__all__ = ["TOOL_CATALOG", "ToolSpec", "catalog_digest", "tool_schema_digest", "tools_list_payload"]
+__all__ = [
+    "NEXT_ACTIONS",
+    "TOOL_CATALOG",
+    "ToolSpec",
+    "catalog_digest",
+    "tool_schema_digest",
+    "tools_list_payload",
+]
 
 _NAME = re.compile(r"comms_[a-z][a-z0-9_]*\Z")
 _SERVICE = re.compile(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\Z")
@@ -69,8 +77,33 @@ _SEED = ToolSpec(
     failure_modes=("INVALID_ARGUMENT", "AUDIT_INTEGRITY_DEGRADED"),
     service="capability.list",
 )
+# D26: every result may carry next_actions — suggested follow-up tools, never taken on their own.
+NEXT_ACTIONS: Mapping[str, Any] = {
+    "type": "array",
+    "maxItems": 5,
+    "items": {
+        "type": "object",
+        "properties": {
+            "tool": {"type": "string", "pattern": "^comms_[a-z][a-z0-9_]*$"},
+            "why": {"type": "string", "minLength": 1, "maxLength": 128},
+            "arguments": {"type": "object"},
+        },
+        "required": ["tool", "why"],
+        "additionalProperties": False,
+    },
+}
+
+
+def _with_next_actions(spec: ToolSpec) -> ToolSpec:
+    output = dict(spec.output_schema)
+    output["properties"] = {**output.get("properties", {}), "next_actions": NEXT_ACTIONS}
+    return replace(spec, output_schema=output)
+
+
 # The seed tool first, then each family in P order (D18–D24).
-TOOL_CATALOG: tuple[ToolSpec, ...] = (_SEED, *(spec for family in FAMILIES for spec in family))
+TOOL_CATALOG: tuple[ToolSpec, ...] = tuple(
+    _with_next_actions(spec) for spec in (_SEED, *(s for family in FAMILIES for s in family))
+)
 
 
 def _properties(schema: Any) -> set[str]:

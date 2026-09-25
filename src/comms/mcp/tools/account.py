@@ -232,7 +232,10 @@ ACCOUNT_TOOLS: tuple[ToolSpec, ...] = (
         "Account capabilities",
         "Every capability id each configured actor can ever offer.",
         "account.capabilities",
-        {"type": "object", "additionalProperties": array(string(1, 64))},
+        obj(
+            {"actors": {"type": "object", "additionalProperties": array(string(1, 64))}},
+            ["actors"],
+        ),
     ),
     _status(
         "telegram_bot_status",
