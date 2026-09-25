@@ -174,3 +174,12 @@ def test_the_cutover_releases_writes_then_a_write_replays_and_verify_all_is_clea
 
     report = json.loads(daemon.comms("audit", "verify", "--all").stdout)
     assert report == {"ok": True, "legacy": "ok", "lineage": "ok", "comms": "ok", "problems": []}
+
+    # the daemon's maintenance loop resumes once the hold is released and runs retention
+    for _ in range(100):
+        doctor = json.loads(daemon.comms("doctor", "--state-dir", str(daemon.state)).stdout)
+        if doctor["ok"]:
+            break
+        time.sleep(0.1)
+    assert doctor["bootstrap"] == "READY"
+    assert {f["code"] for f in doctor["findings"]} == {"CREDENTIAL_NOT_CONFIGURED"}

@@ -22,6 +22,7 @@ from comms.core.audit.chain import COMMS, ChainError, verify_chain, verify_check
 from comms.core.audit.integrity import is_degraded
 from comms.core.audit.verify_all import LegacyVerify, _root_of
 from comms.core.audit.writer import SlotChainKeys
+from comms.core.credentials import CONFIRMED_IN_OPERATION, is_confirmed
 from comms.core.keys.purposes import PURPOSES
 from comms.core.keys.rotate import find_orphans
 from comms.core.keys.slots import KeySlotError, KeySlotStore, load_active, registry_public_for
@@ -150,12 +151,20 @@ def _lineage(conn: Any) -> list[Finding]:
 
 
 def _credentials(conn: Any) -> list[Finding]:
-    active = {r[0] for r in conn.execute("SELECT purpose FROM key_slots WHERE state = 'ACTIVE'")}
-    return [
+    active = dict(
+        conn.execute("SELECT purpose, version FROM key_slots WHERE state = 'ACTIVE'").fetchall()
+    )
+    missing = [
         Finding("CREDENTIAL_NOT_CONFIGURED", purpose, "no active credential")
         for purpose in _CREDENTIALS
         if purpose not in active
     ]
+    unconfirmed = [
+        Finding("CREDENTIAL_UNCONFIRMED", purpose, "not yet confirmed by Meta in operation")
+        for purpose in CONFIRMED_IN_OPERATION
+        if purpose in active and not is_confirmed(conn, purpose, int(active[purpose]))
+    ]
+    return missing + unconfirmed
 
 
 def doctor(

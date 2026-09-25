@@ -190,7 +190,16 @@ class CommsServer:
         if self._workers_stop is not None:
             self._workers_stop.set()  # the previous generation finishes its step and returns
         self._workers_stop = asyncio.Event()
-        workers: Workers = build_workers(self._state, adapters, self._lease, clock=_now)
+        operator = self.admin_handlers.get("operator")
+        maintenance = None
+        if self.legacy_conn is not None and operator is not None:
+
+            def maintenance() -> Any:  # the same handler the owner's `retention run` reaches
+                return operator({"command": ["retention", "run"]})
+
+        workers: Workers = build_workers(
+            self._state, adapters, self._lease, clock=_now, maintenance=maintenance
+        )
         self._tasks.append(asyncio.create_task(self._supervise(workers, self._workers_stop)))
 
     async def _supervise(self, workers: Workers, generation: asyncio.Event) -> None:

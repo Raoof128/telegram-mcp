@@ -30,9 +30,12 @@ from comms.core.keys.slots import KeySlotError, active_version, key_id_for, regi
 from comms.core.storage.db import write_tx
 
 __all__ = [
+    "CONFIRMED_IN_OPERATION",
     "CredentialCheckFailed",
     "active_credential",
     "credential_status",
+    "is_confirmed",
+    "record_confirmed",
     "revoke_credential",
     "rotate_credential",
 ]
@@ -164,3 +167,30 @@ def revoke_credential(
     secrets.delete(purpose, row[0])
     with write_tx(conn):
         _set_state(conn, purpose, row[0], "DESTROYED")
+
+
+# R-E6: the two Meta webhook secrets have no whoami call; each version is confirmed in operation
+# (a verified X-Hub-Signature-256 POST, a successful GET subscription challenge) and recorded
+# here as a metadata flag, never the value.
+CONFIRMED_IN_OPERATION = ("meta-app-secret", "meta-webhook-secret")
+
+
+def _confirmed_flag(purpose: str, version: int) -> str:
+    return f"credential-confirmed:{purpose}:{int(version)}"
+
+
+def record_confirmed(conn: Any, purpose: str, version: int) -> None:
+    if purpose not in CONFIRMED_IN_OPERATION:
+        raise ValueError("only the Meta webhook secrets are confirmed in operation")
+    with write_tx(conn):
+        conn.execute(
+            "INSERT OR REPLACE INTO maintenance_flags (name, value) VALUES (?, 1)",
+            (_confirmed_flag(purpose, version),),
+        )
+
+
+def is_confirmed(conn: Any, purpose: str, version: int) -> bool:
+    row = conn.execute(
+        "SELECT value FROM maintenance_flags WHERE name = ?", (_confirmed_flag(purpose, version),)
+    ).fetchone()
+    return row is not None and int(row[0]) == 1

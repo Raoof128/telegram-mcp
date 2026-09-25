@@ -10,6 +10,7 @@ from comms.runtime.operator import OperatorContext, operator_handler
 from comms.runtime.paths import CommsPaths
 from comms.runtime.provision import provision
 from comms.runtime.serve import legacy_side
+from comms.runtime.settings import RETENTION_DEFAULTS
 from comms.runtime.state import open_comms_state
 from comms.transports.telegram.disclosure.keys import ensure_current_published
 from comms.transports.telegram.keys.store import load_key, set_store_dir
@@ -36,7 +37,11 @@ def daemon_world(tmp_path, monkeypatch):
                              private_seed=load_key("audit-checkpoint-key"), now="2026-09-25T00:00:00Z")  # fmt: skip
     state = open_comms_state(paths, clock=_now)
     ctx = OperatorContext(
-        writer=state.writer, store=state.store, clock=_now, legacy=legacy_side(legacy, paths)
+        writer=state.writer,
+        store=state.store,
+        clock=_now,
+        legacy=legacy_side(legacy, paths),
+        retention_days=dict(RETENTION_DEFAULTS),
     )
     handle = operator_handler(ctx)
     yield {"paths": paths, "state": state, "ctx": ctx, "legacy": legacy,

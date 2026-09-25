@@ -32,7 +32,7 @@ OPERATOR_COMMANDS: Mapping[tuple[str, ...], Sequence[Arg]] = {
         ("--state-dir", "optional"),
         ("--store-dir", "optional"),
     ),
-    ("doctor",): (("--production", "switch"),),
+    ("doctor",): (("--production", "switch"), ("--state-dir", "optional")),
     ("keys", "provision"): (("--state-dir", "optional"), ("--runtime-dir", "optional")),
     ("keys", "list"): (),
     ("keys", "rotate"): (

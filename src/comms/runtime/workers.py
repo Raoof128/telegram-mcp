@@ -12,14 +12,17 @@ A step's exception is classified by type in one table (owner amendment):
   once by a fixed code with no message text (text could hold provider data), then the loop
   backs off, doubling to at most 300 s and resetting on success; the daemon stays up;
 - **safety** (audit, key-store or database integrity, a lost update-stream claim, and any type
-  not in the table: fail closed): the integrity latch is set, every effect-making loop stops,
+  not in the table: fail closed): the integrity latch is set, every effect-making loop pauses,
   and the listeners keep serving reads while writes answer ``AUDIT_INTEGRITY_DEGRADED``.
+  Effect-making loops pause while the latch is set and resume when it clears (the cutover's
+  write hold, or an audit repair); they never exit on it.
   Database corruption also stops the daemon (``DaemonStop``), which exits nonzero.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -44,6 +47,7 @@ __all__ = ["RECOVERABLE", "DaemonStop", "Loop", "Workers", "build_workers", "sta
 
 _logger = logging.getLogger("comms.workers")
 MAX_BACKOFF_S = 300.0
+PAUSE_CHECK_S = 1.0  # a paused loop re-checks the latch this often, whatever its own period
 RECOVERABLE: tuple[type[BaseException], ...] = (
     BotTransportError,
     BotRefused,
@@ -95,7 +99,11 @@ class Workers:
         period = loop.every
         while not stop.is_set():
             if loop.effects and is_degraded(self._conn):
-                return  # no new external effect while the trail is degraded (A8)
+                # A8: no new external effect while the trail is degraded; pause, never exit, so
+                # the loop resumes when the latch clears (the cutover's hold, an audit repair)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), timeout=min(loop.every, PAUSE_CHECK_S))
+                continue
             try:
                 loop.step()
             except RECOVERABLE:
@@ -107,8 +115,6 @@ class Workers:
             except Exception:  # noqa: BLE001 -- anything else is a safety failure: fail closed
                 _logger.error("worker_failed name=%s class=safety", loop.name)
                 latch_degraded(self._conn, reason="WORKER_SAFETY_FAILURE", now=self._clock())
-                if loop.effects:
-                    return
                 period = min(period * 2, MAX_BACKOFF_S)
             else:
                 period = loop.every
@@ -147,8 +153,10 @@ def build_workers(
     *,
     clock: Callable[[], datetime],
     intervals: Mapping[str, float] | None = None,
+    maintenance: Callable[[], Any] | None = None,
 ) -> Workers:
-    every = {"deliver": 5.0, "schedule": 15.0, "bot_updates": 5.0, "webhook_inbox": 2.0}
+    every = {"deliver": 5.0, "schedule": 15.0, "bot_updates": 5.0, "webhook_inbox": 2.0,
+             "retention": 86_400.0}  # fmt: skip
     every.update(intervals or {})
     conn = state.conn
     engine = Engine(conn, adapters.delivery, clock=clock)
@@ -160,6 +168,8 @@ def build_workers(
     ]
     if adapters.poller is not None:
         loops.append(Loop("bot_updates", adapters.poller.poll_once, every["bot_updates"], False))
+    if maintenance is not None:  # the maintenance runner (A37): retention, daily; doctor wants 7
+        loops.append(Loop("retention", maintenance, every["retention"], True))
     if adapters.worker is not None:
         loops.append(Loop("webhook_inbox", adapters.worker.run_once, every["webhook_inbox"], False))
     return Workers(conn, tuple(loops), clock=clock)

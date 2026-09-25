@@ -171,3 +171,28 @@ def test_startup_recovery_settles_a_mutation_a_crash_left_in_flight(tmp_path):
         == 1
     )
     assert world["conn"].execute("SELECT state FROM mutations").fetchone()[0] != "IN_FLIGHT"
+
+
+def test_effect_loops_pause_while_degraded_and_resume_when_the_hold_is_released(conn):
+    """A fresh daemon starts held (CUTOVER_PENDING); its deliver loop must run after the cutover."""
+    from comms.core.audit.integrity import clear_degraded, latch_degraded
+
+    latch_degraded(conn, reason="CUTOVER_PENDING", now=NOW)
+    effect = Script()
+    workers = Workers(conn, (Loop("deliver", effect, 0.01, True),), clock=lambda: NOW)
+
+    async def go():
+        stop = asyncio.Event()
+        task = asyncio.create_task(workers.run(stop))
+        await asyncio.sleep(0.1)
+        assert effect.calls == 0  # held: no effect
+        clear_degraded(conn, now=NOW)
+        for _ in range(200):
+            if effect.calls:
+                break
+            await asyncio.sleep(0.01)
+        stop.set()
+        await asyncio.wait_for(task, 2)
+
+    asyncio.run(go())
+    assert effect.calls >= 1

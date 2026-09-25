@@ -52,10 +52,13 @@ class RotationCrash(BaseException):
 
 
 def _registered(conn: Any, purpose: str) -> set[int]:
-    return {
+    registered = {
         int(r[0])
         for r in conn.execute("SELECT version FROM key_slots WHERE purpose = ?", (purpose,))
     }
+    if purpose == "cml1-client-seed":  # D27: a client row also names its seed's slot version
+        registered |= {int(r[0]) for r in conn.execute("SELECT seed_version FROM clients")}
+    return registered
 
 
 def find_orphans(conn: Any, store: KeySlotStore) -> dict[str, list[int]]:

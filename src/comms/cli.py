@@ -322,6 +322,20 @@ def _daemon(args: argparse.Namespace, *, selftest: bool) -> int:
     return 0
 
 
+def _doctor(args: argparse.Namespace) -> int:
+    """``comms doctor`` (D39-PRE E9): the comms state, read-only; works while a daemon runs."""
+    import json
+    from datetime import UTC, datetime
+
+    from comms.runtime.doctor import run_doctor
+    from comms.runtime.paths import CommsPaths, default_state_dir
+
+    state = Path(args.state_dir) if args.state_dir else default_state_dir()
+    report = run_doctor(CommsPaths(state), now=datetime.now(UTC))
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["ok"] or not args.production else 1
+
+
 def _hello(runtime_dir: str | None) -> Any:
     """The daemon's non-secret security epoch, over the admin socket's ``hello`` control."""
     from comms.transports.telegram.ipc.framing import decode_json_frame, encode_json_frame
@@ -368,6 +382,11 @@ def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] and argv[0] in FAMILIES:
         code = _tool(build_parser().parse_args(argv))
+        if code:
+            raise SystemExit(code)
+        return
+    if argv[:1] == ["doctor"]:
+        code = _doctor(build_parser().parse_args(argv))
         if code:
             raise SystemExit(code)
         return
