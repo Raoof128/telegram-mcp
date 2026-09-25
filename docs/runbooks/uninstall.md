@@ -3,7 +3,7 @@
 1. Take a backup first (see `restore-from-backup.md`): it is the only copy of the directory.
 
    ```bash
-   comms backup export
+   comms backup export --out ~/comms-backups/final
    ```
 
 2. Revoke the Telegram session at Telegram, and every provider credential.

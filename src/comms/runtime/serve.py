@@ -68,6 +68,8 @@ def legacy_side(legacy_conn: Any, paths: CommsPaths) -> LegacySide:
         TelegramLegacyPort,
         legacy_verifier,
     )
+    from comms.transports.telegram.runtime.legacy_retention import TelegramLegacyRetention
+    from comms.transports.telegram.storage.settings import get_setting
 
     chain_key = load_key("audit-chain-key")
 
@@ -81,10 +83,23 @@ def legacy_side(legacy_conn: Any, paths: CommsPaths) -> LegacySide:
             paths.legacy_keys,
         )
 
+    def retention() -> TelegramLegacyRetention:
+        return TelegramLegacyRetention(legacy_conn, chain_key, checkpoint_public_for(legacy_conn))
+
+    def retention_days() -> dict[str, int]:
+        return {
+            "exposure_ledger_days": int(get_setting(legacy_conn, "retention.exposure_ledger_days")),
+            "receipt_days": int(get_setting(legacy_conn, "retention.disclosure_receipt_days")),
+            "message_ref_days": int(get_setting(legacy_conn, "retention.message_ref_days")),
+            "audit_events_days": int(get_setting(legacy_conn, "retention.audit_events_days")),
+        }
+
     return LegacySide(
         conn=legacy_conn,
         port=port,
         verify=legacy_verifier(chain_key, checkpoint_public_for(legacy_conn)),
+        retention=retention,
+        retention_days=retention_days,
     )
 
 

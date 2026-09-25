@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from comms.core.backup.export_import import StagedImports
+from comms.core.backup.transfer import TransferRegistry
 from comms.runtime.adapters import Adapters
 from comms.runtime.comms_runtime import CommsRuntime, RemoteConfig, build_comms_runtime
 from comms.runtime.operator import LegacySide
@@ -92,10 +94,29 @@ def assemble_runtime(
         local_port=settings.local_port,
         remote=remote,
         legacy=legacy,
-        secrets=state.secrets,
-        proofs=proofs
-        if proofs is not None
-        else build_proofs(phone_number_id=settings.adapter.meta_phone_number_id),
-        reload=reload,
+        operator_fields={
+            "secrets": state.secrets,
+            "proofs": proofs
+            if proofs is not None
+            else build_proofs(phone_number_id=settings.adapter.meta_phone_number_id),
+            "reload": reload,
+            "transfers": TransferRegistry(),
+            "staged": StagedImports(),
+            "backup_recipient": settings.backup_recipient,
+            "providers": backup_providers(settings),
+            "retention_days": dict(settings.retention_days),
+        },
     )
     return Assembled(runtime=runtime, adapters=adapters)
+
+
+def backup_providers(settings: DaemonSettings) -> dict[str, str]:
+    """The account ids a backup is bound to (B25): the configured Meta ids, which are public.
+
+    A backup from another Meta business account is a BINDING_MISMATCH; the Telegram accounts are
+    not part of the v0.3 binding (R-E11)."""
+    ids = {
+        "meta_phone_number": settings.adapter.meta_phone_number_id,
+        "meta_waba": settings.adapter.meta_waba_id,
+    }
+    return {name: value for name, value in ids.items() if value is not None}

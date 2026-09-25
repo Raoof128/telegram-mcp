@@ -21,6 +21,8 @@ class LegacySide:
     conn: Any
     port: Callable[[], Any]  # a fresh LegacyPort per cutover run
     verify: LegacyVerify
+    retention: Callable[[], Any] | None = None  # its LegacyRetention (retention run)
+    retention_days: Callable[[], Mapping[str, int]] | None = None  # the legacy periods
 
     def __repr__(self) -> str:
         return "LegacySide(<redacted>)"
@@ -36,6 +38,11 @@ class OperatorContext:
     secrets: Any = None  # the provider-credential store (credential commands)
     proofs: Mapping[str, Callable[[bytes], None]] | None = None  # A13 live proofs by purpose
     reload: Callable[[], dict[str, Any]] | None = None  # rebuild the adapters after a change
+    transfers: Any = None  # the backup TransferRegistry (32 KiB chunks, peer-bound)
+    staged: Any = None  # StagedImports: memory-only, peer-bound
+    backup_recipient: str | None = None  # an age public key (comms.json)
+    providers: Mapping[str, str] | None = None  # the account ids a backup is bound to
+    retention_days: Mapping[str, int] | None = None  # campaign_body_days, identity_retention_days
 
     @property
     def conn(self) -> Any:

@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 __all__ = [
+    "BACKUP_FLOWS",
     "CLI_FLOWS",
     "LOCAL_COMMANDS",
     "LOCAL_GROUPS",
@@ -42,9 +43,14 @@ OPERATOR_COMMANDS: Mapping[tuple[str, ...], Sequence[Arg]] = {
     ("keys", "mark-signer"): (("--key-id", "required"), ("--state", "required")),
     ("audit", "verify"): (("--all", "switch"),),
     ("audit", "repair"): (),
-    ("backup", "export"): (("--out", "optional"),),
-    ("backup", "import", "stage"): (("--from", "optional"),),
-    ("backup", "import", "commit"): (),
+    ("backup", "export"): (("--out", "required"),),
+    ("backup", "import", "stage"): (
+        ("--from", "required"),
+        ("--identity", "required"),  # a private 0600 file the daemon's user owns
+        ("--trust-key", "optional"),
+        ("--adopt", "switch"),
+    ),
+    ("backup", "import", "commit"): (("--handle", "required"),),
     ("credential", "set"): (("purpose", "positional"),),
     ("credential", "rotate"): (("purpose", "positional"),),
     ("credential", "revoke"): (("purpose", "positional"),),
@@ -63,6 +69,8 @@ LOCAL_GROUPS = frozenset({"daemon", "doctor"})  # run by the local operator CLI
 # D39-PRE E1 (R-E4): run in this process before any daemon exists, under the runtime lock.
 LOCAL_COMMANDS = frozenset({("keys", "provision")})
 # D39-PRE E8a: driven by the CLI as steps over the daemon's retained login admin commands.
+# D39-PRE E8b: the CLI moves the files in 32 KiB chunks over the admin socket.
+BACKUP_FLOWS = frozenset({("backup", "export"), ("backup", "import", "stage")})
 CLI_FLOWS: dict[tuple[str, ...], str] = {
     ("transport", "telegram", "login"): "auth login",
     ("transport", "telegram", "revoke-session"): "auth revoke-this-session",

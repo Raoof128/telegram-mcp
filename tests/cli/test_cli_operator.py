@@ -33,7 +33,7 @@ def test_operator_only_commands_are_not_mcp_tools():
     [
         ["keys", "rotate", "audit-chain-key"],
         ["audit", "verify", "--all"],
-        ["backup", "import", "stage", "--from", "/tmp/b"],
+        ["backup", "import", "commit", "--handle", "cbi_x"],
         ["client", "add", "--name", "claude-code", "--helper-path", "/tmp/seed"],
         ["client", "disable", "cli_" + "a" * 26],
         ["transport", "telegram", "revoke-session"],

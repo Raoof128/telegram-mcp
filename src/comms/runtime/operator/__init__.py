@@ -19,8 +19,15 @@ from comms.runtime.operator.context import LegacySide, OperatorContext, Operator
 from comms.runtime.operator.credentials import CREDENTIAL_HANDLERS
 from comms.runtime.operator.cutover import CUTOVER_HANDLERS
 from comms.runtime.operator.keys import KEY_HANDLERS
+from comms.runtime.operator.maintenance import MAINTENANCE_HANDLERS, PROTOCOL_STEPS
 
-__all__ = ["OPERATOR_HANDLERS", "LegacySide", "OperatorContext", "operator_handler"]
+__all__ = [
+    "OPERATOR_HANDLERS",
+    "PROTOCOL_STEPS",
+    "LegacySide",
+    "OperatorContext",
+    "operator_handler",
+]
 
 OPERATOR_HANDLERS: Mapping[tuple[str, ...], OperatorHandler] = {
     **CLIENT_HANDLERS,
@@ -28,6 +35,7 @@ OPERATOR_HANDLERS: Mapping[tuple[str, ...], OperatorHandler] = {
     **AUDIT_HANDLERS,
     **CUTOVER_HANDLERS,
     **CREDENTIAL_HANDLERS,
+    **MAINTENANCE_HANDLERS,
 }
 
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import re
 import stat
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ _SECRETISH = ("token", "secret", "key", "password", "seed")
 _TOP = {
     "host",
     "telegram_api_id",
+    "retention",
     "local_port",
     "webhook_port",
     "telegram_delivery_actor",
@@ -51,6 +53,10 @@ _REMOTE = {"issuer", "port", "client", "client_id", "redirect_uris", "owner"}
 _CLIENT = re.compile(r"^cli_[a-z2-7]{26}$")
 _DIGITS = re.compile(r"^[0-9]{1,32}$")
 _AGE = re.compile(r"^age1[0-9a-z]{58}$")
+
+
+# R-E11: the comms-only retention periods; the four legacy ones stay in the legacy settings.
+RETENTION_DEFAULTS = {"campaign_body_days": 365, "identity_retention_days": 365}
 
 
 class SettingsError(ValueError):
@@ -73,6 +79,7 @@ class DaemonSettings:
     remote: RemoteSettings | None = None
     backup_recipient: str | None = None
     telegram_api_id: int | None = None  # public app id; api_hash stays in the Keychain
+    retention_days: Mapping[str, int] = field(default_factory=lambda: dict(RETENTION_DEFAULTS))
 
 
 def _no_secrets(value: Any) -> None:
@@ -165,7 +172,12 @@ def load_settings(path: Path) -> DaemonSettings:
         isinstance(api_id, bool) or not isinstance(api_id, int) or api_id < 1
     ):
         raise SettingsError("comms.json: telegram_api_id is a positive integer")
+    retention = _object(top.get("retention", {}), set(RETENTION_DEFAULTS), "retention")
+    for name, value in retention.items():
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 3650:
+            raise SettingsError(f"comms.json: retention.{name} is 1 to 3650 days")
     return DaemonSettings(
+        retention_days={**RETENTION_DEFAULTS, **retention},
         telegram_api_id=api_id,
         local_port=_port(top.get("local_port", LOCAL_PORT)),
         webhook_port=None if top.get("webhook_port") is None else _port(top["webhook_port"]),

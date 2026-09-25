@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from comms.cli_commands.operator import (
+    BACKUP_FLOWS,
     CLI_FLOWS,
     LOCAL_COMMANDS,
     LOCAL_GROUPS,
@@ -137,8 +138,84 @@ def _telegram_flow(words: tuple[str, ...]) -> int:
     return 0
 
 
+def _backup_flow(words: tuple[str, ...], args: argparse.Namespace) -> int:
+    """``backup export`` and ``backup import stage`` (D39-PRE E8b): the file moves in 32 KiB
+    chunks over the admin socket; both files are written 0600 and never overwritten."""
+    import base64
+    import hashlib
+    import json
+    import os
+
+    def step(*command: str, **fields: Any) -> dict[str, Any]:
+        response = _admin_request(
+            None, {"cmd": "operator", "args": {"command": list(command), **fields}}
+        )
+        if response.get("ok") is not True:
+            raise ValueError(str(response.get("code", "INTERNAL_ERROR")))
+        data: dict[str, Any] = response["data"]
+        return data
+
+    def write_private(path: Path, data: bytes) -> None:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(fd, data)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+    base = Path(args.out if words == ("backup", "export") else getattr(args, "from"))
+    ciphertext_path, sidecar_path = base.with_suffix(".age"), base.with_suffix(".sig")
+    try:
+        if words == ("backup", "export"):
+            reply = step("backup", "export")
+            chunks = [
+                base64.b64decode(
+                    step("backup", "transfer", "pull", transfer=reply["transfer"], index=i)["chunk"]
+                )
+                for i in range(reply["chunks"])
+            ]
+            data = b"".join(chunks)
+            if hashlib.sha256(data).hexdigest() != reply["sha256"]:
+                raise ValueError("the backup did not arrive intact")
+            write_private(ciphertext_path, data)
+            write_private(sidecar_path, base64.b64decode(reply["sidecar"]))
+            result: dict[str, Any] = {
+                "files": [str(ciphertext_path), str(sidecar_path)],
+                "binding": reply["binding"],
+                "signer_key_id": reply["signer_key_id"],
+            }
+        else:
+            data, sidecar = ciphertext_path.read_bytes(), sidecar_path.read_bytes()
+            transfer = step("backup", "transfer", "begin-push", size=len(data),
+                            sha256=hashlib.sha256(data).hexdigest())["transfer"]  # fmt: skip
+            for index, start in enumerate(range(0, max(len(data), 1), 32 * 1024)):
+                chunk = base64.b64encode(data[start : start + 32 * 1024]).decode("ascii")
+                step("backup", "transfer", "push", transfer=transfer, index=index, chunk=chunk)
+            fields: dict[str, Any] = {"transfer": transfer, "identity": str(Path(args.identity).resolve()),
+                                      "sidecar": base64.b64encode(sidecar).decode("ascii")}  # fmt: skip
+            if args.trust_key:
+                fields["trust_key"] = args.trust_key
+            if args.adopt:
+                fields["adopt"] = True
+            result = step("backup", "import", "stage", **fields)
+    except FileExistsError:
+        print("comms: the backup files already exist; choose another --out", file=sys.stderr)
+        return 4
+    except OSError:
+        print("comms: the daemon or the backup files are not reachable", file=sys.stderr)
+        return 3
+    except ValueError as refused:
+        print(f"comms: {refused}", file=sys.stderr)
+        return 4
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def _operator(args: argparse.Namespace) -> int:
     import json
+
+    if tuple(args.operator) in BACKUP_FLOWS:
+        return _backup_flow(tuple(args.operator), args)
 
     if tuple(args.operator) in CLI_FLOWS:
         return _telegram_flow(tuple(args.operator))
