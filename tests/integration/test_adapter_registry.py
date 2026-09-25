@@ -138,3 +138,10 @@ def test_credentials_never_reach_a_repr(world):
     )
     text = repr(_build(world, telegram_session=FakeSession(), run=asyncio.run))
     assert BOT_TOKEN not in text and META_TOKEN not in text and "fixture-app-secret" not in text
+
+
+def test_the_bot_poller_exists_exactly_when_the_bot_token_is_configured(world):
+    """D39-PRE E5: the poller fills bot_updates, which the bot's local context reads."""
+    assert _build(world).poller is None
+    _configure(world, "telegram-bot-token")
+    assert _build(world).poller is not None

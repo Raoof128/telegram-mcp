@@ -24,6 +24,7 @@ from comms.transports.telegram.bot.capability import BotCapability
 from comms.transports.telegram.bot.context import BotContext
 from comms.transports.telegram.bot.delivery import BotDelivery
 from comms.transports.telegram.bot.http import BotApi
+from comms.transports.telegram.bot.updates import BotPoller
 from comms.transports.telegram.user.admin import UserAdmin
 from comms.transports.telegram.user.capability import UserCapability
 from comms.transports.telegram.user.context import UserContext
@@ -61,6 +62,7 @@ class Adapters:
     inbox: Inbox | None = None
     worker: WebhookWorker | None = None
     updates: UserUpdateConsumer | None = None
+    poller: BotPoller | None = None  # D39-PRE E5: fills bot_updates, the bot's local context
     listeners: dict[str, Any] = field(default_factory=dict)
     catalog: TemplateCatalog = field(default_factory=TemplateCatalog)
 
@@ -132,6 +134,7 @@ def _telegram_bot(
     adapters.capability["telegram_bot"] = BotCapability.from_api(api, clock=clock)
     adapters.admin["telegram_bot"] = BotAdmin(api)
     adapters.context["telegram_bot"] = BotContext(api, conn, clock=clock)
+    adapters.poller = BotPoller(api, conn, clock=clock)
     return BotDelivery(api)
 
 
