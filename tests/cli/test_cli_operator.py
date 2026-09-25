@@ -24,6 +24,7 @@ def test_operator_only_commands_are_not_mcp_tools():
         "cutover",
         "client",
         "daemon",
+        "oauth",
     }
 
 

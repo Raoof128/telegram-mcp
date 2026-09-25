@@ -128,6 +128,8 @@ def build_http_app(
     host: str,
     port: int,
     max_request_bytes: int = 65536,
+    allowed_hosts: tuple[str, ...] | None = None,
+    allowed_origins: tuple[str, ...] | None = None,
 ) -> Any:
     """The local ``/mcp`` app: bearer gate → strict-JSON preflight → stateless SDK app."""
     sdk_app = _server(dispatcher).streamable_http_app(
@@ -137,8 +139,8 @@ def build_http_app(
         max_request_body_size=max_request_bytes,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
-            allowed_hosts=[f"{host}:{port}"],
-            allowed_origins=[f"http://{host}:{port}"],
+            allowed_hosts=list(allowed_hosts or (f"{host}:{port}",)),
+            allowed_origins=list(allowed_origins or (f"http://{host}:{port}",)),
         ),
         host=host,
         debug=False,

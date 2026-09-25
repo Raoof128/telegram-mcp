@@ -50,6 +50,7 @@ OPERATOR_COMMANDS: Mapping[tuple[str, ...], Sequence[Arg]] = {
     ("cutover", "run"): (),
     ("cutover", "status"): (),
     ("retention", "run"): (),
+    ("oauth", "approve"): (),  # D34: a one-time, 5-minute owner code for the remote /authorize
 }
 OPERATOR_GROUPS = tuple(sorted({words[0] for words in OPERATOR_COMMANDS}))
 LOCAL_GROUPS = frozenset({"daemon", "doctor"})  # run by the local operator CLI

@@ -341,6 +341,7 @@ _COMMS_VERBS = frozenset(
         "backup",
         "cutover",
         "client",
+        "oauth",
     }
 )
 
