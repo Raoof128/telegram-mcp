@@ -16,7 +16,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-from comms.core.credentials import active_credential, active_version
+from comms.core.credentials import (
+    active_credential,
+    active_version,
+    is_confirmed,
+    record_confirmed,
+)
 from comms.core.delivery.transport import DeliveryTransport
 from comms.core.keys.secrets import SecretStore
 from comms.transports.telegram.bot.admin import BotAdmin
@@ -24,6 +29,7 @@ from comms.transports.telegram.bot.capability import BotCapability
 from comms.transports.telegram.bot.context import BotContext
 from comms.transports.telegram.bot.delivery import BotDelivery
 from comms.transports.telegram.bot.http import BotApi
+from comms.transports.telegram.bot.updates import BotPoller
 from comms.transports.telegram.user.admin import UserAdmin
 from comms.transports.telegram.user.capability import UserCapability
 from comms.transports.telegram.user.context import UserContext
@@ -34,6 +40,7 @@ from comms.transports.whatsapp.cloud.delivery import WhatsAppDelivery
 from comms.transports.whatsapp.cloud.groups import GroupDiscovery, WhatsAppAdmin
 from comms.transports.whatsapp.cloud.http import GraphApi
 from comms.transports.whatsapp.cloud.templates import TemplateCatalog
+from comms.transports.whatsapp.webhooks.archive import ArchiveContext
 from comms.transports.whatsapp.webhooks.inbox import Inbox
 from comms.transports.whatsapp.webhooks.ingress import WebhookIngress
 from comms.transports.whatsapp.webhooks.worker import Archive, WebhookWorker
@@ -61,6 +68,7 @@ class Adapters:
     inbox: Inbox | None = None
     worker: WebhookWorker | None = None
     updates: UserUpdateConsumer | None = None
+    poller: BotPoller | None = None  # D39-PRE E5: fills bot_updates, the bot's local context
     listeners: dict[str, Any] = field(default_factory=dict)
     catalog: TemplateCatalog = field(default_factory=TemplateCatalog)
 
@@ -101,7 +109,7 @@ def build_adapters(
     *,
     clock: Callable[[], datetime],
     monotonic: Callable[[], float],
-    archive: Archive,
+    archive: Archive | None,
     telegram_session: Any = None,
     run: Runner | None = None,
 ) -> Adapters:
@@ -132,6 +140,7 @@ def _telegram_bot(
     adapters.capability["telegram_bot"] = BotCapability.from_api(api, clock=clock)
     adapters.admin["telegram_bot"] = BotAdmin(api)
     adapters.context["telegram_bot"] = BotContext(api, conn, clock=clock)
+    adapters.poller = BotPoller(api, conn, clock=clock)
     return BotDelivery(api)
 
 
@@ -178,19 +187,28 @@ def _webhooks(
     secrets: SecretStore,
     clock: Callable[[], datetime],
     monotonic: Callable[[], float],
-    archive: Archive,
+    archive: Archive | None,
 ) -> None:
     secret_version = _configured(conn, secrets, "meta-app-secret")
     token_version = _configured(conn, secrets, "meta-webhook-secret")
-    if secret_version is None or token_version is None:
-        return
+    if secret_version is None or token_version is None or archive is None:
+        return  # D39-PRE: never accept an event the inbox could not archive
     inbox = Inbox(conn, clock=clock)
     adapters.inbox = inbox
     adapters.worker = WebhookWorker(conn, archive, clock=clock)
+    versions = {"meta-app-secret": secret_version, "meta-webhook-secret": token_version}
+
+    def confirmed(purpose: str) -> None:  # R-E6: once per active version, metadata only
+        if not is_confirmed(conn, purpose, versions[purpose]):
+            record_confirmed(conn, purpose, versions[purpose])
+
     adapters.webhook = WebhookIngress(
         app_secret=secrets.get("meta-app-secret", secret_version),
         verify_token=secrets.get("meta-webhook-secret", token_version).decode("utf-8"),
         accept=inbox.accept,
         clock=monotonic,
+        on_confirmed=confirmed,
     )
+    # D39-PRE E10b: the comms-native archive is WhatsApp's context source
+    adapters.context["whatsapp_cloud"] = ArchiveContext(conn, clock=clock)
     adapters.listeners["webhook"] = adapters.webhook

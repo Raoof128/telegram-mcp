@@ -19,6 +19,7 @@ NETWORK_MODULES = {
     "transports/whatsapp/cloud/media.py",
     "transports/telegram/telegram/telethon_adapter.py",
     "mcp/stdio_proxy.py",  # comms v0.3 D29: loopback to the daemon's /mcp only (it refuses others)
+    "runtime/selftest.py",  # D39-PRE E11c: a scripted MockTransport only (pinned below)
 }
 
 
@@ -47,6 +48,17 @@ def test_only_adapter_network_modules_import_httpx_or_telethon():
                 names.add(node.module.split(".")[0])
         if names & {"httpx", "telethon"}:
             assert path.relative_to(SRC).as_posix() in NETWORK_MODULES, path
+
+
+def test_the_selftest_uses_httpx_only_for_a_scripted_transport():
+    """The selftest daemon's Bot API is a MockTransport: it builds no client and opens nothing."""
+    tree = ast.parse((SRC / "runtime" / "selftest.py").read_text(encoding="utf-8"))
+    used = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and getattr(node.value, "id", None) == "httpx"
+    }
+    assert used == {"MockTransport", "Response"}
 
 
 def _mock(record):

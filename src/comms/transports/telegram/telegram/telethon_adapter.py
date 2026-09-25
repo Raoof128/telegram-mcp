@@ -25,7 +25,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
-from telethon import TelegramClient, errors, utils
+from telethon import TelegramClient, errors, events, utils
 from telethon import password as srp
 from telethon.tl import functions, types
 
@@ -50,6 +50,7 @@ __all__ = [
     "READ_RPCS",
     "REVIEWED_REQUESTS",
     "SESSION_RPCS",
+    "UPDATE_RPCS",
     "WRITE_RPCS",
     "DialogView",
     "MessageView",
@@ -189,6 +190,24 @@ REVIEWED_REQUESTS: frozenset[str] = frozenset().union(*OPERATIONS.values())
 # comms v0.3 B14: the session's one self-administration RPC (not a capability).
 SESSION_RPCS: frozenset[str] = OPERATIONS["admin.revoke"]
 
+# D39-PRE E10a: what Telethon 1.45.0 sends on its own, outside ``_call_reviewed``. ``connect``
+# sends ``help.GetConfig`` (wrapped in ``InvokeWithLayer``) and, whenever its saved update
+# state is empty, ``users.GetUsers`` (``get_me``) then ``updates.GetState`` and
+# ``updates.GetDifference`` (``_on_login``), whether or not updates are received. With
+# ``receive_updates`` the update loop adds ``updates.GetDifference`` and
+# ``updates.GetChannelDifference`` on a gap. All are reads of the account's own state; none
+# changes anything at Telegram. Reviewed in docs/verification/telegram-rpc-review.md and pinned
+# against Telethon's source by tests/telegram/test_update_rpcs.py.
+UPDATE_RPCS: frozenset[str] = frozenset(
+    {
+        "help.GetConfigRequest",
+        "users.GetUsersRequest",
+        "updates.GetStateRequest",
+        "updates.GetDifferenceRequest",
+        "updates.GetChannelDifferenceRequest",
+    }
+)
+
 
 def qualified(request: Any) -> str:
     """``<module>.<Class>`` of a TL request, looking through ``Invoke*`` wrappers."""
@@ -327,6 +346,13 @@ def _chat_rights(result: Any, chat_id: int) -> SelfRights:
     if chat.admin_rights is not None:
         return SelfRights("chat", "admin", _flags(chat.admin_rights))
     return SelfRights("chat", "member", frozenset(), _flags(chat.default_banned_rights))
+
+
+class _OneUpdate:
+    """One raw update in the shape ``neutral_updates`` reads (an ``Updates`` container)."""
+
+    def __init__(self, update: Any) -> None:
+        self.updates = (update,)
 
 
 class UpdateStreamTaken(Exception):
@@ -764,6 +790,9 @@ class TelegramConfig:
     api_id: int
     session_dir: Path
     test_dc: tuple[int, str, int] | None = None
+    # D39-PRE E10a: the comms daemon opts in; its Telethon-internal requests are pinned in
+    # UPDATE_RPCS and reviewed in telegram-rpc-review.md
+    receive_updates: bool = False
 
 
 def _default_factory(path: str, api_id: int, api_hash: str, **kwargs: Any) -> Any:
@@ -792,6 +821,7 @@ class TelethonSession:
         self.authorized = False
         self.logged_out = False  # the operator ran auth logout-local
         self._update_owner: str | None = None  # A24: one consumer of the update stream
+        self._update_sink: Callable[[list[NeutralUpdate]], Any] | None = None
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -813,7 +843,7 @@ class TelethonSession:
             str(self._config.session_dir / _SESSION_NAME),
             self._config.api_id,
             self._api_hash,
-            receive_updates=False,
+            receive_updates=self._config.receive_updates,
             request_retries=0,
             flood_sleep_threshold=0,
             raise_last_call_error=True,
@@ -823,6 +853,18 @@ class TelethonSession:
         if self._config.test_dc is not None:
             dc_id, ip, port = self._config.test_dc
             self._client.session.set_dc(dc_id, ip, port)
+        if self._config.receive_updates:
+            self._client.add_event_handler(self._on_raw_update, events.Raw())
+
+    async def _on_raw_update(self, update: Any) -> None:
+        """Translate one raw update and hand it to the claimed owner's sink (A24); before a
+        sink exists it is dropped. Runs on the Telethon loop; the sink must not block it."""
+        sink = self._update_sink
+        if sink is None:
+            return
+        found = neutral_updates(_OneUpdate(update))
+        if found:
+            sink(found)
 
     async def start(self) -> None:
         """Lock (fail closed), build, connect. An unreachable Telegram is a state, not a crash."""
@@ -958,6 +1000,13 @@ class TelethonSession:
     def release_updates(self, owner: str) -> None:
         if self._update_owner == owner:
             self._update_owner = None
+            self._update_sink = None
+
+    def set_update_sink(self, owner: str, sink: Callable[[list[NeutralUpdate]], Any]) -> None:
+        """Where the claimed owner's translated updates go (D39-PRE E10a)."""
+        if self._update_owner != owner:
+            raise UpdateStreamTaken
+        self._update_sink = sink
 
     async def call_capability(
         self,

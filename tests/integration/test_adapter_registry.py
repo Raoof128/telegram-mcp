@@ -56,7 +56,7 @@ def _build(world, **kw):
         kw.pop("settings", SETTINGS),
         clock=lambda: NOW,
         monotonic=lambda: 0.0,
-        archive=Archive(),
+        archive=kw.pop("archive", Archive()),
         **kw,
     )
 
@@ -89,7 +89,8 @@ def test_configured_credentials_build_every_contract(world):
     assert adapters.delivery["telegram"].actor == "telegram_bot"  # the configured preference
     assert set(adapters.capability) == {"telegram_bot", "telegram_user", "whatsapp_cloud"}
     assert set(adapters.admin) == {"telegram_bot", "telegram_user", "whatsapp_cloud"}
-    assert set(adapters.context) == {"telegram_bot", "telegram_user"}
+    # D39-PRE E10b: with the webhook configured, the archive is WhatsApp's context source
+    assert set(adapters.context) == {"telegram_bot", "telegram_user", "whatsapp_cloud"}
     user_first = _build(
         world,
         telegram_session=FakeSession(),
@@ -138,3 +139,38 @@ def test_credentials_never_reach_a_repr(world):
     )
     text = repr(_build(world, telegram_session=FakeSession(), run=asyncio.run))
     assert BOT_TOKEN not in text and META_TOKEN not in text and "fixture-app-secret" not in text
+
+
+def test_the_bot_poller_exists_exactly_when_the_bot_token_is_configured(world):
+    """D39-PRE E5: the poller fills bot_updates, which the bot's local context reads."""
+    assert _build(world).poller is None
+    _configure(world, "telegram-bot-token")
+    assert _build(world).poller is not None
+
+
+def test_the_webhook_is_not_served_without_an_archive(world):
+    """D39-PRE: an event the inbox cannot archive is never accepted."""
+    _configure(world, "meta-app-secret", "meta-webhook-secret")
+    adapters = build_adapters(world["conn"], world["secrets"], SETTINGS, clock=lambda: NOW,
+                              monotonic=lambda: 0.0, archive=None)  # fmt: skip
+    assert (
+        adapters.webhook is None and adapters.worker is None and "webhook" not in adapters.listeners
+    )
+
+
+def test_a_configured_webhook_serves_the_comms_archive_as_the_whatsapp_context(world):
+    """D39-PRE E10b: the archive is bound, so the webhook is served and WhatsApp has context."""
+    from comms.core.credentials import is_confirmed
+    from comms.core.keys.slots import active_version
+    from comms.transports.whatsapp.webhooks.archive import ArchiveContext, CommsArchive
+
+    _configure(world, "meta-app-secret", "meta-webhook-secret")
+    archive = CommsArchive(world["conn"], clock=lambda: NOW)
+    adapters = _build(world, archive=archive)
+    assert adapters.webhook is not None and adapters.worker is not None
+    assert isinstance(adapters.context["whatsapp_cloud"], ArchiveContext)
+    adapters.webhook._confirmed("meta-app-secret")  # what a verified POST does
+    version = active_version(world["conn"], "meta-app-secret")[0]
+    assert is_confirmed(world["conn"], "meta-app-secret", version)
+    assert not is_confirmed(world["conn"], "meta-webhook-secret",
+                            active_version(world["conn"], "meta-webhook-secret")[0])  # fmt: skip

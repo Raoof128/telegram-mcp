@@ -180,13 +180,17 @@ _ENDPOINTS = ("destinations", "contact_points")
 
 def purge_inbound(conn: Any, *, cutoff: datetime) -> int:
     """Phase 5b (A15's body rule): retained inbound bodies older than the body window — Bot API
-    updates, MTProto updates, and completed webhook bodies. An unfinished inbox row is never
+    updates, MTProto updates, completed webhook bodies, and the WhatsApp archive. An unfinished inbox row is never
     purged: its fan-out has not run. Caller's transaction."""
     limit = timeutil.iso(cutoff)
     removed = conn.execute("DELETE FROM bot_updates WHERE received_at < ?", (limit,)).rowcount
     removed += conn.execute("DELETE FROM user_updates WHERE received_at < ?", (limit,)).rowcount
     removed += conn.execute(
         "DELETE FROM webhook_inbox WHERE completed_at IS NOT NULL AND completed_at < ?", (limit,)
+    ).rowcount
+    # D39-PRE E10b: the comms-native WhatsApp archive keeps bodies no longer than the inbox
+    removed += conn.execute(
+        "DELETE FROM whatsapp_messages WHERE received_at < ?", (limit,)
     ).rowcount
     return int(removed)
 

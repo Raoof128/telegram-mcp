@@ -41,6 +41,7 @@ from comms.core.backup import age
 from comms.core.backup.payload import SCHEMA, _campaigns, _directory, account_binding, build_payload
 from comms.core.backup.signature import SignatureError, sign, verify
 from comms.core.canonical import jcs_dumps
+from comms.core.groups import group_ref_in_tx, is_group_identity
 from comms.core.keys.rotate import activate_in_tx, clean_orphans
 from comms.core.keys.signers import require_import_trust
 from comms.core.keys.slots import KeySlotError, KeySlotStore, active_version, load_active
@@ -350,14 +351,19 @@ def _apply_directory(conn: Any, directory: Mapping[str, Any], stamp: str) -> Non
             )
     recipients = _ids(conn, "recipients")
     for row in directory["recipients"]:
+        # a payload from before D39-PRE carries no display_name: the local label is kept
+        name = row.get("display_name")
         if row["ref"] in recipients:
             conn.execute(
-                "UPDATE recipients SET enabled = ? WHERE ref = ?", (row["enabled"], row["ref"])
+                "UPDATE recipients SET enabled = ?, display_name = coalesce(?, display_name)"
+                " WHERE ref = ?",
+                (row["enabled"], name, row["ref"]),
             )
         else:
             conn.execute(
-                "INSERT INTO recipients (ref, enabled, created_at) VALUES (?, ?, ?)",
-                (row["ref"], row["enabled"], row["created_at"]),
+                "INSERT INTO recipients (ref, display_name, enabled, created_at)"
+                " VALUES (?, ?, ?, ?)",
+                (row["ref"], name, row["enabled"], row["created_at"]),
             )
     locations, recipients = _ids(conn, "locations"), _ids(conn, "recipients")
     destinations = _ids(conn, "destinations")
@@ -390,6 +396,9 @@ def _apply_directory(conn: Any, directory: Mapping[str, Any], stamp: str) -> Non
                     row["created_at"],
                 ),
             )
+    for row in directory["destinations"]:  # every restored group is listed at once (E11b)
+        if is_group_identity(row["platform_identity"]):
+            group_ref_in_tx(conn, row["ref"], now=timeutil.instant(stamp))
     contact_points = _ids(conn, "contact_points")
     for row in directory["contact_points"]:
         if row["ref"] in contact_points:

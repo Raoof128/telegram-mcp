@@ -86,6 +86,19 @@ def test_orphan_slot(w):
     assert "ORPHAN_KEY_SLOT" in _codes(w)[0]
 
 
+def test_a_client_seed_is_registered_by_its_client_row_not_an_orphan(w):
+    """D39-PRE E9: cml1 client seeds are registered in ``clients`` (D27), not ``key_slots``."""
+    from comms.core.auth import clients
+
+    (w["tmp"] / "helper").mkdir(mode=0o700)
+    clients.add_client(
+        w["conn"], w["store"], "c", now=NOW, helper_path=w["tmp"] / "helper" / "seed"
+    )
+    assert "ORPHAN_KEY_SLOT" not in _codes(w)[0]
+    w["store"].write_version("cml1-client-seed", os.urandom(32))  # a seed no client names
+    assert "ORPHAN_KEY_SLOT" in _codes(w)[0]
+
+
 def test_key_coverage_gap(w):
     key = load_active(w["conn"], w["store"], "audit-checkpoint-key")[0]
     with write_tx(w["conn"]):

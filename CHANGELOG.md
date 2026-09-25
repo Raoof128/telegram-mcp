@@ -496,3 +496,52 @@
   - R-A20 awaits the owner.
   - The local tag `comms-v0.3-part-d` is not pushed; merge and push need the owner's approval.
   - No production claim.
+
+### 2026-09-25 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms v0.3 D39-PRE / Runtime Completion, Task E0 (branch `comms-v0.3-d39pre`): the owner's rulings, the host permission rules, and a correction.
+- **Summary:**
+  - The owner decided R-A20: host permission UX is defence in depth. `.claude/settings.json` now asks before every consequential comms tool, 43 of them, generated from the catalog. There is no blanket allow, and the CLI campaign-send rules are kept.
+  - Also approved: R-E1 (a `cml1` lease may be reused within its window; write safety comes from the request id), R-E2 (template language is explicit per campaign) and R-E3 (a registered operator command works, or it is not registered).
+  - **Correction:** the Parts A–D entries above say their tags are "not pushed". All four `comms-v0.3-part-*` tags, `main` (merge `272dd8b`) and the `comms-v0.3` branch were pushed with the owner's approval on 2026-09-25.
+  - The D39-PRE plan was owner-approved with four amendments.
+  - **Found:** two test files on `main` (`tests/services/handle_fixtures.py`, `test_ctx_handles.py`) had misordered imports that the gate never reported. Ruff's cache keys on file content and settings, but its first-party import detection reads the filesystem, so it kept a stale clean result. Both files are fixed, and the gate now runs `ruff check` and `ruff format --check` with `--no-cache`.
+- **Files changed:** `.claude/settings.json`, `tests/security/test_host_permissions.py`, `docs/runbooks/clients-claude-code.md`, `docs/verification/comms-v0.3{,-rulings}.md`, `docs/superpowers/plans/2026-09-25-comms-v0.3-d39-pre.md`, `tests/services/{handle_fixtures,test_ctx_handles}.py` (import order), this file, `CHANGELOG.md`.
+- **Verification:** full gate (see the E0 ledger line); `test_host_permissions` 4 passed after watching the ask-rule test fail.
+- **Follow-ups:** E1–E11 of the plan; the 13-tool disposition plan must be done before D39-B. No production claim.
+
+### 2026-09-25 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms v0.3 D39-PRE / Runtime Completion, tasks E1–E11 (branch `comms-v0.3-d39pre`), owner-approved plan with four amendments, inline and test-first.
+- **Summary:** The daemon now holds `comms.db` and serves the whole v0.3 surface for real:
+  - `comms keys provision`, and a fail-closed open with derived bootstrap states;
+  - `comms.json` settings, and one composition root shared with the smoke;
+  - startup recovery and supervised workers under two failure classes, with a write hold until the cutover;
+  - the local, remote and webhook listeners and the admin socket;
+  - every operator command working or absent: keys, audit, cutover, credentials (proved live and reloaded), the Telegram login flows, retention, backup, and a read-only doctor;
+  - the Telegram user actor on its own Telethon thread with the update stream live, and Telethon's self-sent requests pinned;
+  - a comms-native WhatsApp archive (the owner's choice), and egress sweeps over proxy frames, webhook responses and backups.
+
+  D39-A drives a real selftest daemon through the installed binary only: 25 smoke checks.
+- **Found by driving the real daemon (fixed):**
+  - sends were never delivered;
+  - a fresh install could never cut over;
+  - a fresh daemon's effect loops never resumed after the cutover;
+  - nothing ran retention;
+  - the bot poller was never built;
+  - no WhatsApp context source existed;
+  - Telethon's `connect` sent unreviewed requests;
+  - a restore dropped every person's name;
+  - a restored group was invisible;
+  - the reader rule had two copies;
+  - the doctor counted client seeds as orphans;
+  - the install runbook was out of order.
+
+  Rulings R-E4 to R-E17 are in the register.
+- **Files changed:** `src/comms/runtime/{paths,provision,state,settings,assemble,workers,serve,selftest,doctor,proofs}.py`, `src/comms/runtime/operator/*`, `src/comms/transports/telegram/runtime/{daemon,composition,telethon_thread,lock}.py`, `src/comms/transports/telegram/telegram/telethon_adapter.py`, `src/comms/transports/whatsapp/webhooks/{archive,ingress}.py`, `src/comms/core/{groups,credentials,doctor}.py`, `src/comms/core/{keys/slots,keys/rotate,backup/*,campaigns/directory,maintenance/retention,storage/migrations,audit/writer}.py`, `src/comms/{cli,cli_commands/operator,mcp/dispatch,services/context,runtime/facades,runtime/adapters,runtime/comms_runtime}.py`, `scripts/{e2e_smoke,smoke_daemon}.py`, `docs/runbooks/{install,restore-from-backup,uninstall,key-compromise,clients-*}.md`, `docs/verification/{comms-v0.3,comms-v0.3-rulings,comms-v0.3-smoke-map.json,telegram-rpc-review}.md`, and the tests named in the D39-PRE exit gate, this file, `CHANGELOG.md`, `CLAUDE.md`.
+- **Verification:** full gate at the D39-PRE head: pytest 5160 passed, 4 skipped; smoke 99/99 (25 against a real daemon); formal 57 passed; ruff (no cache), format, mypy (295 files) and build clean; WhatsVault 450 passed. The D39-PRE exit gate re-runs every owning test of E0–E11 with no skip allowed. Evidence: `docs/verification/comms-v0.3.md` (D39-PRE).
+- **Follow-ups:**
+  - The catalog-amendment plan comes before D39-B: the owner's `comms_directory_*` tools, a WhatsApp MCP route, and the 13 not-offered tools.
+  - `grp_` refs are not in backups.
+  - The local tag `comms-v0.3-d39-pre` is not pushed; merge and push need the owner's approval.
+  - No production claim.

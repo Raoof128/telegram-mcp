@@ -283,3 +283,40 @@ async def test_an_unauthorised_session_is_not_ready(tmp_path):
     session, _fake, _c = _session(tmp_path, client=FakeClient(authorized=False))
     await session.start()
     assert session.readiness() == "AUTH_REQUIRED"
+
+
+async def test_the_update_stream_is_opt_in_and_reaches_only_the_claimed_owners_sink(tmp_path):
+    """D39-PRE E10a: the comms daemon opts in; the legacy construction above stays pinned."""
+    from telethon import events
+    from telethon.tl import types
+
+    from comms.transports.telegram.telegram.telethon_adapter import UpdateStreamTaken
+
+    session, fake, captured = _session(tmp_path, receive_updates=True)
+    await session.start()
+    assert captured["kwargs"]["receive_updates"] is True
+    assert {k: v for k, v in captured["kwargs"].items() if k != "receive_updates"} == {
+        "request_retries": 0, "flood_sleep_threshold": 0, "raise_last_call_error": True,
+        "auto_reconnect": False, "connection_retries": 0}  # fmt: skip
+    ((callback, builder),) = fake.handlers
+    assert isinstance(builder, events.Raw)
+
+    received = []
+    update = types.UpdateMessageID(id=77, random_id=123456789)
+    await callback(update)  # before any sink: dropped, never an error
+    session.claim_updates("update-consumer")
+    with pytest.raises(UpdateStreamTaken):
+        session.set_update_sink("someone-else", received.extend)
+    session.set_update_sink("update-consumer", received.extend)
+    await callback(update)
+    assert [(u.kind, u.message_id, u.random_id) for u in received] == [
+        ("message_id", 77, 123456789)
+    ]
+    await session.stop()
+
+
+async def test_without_the_opt_in_no_handler_is_registered(tmp_path):
+    session, fake, _captured = _session(tmp_path)
+    await session.start()
+    assert fake.handlers == []
+    await session.stop()

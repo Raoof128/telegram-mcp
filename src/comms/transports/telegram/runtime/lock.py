@@ -57,6 +57,10 @@ class LockHandle:
         os.lseek(self._fd, 0, os.SEEK_SET)
         os.write(self._fd, json.dumps(payload).encode("utf-8"))
 
+    def held(self) -> bool:
+        """Whether this handle still holds the lock (the campaign engine's ``ExecutorLease``)."""
+        return not self._released
+
     def release(self) -> None:
         """Release the kernel lock and close the descriptor."""
         if self._released:

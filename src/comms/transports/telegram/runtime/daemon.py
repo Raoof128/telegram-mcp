@@ -9,10 +9,16 @@ Order matters and is fail-closed:
    stays ``AUTH_REQUIRED`` and everything else still runs. An unreachable
    Telegram is a state (``TELEGRAM_UNAVAILABLE``), retried every 30 seconds,
    never a failed start: the operator keeps the admin socket.
-4. Serve the admin socket, then wait. There is no consent socket (comms spec v0.2), and
-   since comms v0.3 no MCP ingress: the Telegram MCP surface is retired (A3).
+4. ``comms daemon`` (D39-PRE E6) then starts the comms side (``comms.runtime.serve``): its
+   settings, ``comms.db``, startup recovery, the one composition root, the MCP and webhook
+   listeners and the workers. A refusal there refuses the whole start.
+5. Serve the admin socket (the retained legacy handlers plus the comms ``tool call``,
+   ``operator`` and ``hello``), then wait. There is no consent socket (comms spec v0.2), and
+   the Telegram MCP surface is retired (A3). With the comms side, SIGTERM and SIGINT stop the
+   daemon cleanly.
 
-Shutdown disconnects Telegram (never ``log_out``) and unlinks the sockets.
+Shutdown stops the comms side, disconnects Telegram (never ``log_out``) and unlinks the
+sockets. A worker's fatal failure stops the daemon with a ``DaemonError`` after that cleanup.
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ import grp
 import logging
 import os
 import secrets
+import signal
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +62,8 @@ class DaemonConfig:
     api_id: int | None
     test_dc: tuple[int, str, int] | None = None
     admin_group: str | None = None
+    comms: bool = False  # D39-PRE E6: ``comms daemon`` serves the comms side too
+    adapters_factory: Any = None  # the injected seam: None is production (selftest-daemon only)
 
 
 async def run_daemon(
@@ -88,9 +97,13 @@ async def run_daemon(
     except RuntimeActive:
         raise DaemonError("a daemon is already running for this runtime directory") from None
     session: Any = None
-    keeper: asyncio.Task[None] | None = None
+    admin_session: Any = None  # what the login handlers see (loop-bound under comms)
+    telethon: Any = None  # the comms daemon's TelethonThread (D39-PRE E10a)
+    keeper: Any = None
     closers: list[Any] = []
     conn = None
+    comms_server: Any = None
+    stop_event = stop or asyncio.Event()
     try:
         set_store_dir(config.key_dir)
         state = Path(config.state_dir)
@@ -111,10 +124,8 @@ async def run_daemon(
                     test_dc=config.test_dc,
                     api_hash=api_hash,
                     client_factory=client_factory,
+                    receive_updates=config.comms,  # the comms daemon consumes the stream
                 )
-                await session.start()
-                if session.readiness() == "TELEGRAM_UNAVAILABLE":
-                    _logger.warning("Telegram unreachable at start; retrying in the background")
 
                 async def keep_connected(link: Any = session) -> None:
                     while True:
@@ -122,12 +133,50 @@ async def run_daemon(
                         if not link.connected and not link.logged_out:
                             await link.reconnect()
 
-                keeper = asyncio.create_task(keep_connected())
+                if config.comms:  # E10a: Telethon on its own thread; the adapters block on it
+                    from comms.transports.telegram.runtime.telethon_thread import (
+                        LoopBoundSession,
+                        TelethonThread,
+                    )
+
+                    telethon = TelethonThread()
+                    telethon.start()
+                    telethon.run(session.start())
+                    keeper = asyncio.run_coroutine_threadsafe(keep_connected(), telethon.loop)
+                    admin_session = LoopBoundSession(session, telethon)
+                else:
+                    await session.start()
+                    keeper = asyncio.create_task(keep_connected())
+                    admin_session = session
+                if session.readiness() == "TELEGRAM_UNAVAILABLE":
+                    _logger.warning("Telegram unreachable at start; retrying in the background")
+        if config.comms:
+            from comms.runtime.serve import CommsServer, CommsStartRefused
+
+            loop = asyncio.get_running_loop()
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(signum, stop_event.set)
+            comms_server = CommsServer(
+                state_dir=state,
+                lock=lock,
+                stop_event=stop_event,
+                adapters_factory=config.adapters_factory,
+                legacy_conn=conn,
+                telegram_session=session if telethon is not None else None,
+                telegram_run=None if telethon is None else telethon.run,
+            )
+            try:
+                await comms_server.start()
+            except CommsStartRefused as refused:
+                raise DaemonError(str(refused)) from None
         router = build_admin(
             conn,
             key_dir=Path(config.key_dir),
             anchor_path=state / "anchor" / "anchor.json",
-            telegram=session,
+            telegram=admin_session,
+            comms_handlers=None if comms_server is None else comms_server.admin_handlers,
+            control_handlers=None if comms_server is None else comms_server.control_handlers,
+            audit_writer=None if comms_server is None else comms_server.writer,
         )
         closers.append(
             await serve_admin(
@@ -139,20 +188,30 @@ async def run_daemon(
         )
         if admin_gid is not None:
             os.chown(admin_path, -1, admin_gid)  # serve_admin already made it 0660
-        await (stop or asyncio.Event()).wait()  # production runs until cancelled
+        await stop_event.wait()  # production runs until a signal or cancellation
     finally:
+        if comms_server is not None:
+            await comms_server.stop()
         if keeper is not None:
             keeper.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await keeper
+            if telethon is None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await keeper
         for closer in closers:
             closer.close()
             with contextlib.suppress(Exception):
                 await closer.wait_closed()
         if session is not None:
-            await session.stop()  # disconnect only
+            if telethon is not None:
+                with contextlib.suppress(Exception):
+                    telethon.run(session.stop())  # disconnect only, on its own loop
+                telethon.stop()
+            else:
+                await session.stop()  # disconnect only
         if conn is not None:
             conn.close()
         with contextlib.suppress(FileNotFoundError):
             admin_path.unlink()
         lock.release()
+    if comms_server is not None and comms_server.failed:
+        raise DaemonError("a comms worker hit an integrity failure (run: comms doctor)")

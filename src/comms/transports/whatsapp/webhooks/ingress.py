@@ -46,6 +46,7 @@ class WebhookIngress:
         rate_capacity: int = 60,
         rate_per_second: float = 20.0,
         read_deadline_s: float = READ_DEADLINE_S,
+        on_confirmed: Callable[[str], None] | None = None,
     ) -> None:
         if not app_secret or not verify_token:
             raise ValueError("the webhook secrets are required")
@@ -53,6 +54,8 @@ class WebhookIngress:
         self._clock, self._deadline = clock, read_deadline_s
         self._capacity, self._rate = float(rate_capacity), rate_per_second
         self._tokens, self._refilled = float(rate_capacity), clock()
+        # R-E6 (D39-PRE E10b): each secret is confirmed in operation, never by a whoami call
+        self._on_confirmed = on_confirmed
 
     def __repr__(self) -> str:
         return "WebhookIngress(<redacted>)"
@@ -87,6 +90,7 @@ class WebhookIngress:
             raise _Refused(400)
         if not hmac.compare_digest(token.encode(), self._verify_token.encode()):
             raise _Refused(403)
+        self._confirmed("meta-webhook-secret")  # Meta's GET subscription challenge succeeded
         return challenge.encode()
 
     async def _post(self, scope: Scope, receive: Receive) -> None:
@@ -105,10 +109,15 @@ class WebhookIngress:
             raise _Refused(408) from None
         if not self._signed(raw, _header(scope, b"x-hub-signature-256")):
             raise _Refused(401)
+        self._confirmed("meta-app-secret")  # its X-Hub-Signature-256 verified
         try:
             await self._accept(raw)
         except Exception:  # noqa: BLE001 -- not recorded, so not acknowledged: Meta retries
             raise _Refused(503) from None
+
+    def _confirmed(self, purpose: str) -> None:
+        if self._on_confirmed is not None:
+            self._on_confirmed(purpose)
 
     def _signed(self, raw: bytes, header: bytes | None) -> bool:
         if header is None or not header.startswith(b"sha256="):

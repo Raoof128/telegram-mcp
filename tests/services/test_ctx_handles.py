@@ -1,11 +1,11 @@
 """comms v0.3 Task D9: client-bound ctx_ handles (A30, G13)."""
 
 import pytest
-from comms.core.security import bump_security_epoch
 
 from comms.core.errors import CommsError
 from comms.core.groups import GroupError, destination_of
 from comms.core.objects import resolve_object
+from comms.core.security import bump_security_epoch
 from tests.services.handle_fixtures import CLIENT, OTHER, open_handle, world
 
 

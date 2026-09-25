@@ -13,15 +13,20 @@ Owner-run. Nothing here touches a provider until the credential steps.
 
    ```bash
    comms keys provision
-   comms keys list
    ```
 
-3. Start the daemon, then check it.
+3. Start the daemon, run the cutover (on a fresh install it seals the empty legacy chain and
+   opens the comms chain; until it completes, the daemon serves reads and holds every write),
+   then check it.
 
    ```bash
    comms daemon
+   comms cutover run
+   comms keys list
    comms doctor
    ```
+
+   Retention runs daily inside the daemon once the cutover completes.
 
 4. Add provider credentials (each is proved live before it activates), and log the Telegram user session in.
 
@@ -37,4 +42,4 @@ Owner-run. Nothing here touches a provider until the credential steps.
    comms client add --name claude-code --helper-path ~/.config/comms/claude-code.seed
    ```
 
-`comms doctor` must report no finding except `CREDENTIAL_NOT_CONFIGURED` for providers you do not use.
+`comms doctor` must report no finding except `CREDENTIAL_NOT_CONFIGURED` for providers you do not use, and `"ok": true`. A Meta webhook secret reads `CREDENTIAL_UNCONFIRMED` until Meta has used it once (R-E6).

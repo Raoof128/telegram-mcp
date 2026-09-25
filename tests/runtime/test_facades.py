@@ -35,14 +35,21 @@ def world(tmp_path):
         rot.rotate(
             w["writer"], w["store"], purpose, material=os.urandom(32), prove=lambda m: None, now=NOW
         )
+    w.update(dispatcher=_dispatcher(w, {"telegram_user": Source(),
+                                        "telegram_bot": Source(provenance="telegram_local")}))  # fmt: skip
+    return w
+
+
+def _dispatcher(w, sources):
     capability, executor, admins = fixtures(w)
+    w["admins"] = admins
     conn = w["conn"]
     services = Services(
         conn=conn,
         capability=capability,
         context=ContextEngine(
             conn,
-            {"telegram_user": Source(), "telegram_bot": Source(provenance="telegram_local")},
+            sources,
             clock=lambda: NOW,
             monotonic=Clock(),
             capability=capability,
@@ -63,8 +70,7 @@ def world(tmp_path):
         identity=IdentityService(conn),
         actors=("telegram_bot", "telegram_user"),
     )
-    w.update(dispatcher=Dispatcher(build_registry(services)), admins=admins)
-    return w
+    return Dispatcher(build_registry(services))
 
 
 def _call(world, name, arguments):
@@ -153,3 +159,12 @@ def _minimal(world, spec):
         "mime": "image/png",
     }
     return {k: values[k] for k in spec.input_schema.get("required", []) if k in values}
+
+
+def test_a_read_falls_back_to_the_bot_when_the_user_has_no_context_source(world):
+    """D39-PRE E11c found: the facade kept its own copy of the reader rule, without the
+    engine's source check, so a user capability without a user source answered NOT_CONFIGURED."""
+    world["dispatcher"] = _dispatcher(world, {"telegram_bot": Source(provenance="telegram_local")})
+    page = _call(world, "comms_context_recent", {"group": world["grp"], "limit": 3})
+    assert page.error_code is None
+    assert {i["source"] for i in page.structured["items"]} == {"telegram_local"}

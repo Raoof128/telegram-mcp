@@ -5,8 +5,8 @@ built adapters (C33) into the running surface: the typed services, the facades a
 dispatcher, the admin socket's ``tool call`` / ``operator`` handlers and ``hello`` control
 request, and the three listener apps. Nothing else builds services.
 
-Operator commands wired here: ``client add|rotate|disable`` and ``oauth approve``. Every other
-operator command is refused with a fixed message until it is wired (named in the evidence).
+The ``operator`` handler is ``comms.runtime.operator`` over one context; the daemon attaches
+the retained legacy chain (``legacy``) for ``verify --all`` and the cutover.
 """
 
 from __future__ import annotations
@@ -14,11 +14,9 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from comms.core.audit.writer import AuditWriter
-from comms.core.auth import clients
 from comms.core.delivery.commitment import commit_context
 from comms.core.keys.slots import KeySlotStore
 from comms.mcp.dispatch import Dispatcher
@@ -28,6 +26,7 @@ from comms.runtime.adapters import Adapters
 from comms.runtime.facades import Services, build_registry
 from comms.runtime.hello import hello_handler
 from comms.runtime.listeners import Listeners, RemoteListener, build_listeners
+from comms.runtime.operator import LegacySide, OperatorContext, operator_handler
 from comms.runtime.tool_calls import tool_call_handler
 from comms.services.account import AccountService
 from comms.services.campaigns import CampaignService
@@ -81,33 +80,6 @@ class _InboxCounts:
         }
 
 
-def _operator_handler(
-    conn: Any, store: KeySlotStore, oauth: Built | None, clock: Callable[[], datetime]
-) -> Handler:
-    def handle(args: dict[str, Any]) -> dict[str, Any]:
-        command = tuple(args.get("command") or ())
-        if command == ("client", "add"):
-            cli = clients.add_client(
-                conn, store, args["name"], now=clock(), helper_path=Path(args["helper_path"])
-            )
-            return {"client": cli}
-        if command == ("client", "rotate"):
-            clients.rotate_client(
-                conn, store, args["client"], now=clock(), helper_path=Path(args["helper_path"])
-            )
-            return {"client": args["client"], "rotated": True}
-        if command == ("client", "disable"):
-            clients.disable_client(conn, args["client"])
-            return {"client": args["client"], "disabled": True}
-        if command == ("oauth", "approve"):
-            if oauth is None:
-                raise ValueError("the remote listener is not configured")
-            return {"owner_code": oauth.approvals.issue(), "valid_for_seconds": 300}
-        raise ValueError("this operator command is not wired in this release")
-
-    return handle
-
-
 def build_comms_runtime(
     conn: Any,
     writer: AuditWriter,
@@ -119,6 +91,8 @@ def build_comms_runtime(
     host: str,
     local_port: int,
     remote: RemoteConfig | None = None,
+    legacy: LegacySide | None = None,
+    operator_fields: Mapping[str, Any] | None = None,
 ) -> CommsRuntime:
     capability = CapabilityService(adapters.capability, clock=clock)
     executor = MutationExecutor(writer, adapters.admin)
@@ -168,7 +142,16 @@ def build_comms_runtime(
         dispatcher=dispatcher,
         admin_handlers={
             "tool call": tool_call_handler(dispatcher),
-            "operator": _operator_handler(conn, store, oauth, clock),
+            "operator": operator_handler(
+                OperatorContext(
+                    writer=writer,
+                    store=store,
+                    clock=clock,
+                    oauth=oauth,
+                    legacy=legacy,
+                    **dict(operator_fields or {}),  # credentials, reload, backups, retention
+                )
+            ),
         },
         control_handlers={"hello": hello_handler(conn)},
         listeners=listeners,

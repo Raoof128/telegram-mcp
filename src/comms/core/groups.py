@@ -2,7 +2,8 @@
 
 A group maps one to one to a destination whose platform identity is a group or a channel; the
 database refuses a private chat and any second mapping, and a mapping never changes.
-``group_ref`` gets the destination's group ref, minting it on first use.
+``group_ref`` gets the destination's group ref, minting it on first use. Since D39-PRE E11b a
+group destination is minted when it is created or restored, so every group is listed at once.
 """
 
 from __future__ import annotations
@@ -18,7 +19,9 @@ __all__ = [
     "destination_of",
     "group_identity",
     "group_ref",
+    "group_ref_in_tx",
     "group_view",
+    "is_group_identity",
     "list_groups",
 ]
 
@@ -27,30 +30,40 @@ class GroupError(Exception):
     """A fixed, non-enumerating refusal."""
 
 
-def group_ref(conn: Any, destination_ref: str, *, now: datetime) -> str:
+def is_group_identity(platform_identity: str) -> bool:
+    """A group or a channel, never a private chat (the one rule; D1)."""
+    return platform_identity.startswith(("group:", "channel:"))
+
+
+def group_ref_in_tx(conn: Any, destination_ref: str, *, now: datetime) -> str:
+    """Get the destination's group ref, minting it on first use (caller's transaction)."""
     try:
         refs.check(destination_ref, "destination")
     except ValueError:
         raise GroupError("unknown destination") from None
+    row = conn.execute(
+        "SELECT d.id, d.platform_identity, g.ref FROM destinations d"
+        " LEFT JOIN groups g ON g.destination_id = d.id WHERE d.ref = ?",
+        (destination_ref,),
+    ).fetchone()
+    if row is None:
+        raise GroupError("unknown destination")
+    destination_id, identity, existing = row
+    if existing is not None:
+        return str(existing)
+    if not is_group_identity(identity):
+        raise GroupError("not a group destination")
+    ref = refs.mint("group")
+    conn.execute(
+        "INSERT INTO groups (ref, destination_id, created_at) VALUES (?, ?, ?)",
+        (ref, destination_id, timeutil.iso(now)),
+    )
+    return ref
+
+
+def group_ref(conn: Any, destination_ref: str, *, now: datetime) -> str:
     with write_tx(conn):
-        row = conn.execute(
-            "SELECT d.id, d.platform_identity, g.ref FROM destinations d"
-            " LEFT JOIN groups g ON g.destination_id = d.id WHERE d.ref = ?",
-            (destination_ref,),
-        ).fetchone()
-        if row is None:
-            raise GroupError("unknown destination")
-        destination_id, identity, existing = row
-        if existing is not None:
-            return str(existing)
-        if not identity.startswith(("group:", "channel:")):
-            raise GroupError("not a group destination")
-        ref = refs.mint("group")
-        conn.execute(
-            "INSERT INTO groups (ref, destination_id, created_at) VALUES (?, ?, ?)",
-            (ref, destination_id, timeutil.iso(now)),
-        )
-        return ref
+        return group_ref_in_tx(conn, destination_ref, now=now)
 
 
 def destination_of(conn: Any, grp: str) -> str:

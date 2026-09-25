@@ -61,3 +61,23 @@ def test_the_mapping_is_database_enforced(conn):
 def test_unknown_or_wrong_refs_are_refused(conn, value):
     with pytest.raises(GroupError):
         destination_of(conn, value) if value.startswith("grp_") else group_ref(conn, value, now=NOW)
+
+
+def test_a_group_destination_is_listed_from_the_moment_it_exists(tmp_path):
+    """D39-PRE E11b found: a group got its grp_ ref only when resolved by name, so a group added
+    any other way (a backup restore, the directory) was invisible to every MCP tool."""
+    from comms.core.campaigns import directory as d
+    from comms.core.groups import list_groups
+    from tests.core import schema_fixtures as fx
+    from tests.core.campaign_helpers import NOW
+
+    conn = fx.migrated(tmp_path)
+    loc = d.add_location(conn, "MQ", now=NOW)
+    d.add_destination(
+        conn, loc, "telegram", "channel:1234567890", "MQ Society", normalize=fx.tg, now=NOW
+    )
+    d.add_destination(
+        conn, loc, "telegram", "user:42", "Ali DM", normalize=fx.tg, now=NOW
+    )  # not a group
+    items, _more = list_groups(conn, limit=10)
+    assert [i["name"] for i in items] == ["MQ Society"]

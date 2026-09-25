@@ -44,7 +44,10 @@ def _directory(conn: Any) -> dict[str, Any]:
         "locations": _rows(
             conn, "SELECT ref, name, enabled, created_at FROM locations ORDER BY ref"
         ),
-        "recipients": _rows(conn, "SELECT ref, enabled, created_at FROM recipients ORDER BY ref"),
+        # D39-PRE E10c: the owner's label (D7) is directory data; a restore must keep it
+        "recipients": _rows(
+            conn, "SELECT ref, display_name, enabled, created_at FROM recipients ORDER BY ref"
+        ),
         "destinations": _rows(
             conn,
             "SELECT d.ref, l.ref AS location_ref, d.transport, d.platform_identity, i.identity,"

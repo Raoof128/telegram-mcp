@@ -519,11 +519,25 @@ CREATE TRIGGER mutation_steps_never_deleted BEFORE DELETE ON mutation_steps
 """
 SCHEMA_V4: tuple[str, ...] = _statements(_SCHEMA_V4_SQL)
 
+# D39-PRE E10b (owner decision, 2026-09-25): the comms-native WhatsApp archive. Webhook bodies
+# are parsed with WhatsVault's public normaliser; each message is kept once by its semantic key
+# and served as the ``whatsapp_webhook_archive`` context source. v4 shipped on main, so this is
+# v5. Bodies age out with the other inbound bodies (``purge_inbound``).
+_SCHEMA_V5_SQL = """
+CREATE TABLE whatsapp_messages (id INTEGER PRIMARY KEY, semantic_key TEXT NOT NULL UNIQUE,
+  phone_number_id TEXT, chat TEXT NOT NULL, sender_wa_id TEXT, wamid TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK (direction IN ('in','out')), type TEXT NOT NULL, body TEXT,
+  sender_name TEXT, sent_at TEXT NOT NULL, received_at TEXT NOT NULL);
+CREATE INDEX whatsapp_messages_by_chat ON whatsapp_messages (chat, sent_at, id);
+"""
+SCHEMA_V5: tuple[str, ...] = _statements(_SCHEMA_V5_SQL)
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(1, SCHEMA_V1),
     Migration(2, SCHEMA_V2),
     Migration(3, SCHEMA_V3, rebuild=True),
     Migration(4, SCHEMA_V4),
+    Migration(5, SCHEMA_V5),
 )
 
 

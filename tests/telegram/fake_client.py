@@ -68,6 +68,10 @@ class FakeClient:
         self.connected = False
         self.logged_out = False
         self.me_id = _ME
+        self.handlers: list[tuple[Any, Any]] = []  # (callback, event builder)
+
+    def add_event_handler(self, callback: Any, event: Any = None) -> None:
+        self.handlers.append((callback, event))
 
     async def connect(self) -> None:
         self.connected = True

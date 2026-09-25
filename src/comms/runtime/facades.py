@@ -119,15 +119,8 @@ class _Facades:
     def reader(
         self, group: str, capability: Capability = Capability.HISTORY_READ
     ) -> ProviderTarget:
-        """The target a context read uses: the user account when it can read, else the bot."""
-        targets = self.targets(group)
-        user = targets.get("telegram_user")
-        if (
-            user is not None
-            and self.s.capability.state("telegram_user", user, capability).value == "AVAILABLE"
-        ):
-            return user
-        return targets.get("telegram_bot") or next(iter(targets.values()))
+        """The target a context read uses: the engine's rule (one copy, E11c)."""
+        return self.s.context.reader(self.targets(group), capability, fallback=True)
 
     def message_id(self, message: str, target: ProviderTarget) -> int:
         found = resolve_object(self.s.conn, message, "message")

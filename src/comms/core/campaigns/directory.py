@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from comms.core import refs, timeutil
+from comms.core.groups import group_ref_in_tx, is_group_identity
 from comms.core.storage.db import require_tx, write_tx
 
 __all__ = [
@@ -160,6 +161,8 @@ def add_destination_in_tx(
         " display_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (ref, location_id, transport, platform_identity, identity_id, str(display_name), stamp),
     )
+    if is_group_identity(platform_identity):  # listed from the moment it exists (E11b)
+        group_ref_in_tx(conn, ref, now=now)
     return ref
 
 

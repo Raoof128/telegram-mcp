@@ -10,10 +10,13 @@ argument can carry it, and an empty stdin is refused rather than stored. ``daemo
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping, Sequence
-from typing import Any, TextIO
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 __all__ = [
+    "BACKUP_FLOWS",
+    "CLI_FLOWS",
+    "LOCAL_COMMANDS",
     "LOCAL_GROUPS",
     "OPERATOR_COMMANDS",
     "OPERATOR_GROUPS",
@@ -29,16 +32,25 @@ OPERATOR_COMMANDS: Mapping[tuple[str, ...], Sequence[Arg]] = {
         ("--state-dir", "optional"),
         ("--store-dir", "optional"),
     ),
-    ("doctor",): (("--production", "switch"),),
-    ("keys", "provision"): (("--store-dir", "optional"),),
+    ("doctor",): (("--production", "switch"), ("--state-dir", "optional")),
+    ("keys", "provision"): (("--state-dir", "optional"), ("--runtime-dir", "optional")),
     ("keys", "list"): (),
-    ("keys", "rotate"): (("purpose", "positional"),),
-    ("keys", "mark-signer"): (("--key-id", "optional"),),
+    ("keys", "rotate"): (
+        ("purpose", "positional"),
+        ("--state-dir", "optional"),  # comms-db-key only: it rotates locally, daemon stopped
+        ("--runtime-dir", "optional"),
+    ),
+    ("keys", "mark-signer"): (("--key-id", "required"), ("--state", "required")),
     ("audit", "verify"): (("--all", "switch"),),
     ("audit", "repair"): (),
-    ("backup", "export"): (("--out", "optional"),),
-    ("backup", "import", "stage"): (("--from", "optional"),),
-    ("backup", "import", "commit"): (),
+    ("backup", "export"): (("--out", "required"),),
+    ("backup", "import", "stage"): (
+        ("--from", "required"),
+        ("--identity", "required"),  # a private 0600 file the daemon's user owns
+        ("--trust-key", "optional"),
+        ("--adopt", "switch"),
+    ),
+    ("backup", "import", "commit"): (("--handle", "required"),),
     ("credential", "set"): (("purpose", "positional"),),
     ("credential", "rotate"): (("purpose", "positional"),),
     ("credential", "revoke"): (("purpose", "positional"),),
@@ -54,6 +66,15 @@ OPERATOR_COMMANDS: Mapping[tuple[str, ...], Sequence[Arg]] = {
 }
 OPERATOR_GROUPS = tuple(sorted({words[0] for words in OPERATOR_COMMANDS}))
 LOCAL_GROUPS = frozenset({"daemon", "doctor"})  # run by the local operator CLI
+# D39-PRE E1 (R-E4): run in this process before any daemon exists, under the runtime lock.
+LOCAL_COMMANDS = frozenset({("keys", "provision")})
+# D39-PRE E8a: driven by the CLI as steps over the daemon's retained login admin commands.
+# D39-PRE E8b: the CLI moves the files in 32 KiB chunks over the admin socket.
+BACKUP_FLOWS = frozenset({("backup", "export"), ("backup", "import", "stage")})
+CLI_FLOWS: dict[tuple[str, ...], str] = {
+    ("transport", "telegram", "login"): "auth login",
+    ("transport", "telegram", "revoke-session"): "auth revoke-this-session",
+}
 _VALUE_FROM_STDIN = frozenset({("credential", "set"), ("credential", "rotate")})
 
 
@@ -89,8 +110,9 @@ def add_operator_parsers(sub: Any) -> None:
                 parser.add_argument(name, dest=_dest(name), required=kind == "required")
 
 
-def operator_request(args: argparse.Namespace, *, stdin: TextIO) -> dict[str, Any]:
-    """One ``operator`` admin request; a credential value comes from ``stdin`` alone."""
+def operator_request(args: argparse.Namespace, *, read_value: Callable[[], str]) -> dict[str, Any]:
+    """One ``operator`` admin request; a credential value comes from ``read_value`` alone (the
+    CLI passes a TTY-only, non-echoing prompt: never argv, env or a pipe; D39-PRE E8a)."""
     words = tuple(args.operator)
     payload: dict[str, Any] = {"command": list(words)}
     for name, kind in OPERATOR_COMMANDS[words]:
@@ -98,8 +120,8 @@ def operator_request(args: argparse.Namespace, *, stdin: TextIO) -> dict[str, An
         if value is not None and value is not False:
             payload[_dest(name)] = value
     if words in _VALUE_FROM_STDIN:
-        value = stdin.readline().rstrip("\r\n")
+        value = read_value().rstrip("\r\n")
         if not value:
-            raise ValueError("the credential value is read from stdin and must not be empty")
+            raise ValueError("the credential value must not be empty")
         payload["value"] = value
     return {"cmd": "operator", "args": payload}

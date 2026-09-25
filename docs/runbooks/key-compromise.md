@@ -11,7 +11,8 @@
 2. For a backup signer, mark the old key by what you know. `VERIFICATION_ONLY` keeps what it signed checkable but refuses it for import; `REVOKED` refuses both and keeps it listed for forensics. Trust only ever decreases.
 
    ```bash
-   comms keys mark-signer
+   comms keys list
+   comms keys mark-signer --key-id <key-id-from-keys-list> --state VERIFICATION_ONLY
    ```
 
 3. Verify both chains and the doctor.
