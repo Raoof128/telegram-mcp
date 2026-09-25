@@ -1992,6 +1992,106 @@ async def _comms_drive(root: Path) -> dict[str, Any]:
     return out
 
 
+def phase_v03_daemon(ledger: Ledger) -> None:
+    """D39-PRE E11 (D39-A): the real daemon in its own process, driven only through the
+    installed comms binary, the admin socket, stdio and HTTP (scripts/smoke_daemon.py)."""
+    area = "comms v0.3 D39-A — real daemon"
+    results: dict[str, Any] = {}
+
+    def drive() -> dict[str, Any]:
+        if not results:
+            sys.path.insert(0, str(REPO))
+            sys.path.insert(0, str(REPO / "scripts"))
+            import smoke_daemon
+
+            with tempfile.TemporaryDirectory(dir="/tmp", prefix="sd") as short:
+                results.update(smoke_daemon.drive_install_and_surfaces(Path(short)))
+            with tempfile.TemporaryDirectory(dir="/tmp", prefix="sd") as short:
+                results.update(smoke_daemon.drive_directory_and_campaigns(Path(short)))
+        return results
+
+    def verdict(key: str) -> Any:
+        return drive().get(key) is True or _raise(drive().get(key))
+
+    ledger.run(
+        area,
+        "keys provision creates the encrypted state without a daemon",
+        lambda: verdict("provision"),
+    )
+    ledger.run(
+        area, "a fresh daemon holds writes until the cutover, reads work", lambda: verdict("held")
+    )
+    ledger.run(area, "cutover run completes and releases writes", lambda: verdict("cutover"))
+    ledger.run(
+        area, "the doctor is ok once the daemon has run retention", lambda: verdict("doctor")
+    )
+    ledger.run(
+        area,
+        "client add then tools/list over stdio equals the catalog",
+        lambda: verdict("stdio_tools"),
+    )
+    ledger.run(area, "a read over stdio reaches the daemon", lambda: verdict("stdio_read"))
+    ledger.run(
+        area, "a write over local HTTP with a fresh cml1 lease", lambda: verdict("http_write")
+    )
+    ledger.run(
+        area,
+        "a request-id replay returns the first result with no second effect",
+        lambda: verdict("replay"),
+    )
+    ledger.run(area, "audit verify --all through the CLI is clean", lambda: verdict("verify_all"))
+    ledger.run(
+        area, "a second daemon on the same runtime dir is refused", lambda: verdict("second_daemon")
+    )
+    ledger.run(
+        area, "credential set without a terminal is refused", lambda: verdict("credential_no_tty")
+    )
+    ledger.run(area, "SIGTERM exits 0 and removes the admin socket", lambda: verdict("sigterm"))
+    ledger.run(
+        area,
+        "a restart after SIGTERM is healthy and verifies clean",
+        lambda: verdict("restart_clean"),
+    )
+    ledger.run(
+        area, "kill -9 then restart recovers and verifies clean", lambda: verdict("kill9_restart")
+    )
+    ledger.run(
+        area,
+        "a stale anchor starts degraded, reads work, repair restores writes",
+        lambda: verdict("stale_anchor"),
+    )
+    ledger.run(
+        area,
+        "a database key that does not open comms.db refuses the start",
+        lambda: verdict("wrong_key"),
+    )
+    ledger.run(
+        area,
+        "a backup restore through the CLI seeds the directory and its group is listed",
+        lambda: verdict("backup_seed"),
+    )
+    ledger.run(
+        area,
+        "a campaign sent through the CLI is delivered by the daemon",
+        lambda: verdict("campaign_delivered"),
+    )
+    ledger.run(
+        area,
+        "a scheduled campaign survives kill -9 and runs once",
+        lambda: verdict("scheduled_once"),
+    )
+    ledger.run(
+        area,
+        "keys rotate cursor-key invalidates an old context cursor",
+        lambda: verdict("cursor_rotation"),
+    )
+    ledger.run(
+        area,
+        "audit verify --all is clean after the campaigns and the restore",
+        lambda: verdict("verify_after"),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Phase 1 + Phase 2 end-to-end smoke")
     parser.add_argument("--verbose", action="store_true", help="print tracebacks for failures")
@@ -2014,6 +2114,7 @@ def main() -> int:
         phase5a_operator(ledger)
         phase_v03_cutover(ledger)
         phase_v03_comms(ledger)
+        phase_v03_daemon(ledger)
         conn = state.get("conn")
         if conn is not None:
             conn.close()

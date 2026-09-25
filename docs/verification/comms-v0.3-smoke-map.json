@@ -78,6 +78,27 @@
     "phase_v03_comms::duplicate JSON keys rejected over HTTP",
     "phase_v03_comms::client add and oauth approve over the admin socket",
     "phase_v03_comms::audit verify --all is clean after every surface wrote",
-    "phase_v03_comms::a degraded audit trail refuses new writes"
+    "phase_v03_comms::a degraded audit trail refuses new writes",
+    "phase_v03_daemon::keys provision creates the encrypted state without a daemon",
+    "phase_v03_daemon::a fresh daemon holds writes until the cutover, reads work",
+    "phase_v03_daemon::cutover run completes and releases writes",
+    "phase_v03_daemon::the doctor is ok once the daemon has run retention",
+    "phase_v03_daemon::client add then tools/list over stdio equals the catalog",
+    "phase_v03_daemon::a read over stdio reaches the daemon",
+    "phase_v03_daemon::a write over local HTTP with a fresh cml1 lease",
+    "phase_v03_daemon::a request-id replay returns the first result with no second effect",
+    "phase_v03_daemon::audit verify --all through the CLI is clean",
+    "phase_v03_daemon::a second daemon on the same runtime dir is refused",
+    "phase_v03_daemon::credential set without a terminal is refused",
+    "phase_v03_daemon::SIGTERM exits 0 and removes the admin socket",
+    "phase_v03_daemon::a restart after SIGTERM is healthy and verifies clean",
+    "phase_v03_daemon::kill -9 then restart recovers and verifies clean",
+    "phase_v03_daemon::a stale anchor starts degraded, reads work, repair restores writes",
+    "phase_v03_daemon::a database key that does not open comms.db refuses the start",
+    "phase_v03_daemon::a backup restore through the CLI seeds the directory and its group is listed",
+    "phase_v03_daemon::a campaign sent through the CLI is delivered by the daemon",
+    "phase_v03_daemon::a scheduled campaign survives kill -9 and runs once",
+    "phase_v03_daemon::keys rotate cursor-key invalidates an old context cursor",
+    "phase_v03_daemon::audit verify --all is clean after the campaigns and the restore"
   ]
 }
