@@ -19,10 +19,12 @@ Then add the server to the project's `.mcp.json` (or the user-scope equivalent):
   "args": ["mcp", "--stdio", "--client-seed", "/Users/<you>/.config/comms/claude-code.seed"]}}}
 ```
 
-and allow the server's tools in `.claude/settings.json` (`"allowedTools": ["mcp__comms"]`, design
-D.11). Allowing the whole server also allows its destructive tools without a prompt; until the
-owner rules on R-A20, add `ask` rules for the destructive ones (`comms_message_delete`, the
-member ban/remove tools, `comms_group_delete`, `comms_campaign_send`).
+and set the host permissions by R-A20 (owner, 2026-09-25): host confirmation is defence in
+depth, never part of Comms authorization. Do **not** allow the whole server (`mcp__comms`).
+Read-only tools may be allowed by name; every consequential write (one that reaches a provider
+or cannot be undone) goes under `permissions.ask`. This repository's `.claude/settings.json` is
+the worked example, and `tests/security/test_host_permissions.py` keeps its ask list equal to
+the catalog's consequential tools.
 
 Restart Claude Code; `/mcp` shows `comms` connected with its tools. The seed file stays 0600 and
 never enters a repository.

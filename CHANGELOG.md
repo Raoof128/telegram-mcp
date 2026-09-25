@@ -496,3 +496,16 @@
   - R-A20 awaits the owner.
   - The local tag `comms-v0.3-part-d` is not pushed; merge and push need the owner's approval.
   - No production claim.
+
+### 2026-09-25 (Australia/Sydney)
+**Raouf:**
+- **Scope:** Comms v0.3 D39-PRE / Runtime Completion, Task E0 (branch `comms-v0.3-d39pre`): the owner's rulings, the host permission rules, and a correction.
+- **Summary:**
+  - The owner decided R-A20: host permission UX is defence in depth. `.claude/settings.json` now asks before every consequential comms tool, 43 of them, generated from the catalog. There is no blanket allow, and the CLI campaign-send rules are kept.
+  - Also approved: R-E1 (a `cml1` lease may be reused within its window; write safety comes from the request id), R-E2 (template language is explicit per campaign) and R-E3 (a registered operator command works, or it is not registered).
+  - **Correction:** the Parts A–D entries above say their tags are "not pushed". All four `comms-v0.3-part-*` tags, `main` (merge `272dd8b`) and the `comms-v0.3` branch were pushed with the owner's approval on 2026-09-25.
+  - The D39-PRE plan was owner-approved with four amendments.
+  - **Found:** two test files on `main` (`tests/services/handle_fixtures.py`, `test_ctx_handles.py`) had misordered imports that the gate never reported. Ruff's cache keys on file content and settings, but its first-party import detection reads the filesystem, so it kept a stale clean result. Both files are fixed, and the gate now runs `ruff check` and `ruff format --check` with `--no-cache`.
+- **Files changed:** `.claude/settings.json`, `tests/security/test_host_permissions.py`, `docs/runbooks/clients-claude-code.md`, `docs/verification/comms-v0.3{,-rulings}.md`, `docs/superpowers/plans/2026-09-25-comms-v0.3-d39-pre.md`, `tests/services/{handle_fixtures,test_ctx_handles}.py` (import order), this file, `CHANGELOG.md`.
+- **Verification:** full gate (see the E0 ledger line); `test_host_permissions` 4 passed after watching the ask-rule test fail.
+- **Follow-ups:** E1–E11 of the plan; the 13-tool disposition plan must be done before D39-B. No production claim.

@@ -3,9 +3,8 @@
 import os
 from datetime import timedelta
 
-from comms.services.handles import ContextHandles
-
 from comms.core.keys import rotate as rot
+from comms.services.handles import ContextHandles
 from tests.core.audit.legacy_fixtures import comms_world
 from tests.core.campaign_helpers import NOW
 

@@ -75,7 +75,7 @@ Deferred minor: an intermittent uvicorn `CancelledError` traceback at smoke shut
 
 ### Tag
 
-`comms-v0.3-part-a` is an annotated local tag on the commit that adds this section. It is **not pushed**, and nothing is ever rebased across it. Tag object `38b28bb43ad702859ac23250f8760acf15412bc0` → commit `fcae4ffd4b66a154c43ee1962d85e380cb7df52a`.
+`comms-v0.3-part-a` is an annotated local tag on the commit that adds this section. It was pushed with the owner's approval on 2026-09-25 (with the merge `272dd8b`), and nothing is ever rebased across it. Tag object `38b28bb43ad702859ac23250f8760acf15412bc0` → commit `fcae4ffd4b66a154c43ee1962d85e380cb7df52a`.
 
 No production claim.
 
@@ -136,7 +136,7 @@ Unchanged from Part A: the R-A20 `.claude/settings.json` change, and the out-of-
 
 ### Tag
 
-`comms-v0.3-part-b` is an annotated local tag, **not pushed**: tag object `89fc6b23689d5d49646f18e87416a1bc47528541` → commit `c135599656a9b5479afb26d6656ec9091f2ccf3a`.
+`comms-v0.3-part-b` is an annotated tag, pushed with the owner's approval on 2026-09-25 (merge `272dd8b`): tag object `89fc6b23689d5d49646f18e87416a1bc47528541` → commit `c135599656a9b5479afb26d6656ec9091f2ccf3a`.
 
 No production claim.
 
@@ -202,7 +202,7 @@ Unchanged: the R-A20 `.claude/settings.json` change, and the out-of-repo runbook
 
 ### Tag
 
-`comms-v0.3-part-c` is an annotated local tag, **not pushed**: tag object `b7501031a7608a62334d8d1132af23bde811289c` → commit `631b776fead53fdfde02096e37fbf807a8860dfe`.
+`comms-v0.3-part-c` is an annotated tag, pushed with the owner's approval on 2026-09-25 (merge `272dd8b`): tag object `b7501031a7608a62334d8d1132af23bde811289c` → commit `631b776fead53fdfde02096e37fbf807a8860dfe`.
 
 No production claim.
 
@@ -466,12 +466,12 @@ Registered: R-D38. The ledger (`.superpowers/sdd/2026-09-24-comms-v0.3/progress.
 
 ### Waiting on the owner
 
-- **R-A20:** the `.claude/settings.json` always-ask rules.
+- **R-A20:** decided 2026-09-25 (host confirmation for the 43 consequential tools; D39-PRE E0).
 - **P §88 acceptance:** D39, after the owner-approved merge.
 - **Out-of-repo runbook steps.**
 
 ### Tag
 
-`comms-v0.3-part-d` is an annotated local tag, **not pushed**: tag object `ebcc9ed8d3beab59f81c129fcbe6a8189ae544d3` → commit `26047e820220d395fefe777217fbc014a5fd6188`.
+`comms-v0.3-part-d` is an annotated tag, pushed with the owner's approval on 2026-09-25 (merge `272dd8b`): tag object `ebcc9ed8d3beab59f81c129fcbe6a8189ae544d3` → commit `26047e820220d395fefe777217fbc014a5fd6188`.
 
 No production claim.
