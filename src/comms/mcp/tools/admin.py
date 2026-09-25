@@ -17,6 +17,7 @@ from comms.core.providers.capability import Capability as C
 from comms.mcp.schemas import (
     ACTOR,
     BOOL,
+    OUTCOMES,
     READ_FAILURES,
     array,
     enum,
@@ -297,6 +298,34 @@ ADMIN_TOOLS: tuple[ToolSpec, ...] = (
         ["topic"],
     ),
     # -- lifecycle (P §29) --------------------------------------------------------------------
+    write(
+        "comms_group_create",
+        "Create a group",
+        "Create a supergroup or channel as the owner's account and register it at a location. "
+        "A CREATE: an ambiguous outcome is resolved, never retried.",
+        "group.create",
+        {
+            "location": ref("location"),
+            "title": string(1, 128),
+            "kind": enum(("supergroup", "broadcast")),
+            "about": string(0, 255),
+            "forum": BOOL,
+            "actor": ACTOR,
+        },
+        ["location", "title", "kind"],
+        obj(
+            {
+                "result": enum(OUTCOMES),
+                "code": nullable(string(1, 64)),
+                "actor": nullable(ACTOR),
+                "op_ref": nullable(ref("operation")),
+                "replayed": BOOL,
+                "group": nullable(_GROUP),
+            },
+            ["result", "code", "actor", "op_ref", "replayed", "group"],
+        ),
+        capability=C.GROUP_CREATE,
+    ),
     _admin(
         "group_delete",
         "Delete the group",

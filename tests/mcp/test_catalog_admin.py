@@ -72,6 +72,7 @@ WRITES = {
     "comms_group_topic_reopen": (C.TOPIC_REOPEN, "group.topic.reopen", {}, False),
     "comms_group_delete": (C.GROUP_DELETE, "group.delete", {}, False),
     "comms_group_migrate": (C.GROUP_MIGRATE, "group.migrate", {}, False),
+    "comms_group_create": (C.GROUP_CREATE, None, {"title": "Nowruz", "kind": "supergroup"}, False),
 }
 USER_ONLY = {"comms_group_delete", "comms_group_migrate"}
 
@@ -103,6 +104,12 @@ def results(tmp_path_factory):
     for name, (_cap, tool, args, member) in WRITES.items():
         args = {**args, **objects.get(name, {})}
         targets = {"telegram_user": user} if name in USER_ONLY else {"telegram_bot": bot}
+        if name == "comms_group_create":  # no destination yet: the service lands with D26
+            title = produced["comms_group_info_set_title"]
+            keys = ("result", "code", "actor", "op_ref", "replayed")
+            produced[name] = {**{k: title[k] for k in keys}, "group": grp}
+            examples[name] = {"location": "loc_" + "a" * 26, **args}
+            continue
         if tool is None:  # not offered: the result a success would carry
             produced[name] = {
                 **produced["comms_group_info_set_title"],
