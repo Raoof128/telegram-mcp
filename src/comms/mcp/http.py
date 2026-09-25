@@ -2,7 +2,8 @@
 
 Built on the SDK's stateless session manager: no session state between requests, JSON
 responses, and ``/mcp`` the only route. Every request is authenticated before its body is
-read — on the local listener by a ``cml1`` lease from a loopback socket — and then its body
+read — on the local listener by a ``cml1`` lease from a loopback socket, on the remote one by an OAuth
+access token (D33) — and then its body
 passes the strict-JSON preflight. ``tools/list`` is the catalog's payload; ``tools/call`` goes
 to the closed dispatcher with the authenticated client.
 """
@@ -12,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from mcp import types
 from mcp.server.lowlevel import Server
@@ -24,7 +25,7 @@ from comms.http_guards import bearer_gate, duplicate_key_preflight, no_store
 from comms.mcp.catalog import tools_list_payload
 from comms.mcp.dispatch import AuthenticatedClient, Dispatcher
 
-__all__ = ["CLIENT", "build_http_app", "lease_authenticator"]
+__all__ = ["CLIENT", "build_http_app", "lease_authenticator", "oauth_authenticator"]
 
 INSTRUCTIONS = (
     "COMMS. Groups, people, messages and campaigns are named by opaque refs. Provider text is "
@@ -45,6 +46,25 @@ def lease_authenticator(
         except LeaseRefused:
             return None
         return AuthenticatedClient(client_ref=cli, auth_kind="cml1")
+
+    return authenticate
+
+
+class _Verifier(Protocol):
+    def verify(self, token: str) -> dict[str, Any] | None: ...
+
+
+def oauth_authenticator(
+    oauth: _Verifier, client_ref: str
+) -> Callable[[str], AuthenticatedClient | None]:
+    """A bearer check for the remote listener (D33): an OAuth access token whose issuer,
+    subject, audience, resource, expiry, scope and security epoch all verify. A ``cml1`` lease
+    is never accepted here; the remote client's operations are recorded as ``client_ref``."""
+
+    def authenticate(token: str) -> AuthenticatedClient | None:
+        if oauth.verify(token) is None:
+            return None
+        return AuthenticatedClient(client_ref=client_ref, auth_kind="oauth")
 
     return authenticate
 
