@@ -472,6 +472,6 @@ Registered: R-D38. The ledger (`.superpowers/sdd/2026-09-24-comms-v0.3/progress.
 
 ### Tag
 
-`comms-v0.3-part-d` is an annotated local tag, **not pushed**: the tag object and commit are recorded by the commit that follows the tag.
+`comms-v0.3-part-d` is an annotated local tag, **not pushed**: tag object `ebcc9ed8d3beab59f81c129fcbe6a8189ae544d3` → commit `26047e820220d395fefe777217fbc014a5fd6188`.
 
 No production claim.
