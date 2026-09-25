@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from comms.cli_commands.operator import (
+    LOCAL_COMMANDS,
     LOCAL_GROUPS,
     OPERATOR_GROUPS,
     add_operator_parsers,
@@ -100,6 +101,27 @@ def _operator(args: argparse.Namespace) -> int:
     return 0
 
 
+def _provision(args: argparse.Namespace) -> int:
+    """``comms keys provision`` (R-E4): local, before the daemon exists, under its lock."""
+    import json
+    from datetime import UTC, datetime
+
+    from comms.runtime.paths import CommsPaths, default_state_dir
+    from comms.runtime.provision import ProvisionRefused, provision
+    from comms.transports.telegram.runtime.bootstrap import _runtime_dir
+
+    state = Path(args.state_dir) if args.state_dir else default_state_dir()
+    try:
+        report = provision(
+            CommsPaths(state), now=datetime.now(UTC), runtime_dir=_runtime_dir(args.runtime_dir)
+        )
+    except ProvisionRefused as refused:
+        print(f"comms: {refused}", file=sys.stderr)
+        return 4
+    print(json.dumps({"provisioned": list(report.created)}, indent=2, sort_keys=True))
+    return 0
+
+
 def _hello(runtime_dir: str | None) -> Any:
     """The daemon's non-secret security epoch, over the admin socket's ``hello`` control."""
     from comms.transports.telegram.ipc.framing import decode_json_frame, encode_json_frame
@@ -146,6 +168,11 @@ def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] and argv[0] in FAMILIES:
         code = _tool(build_parser().parse_args(argv))
+        if code:
+            raise SystemExit(code)
+        return
+    if tuple(argv[:2]) in LOCAL_COMMANDS:
+        code = _provision(build_parser().parse_args(argv))
         if code:
             raise SystemExit(code)
         return

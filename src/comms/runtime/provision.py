@@ -1,0 +1,139 @@
+"""``comms keys provision``: create the encrypted comms state (D39-PRE Task E1; R-E4).
+
+It runs before the daemon exists (install step 2), so it is local, under the same runtime lock
+the daemon takes: it refuses while a daemon runs. It is idempotent and never overwrites:
+
+- no ``comms.db``: ``comms-db-key`` v1 into the secret store, the pointer, the database and its
+  schema;
+- every required purpose without an active slot is minted. Before the comms chain exists (no
+  cutover genesis yet) a first version is registered without an audit event, as the audit keys
+  always were; the genesis then covers them. After the genesis a missing purpose is minted by
+  the audited rotation;
+- existing material that does not load, or does not match its recorded key id, is refused and
+  left untouched: it is never replaced silently.
+
+Every file is created with ``O_EXCL`` and fsynced (``VersionedFiles``); directories are 0700.
+The report names purposes only, never material.
+"""
+
+from __future__ import annotations
+
+import os
+import stat
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from comms.core.audit.chain import COMMS, head
+from comms.core.audit.writer import AuditWriter, SlotChainKeys
+from comms.core.installation import installation_ref
+from comms.core.keys import rotate as rot
+from comms.core.keys.secrets import FileSecretStore, SecretStoreError
+from comms.core.keys.slots import (
+    KeySlotError,
+    KeySlotStore,
+    active_version,
+    bootstrap_keys,
+    load_active,
+)
+from comms.core.storage.db import CommsDbKeyError, open_comms_db
+from comms.core.storage.migrations import migrate
+from comms.core.storage.rekey import ITEM as DB_KEY
+from comms.core.storage.rekey import KeyPointer, open_with_recovery
+from comms.runtime.paths import CommsPaths
+from comms.transports.telegram.runtime.lock import RuntimeActive, acquire_lock
+
+__all__ = ["PROVISIONED_KEYS", "ProvisionRefused", "ProvisionReport", "provision"]
+
+PROVISIONED_KEYS = (
+    "audit-chain-key",
+    "audit-checkpoint-key",
+    "campaign-commit-key",
+    "backup-key",
+    "cursor-key",
+    "oauth-signing-key",
+)
+_DAMAGED = "existing key material is damaged (run: comms doctor)"
+
+
+class ProvisionRefused(Exception):
+    """Provisioning refused; the message is fixed and names the fix."""
+
+
+@dataclass(frozen=True)
+class ProvisionReport:
+    created: tuple[str, ...]
+
+
+def _private_dir(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if stat.S_IMODE(path.stat().st_mode) != 0o700:
+        raise ProvisionRefused("the comms directories must be 0700")
+
+
+def _open(paths: CommsPaths, secrets: FileSecretStore, created: list[str]) -> Any:
+    pointer = KeyPointer(paths.db_key_pointer)
+    if not paths.db.exists():
+        if secrets.versions(DB_KEY) or paths.db_key_pointer.exists():
+            raise ProvisionRefused(_DAMAGED)  # a key without its database: never guess
+        secrets.put(DB_KEY, 1, os.urandom(32))
+        pointer.set(1)
+        created.append(DB_KEY)
+        conn = open_comms_db(paths.db, secrets.get(DB_KEY, 1))
+    else:
+        try:
+            conn = open_with_recovery(paths.db, secrets, pointer)
+        except (CommsDbKeyError, SecretStoreError):
+            raise ProvisionRefused(_DAMAGED) from None
+    migrate(conn)
+    return conn
+
+
+def provision(
+    paths: CommsPaths,
+    *,
+    now: datetime,
+    runtime_dir: Path,
+    clock: Callable[[], datetime] | None = None,
+) -> ProvisionReport:
+    try:
+        lock = acquire_lock(
+            Path(runtime_dir) / "runtime.lock", runtime_id=os.urandom(16), mode="provision"
+        )
+    except RuntimeActive:
+        raise ProvisionRefused("a daemon is running for this runtime directory") from None
+    conn = None
+    try:
+        for directory in (paths.root, paths.secrets_dir, paths.slots_dir, paths.anchor_dir):
+            _private_dir(directory)
+        secrets, store = FileSecretStore(paths.secrets_dir), KeySlotStore(paths.slots_dir)
+        created: list[str] = []
+        conn = _open(paths, secrets, created)
+        missing = []
+        for purpose in PROVISIONED_KEYS:
+            if active_version(conn, purpose) is None:
+                missing.append(purpose)
+                continue
+            try:
+                load_active(conn, store, purpose)
+            except KeySlotError:
+                raise ProvisionRefused(_DAMAGED) from None
+        if head(conn, COMMS) is None:
+            bootstrap_keys(conn, store, missing, now=now)  # before the genesis: it covers them
+        else:
+            writer = AuditWriter(
+                conn, SlotChainKeys(conn, store), paths.anchor, clock=clock or (lambda: now)
+            )
+            for purpose in missing:
+                rot.rotate(
+                    writer, store, purpose, material=os.urandom(32), prove=lambda m: None, now=now
+                )
+        created.extend(missing)
+        installation_ref(conn, now=now)
+        return ProvisionReport(tuple(created))
+    finally:
+        if conn is not None:
+            conn.close()
+        lock.release()

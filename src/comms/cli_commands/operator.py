@@ -30,7 +30,7 @@ OPERATOR_COMMANDS: Mapping[tuple[str, ...], Sequence[Arg]] = {
         ("--store-dir", "optional"),
     ),
     ("doctor",): (("--production", "switch"),),
-    ("keys", "provision"): (("--store-dir", "optional"),),
+    ("keys", "provision"): (("--state-dir", "optional"), ("--runtime-dir", "optional")),
     ("keys", "list"): (),
     ("keys", "rotate"): (("purpose", "positional"),),
     ("keys", "mark-signer"): (("--key-id", "optional"),),
@@ -54,6 +54,8 @@ OPERATOR_COMMANDS: Mapping[tuple[str, ...], Sequence[Arg]] = {
 }
 OPERATOR_GROUPS = tuple(sorted({words[0] for words in OPERATOR_COMMANDS}))
 LOCAL_GROUPS = frozenset({"daemon", "doctor"})  # run by the local operator CLI
+# D39-PRE E1 (R-E4): run in this process before any daemon exists, under the runtime lock.
+LOCAL_COMMANDS = frozenset({("keys", "provision")})
 _VALUE_FROM_STDIN = frozenset({("credential", "set"), ("credential", "rotate")})
 
 

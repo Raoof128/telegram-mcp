@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -26,6 +26,7 @@ __all__ = [
     "KeySlotStore",
     "active_version",
     "bootstrap_comms_audit_keys",
+    "bootstrap_keys",
     "key_id_for",
     "load_active",
     "load_version",
@@ -160,13 +161,24 @@ def register_version(conn: Any, purpose: str, version: int, material: bytes, sta
     return key_id
 
 
-def bootstrap_comms_audit_keys(conn: Any, store: KeySlotStore, *, now: datetime) -> None:
-    """Provision audit-chain-key (HMAC) and audit-checkpoint-key (Ed25519) v1. Idempotent."""
+def bootstrap_keys(
+    conn: Any, store: KeySlotStore, purposes: Iterable[str], *, now: datetime
+) -> None:
+    """Register a first version of each purpose that has none, without an audit event.
+
+    Only before the comms chain exists: the cutover genesis then covers them. After it, a
+    missing purpose is minted by the audited rotation (``comms.core.keys.rotate``). Idempotent.
+    """
     stamp = timeutil.iso(now)
-    for purpose in ("audit-chain-key", "audit-checkpoint-key"):
+    for purpose in purposes:
         if _active_row(conn, purpose) is not None:
             continue
         material = secrets.token_bytes(32)
         version = store.write_version(purpose, material)
         with write_tx(conn):
             register_version(conn, purpose, version, material, stamp)
+
+
+def bootstrap_comms_audit_keys(conn: Any, store: KeySlotStore, *, now: datetime) -> None:
+    """Provision audit-chain-key (HMAC) and audit-checkpoint-key (Ed25519) v1. Idempotent."""
+    bootstrap_keys(conn, store, ("audit-chain-key", "audit-checkpoint-key"), now=now)
