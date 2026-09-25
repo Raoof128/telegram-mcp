@@ -172,6 +172,7 @@ def write(
     capability: Capability | None = None,
     destructive: bool = False,
     idempotent: bool = False,
+    open_world: bool = False,
     failures: Sequence[str] = (),
 ) -> ToolSpec:
     """A write. With ``capability`` it is a provider write whose annotations come from
@@ -193,7 +194,7 @@ def write(
         read_only=False,
         destructive=destructive,
         idempotent=idempotent,
-        open_world=capability is not None,
+        open_world=open_world or capability is not None,
         requires_request_id=True,
         failure_modes=tuple(dict.fromkeys(failures)),
         service=service,
