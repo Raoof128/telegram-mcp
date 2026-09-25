@@ -1,9 +1,8 @@
 """comms v0.3 Task B30: every command a runbook names exists (scope B; Task D29 widens it).
 
 ``telegram-mcp …`` lines are parsed by the real CLI parser, and ``telegram-mcp admin …``
-must name an admin command. The ``comms`` CLI arrives in Part D (D30/D31): until then its
-lines are checked against the operator surface below, the contract D31 implements; D29
-parses ``comms mcp …`` with the real parser, and D31 replaces the rest of the set.
+must name an admin command. Since D31 every ``comms …`` line is parsed by the real
+``comms`` parser (D29 began with ``comms mcp``).
 """
 
 import re
@@ -30,31 +29,6 @@ EXPECTED = {
     "live-acceptance-telegram",  # comms v0.3 C32
     "live-acceptance-whatsapp",  # comms v0.3 C32
 }
-# The Part B contract for Part D's operator CLI (design D.7; plan D31).
-COMMS_SURFACE = {
-    ("daemon",),
-    ("doctor",),
-    ("keys", "provision"),
-    ("keys", "list"),
-    ("keys", "rotate"),
-    ("keys", "mark-signer"),
-    ("audit", "verify"),
-    ("audit", "repair"),
-    ("backup", "export"),
-    ("backup", "import", "stage"),
-    ("backup", "import", "commit"),
-    ("credential", "set"),
-    ("credential", "rotate"),
-    ("credential", "revoke"),
-    ("client", "add"),
-    ("client", "rotate"),
-    ("client", "disable"),
-    ("transport", "telegram", "login"),
-    ("transport", "telegram", "revoke-session"),
-    ("cutover", "run"),
-    ("cutover", "status"),
-    ("retention", "run"),
-}
 
 
 def _commands():
@@ -80,11 +54,7 @@ def test_every_runbook_command_exists_and_has_a_handler(where, argv):
         if rest[0] == "admin":
             assert " ".join(a for a in rest[1:] if not a.startswith("-")) in ADMIN_COMMANDS, where
         return
-    if rest[:1] == ["mcp"]:  # D29: the real comms parser
-        build_parser().parse_args(rest)
-        return
-    words = tuple(a for a in rest if not a.startswith("-"))
-    assert any(words[: len(c)] == c for c in COMMS_SURFACE), (where, argv)
+    build_parser().parse_args(rest)  # D31: every comms line, by the real parser
 
 
 def test_comms_mcp_is_parsed_by_the_real_cli():

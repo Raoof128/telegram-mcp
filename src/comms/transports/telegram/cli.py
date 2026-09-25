@@ -325,7 +325,33 @@ _COMMANDS = {
 }
 
 
+# comms v0.3 D31: these verbs are comms's; telegram-mcp forwards them unchanged.
+_COMMS_VERBS = frozenset(
+    {
+        "mcp",
+        "campaign",
+        "location",
+        "audience",
+        "group",
+        "message",
+        "transport",
+        "credential",
+        "audit",
+        "retention",
+        "backup",
+        "cutover",
+        "client",
+    }
+)
+
+
 def main() -> None:
+    argv = sys.argv[1:]
+    if argv[:1] and argv[0] in _COMMS_VERBS:
+        import comms.cli
+
+        comms.cli.main(argv)
+        return
     args = _build_parser().parse_args()
     _init_safe_logging()
     code = _COMMANDS[args.verb](args)

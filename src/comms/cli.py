@@ -1,8 +1,9 @@
 """The ``comms`` command (comms v0.3 Part D).
 
-``comms mcp --stdio --client-seed <path>`` runs the unprivileged stdio proxy (D29). The
-remaining verbs arrive with D30–D31; until then every other verb is the operator CLI that
-``comms`` has always forwarded to.
+``comms mcp --stdio --client-seed <path>`` runs the unprivileged stdio proxy (D29); the
+campaign, location, audience, group and message commands (D30) and the operator-only commands
+(D31) travel over the admin socket. ``daemon``, ``doctor`` and the legacy runtime verbs run the
+operator CLI locally, as before; ``serve`` stays retired.
 """
 
 from __future__ import annotations
@@ -13,6 +14,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from comms.cli_commands.operator import (
+    LOCAL_GROUPS,
+    OPERATOR_GROUPS,
+    add_operator_parsers,
+    operator_request,
+)
 from comms.cli_commands.tools import FAMILIES, add_tool_parsers, command_request
 
 __all__ = ["build_parser", "main"]
@@ -29,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     mcp.add_argument("--daemon", default="http://127.0.0.1:8765", help="the daemon's /mcp origin")
     mcp.add_argument("--runtime-dir", default=None, help="where the daemon's admin socket lives")
     add_tool_parsers(sub)  # D30: campaign, location, audience, group, message
+    add_operator_parsers(sub)  # D31: the owner's commands, never MCP tools
     return parser
 
 
@@ -70,6 +78,26 @@ def _tool(args: argparse.Namespace) -> int:
         return 4
     print(json.dumps(response["data"], indent=2, sort_keys=True))
     return 0 if response["data"].get("error") is None else 4
+
+
+def _operator(args: argparse.Namespace) -> int:
+    import json
+
+    try:
+        request = operator_request(args, stdin=sys.stdin)
+    except ValueError as refused:
+        print(f"comms: {refused}", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        response = _admin_request(None, request)
+    except OSError:
+        print("comms: the daemon is not reachable", file=sys.stderr)
+        return 3
+    if response.get("ok") is not True:
+        print(f"comms: {response.get('code', 'INTERNAL_ERROR')}", file=sys.stderr)
+        return 4
+    print(json.dumps(response["data"], indent=2, sort_keys=True))
+    return 0
 
 
 def _hello(runtime_dir: str | None) -> Any:
@@ -118,6 +146,11 @@ def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] and argv[0] in FAMILIES:
         code = _tool(build_parser().parse_args(argv))
+        if code:
+            raise SystemExit(code)
+        return
+    if argv[:1] and argv[0] in OPERATOR_GROUPS and argv[0] not in LOCAL_GROUPS:
+        code = _operator(build_parser().parse_args(argv))
         if code:
             raise SystemExit(code)
         return

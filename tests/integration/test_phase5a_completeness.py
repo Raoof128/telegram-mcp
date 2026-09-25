@@ -20,7 +20,7 @@ LATER_IN_PHASE_5 = {"auth revoke-this-session"}
 # (`consent approve` / `consent status` are retired by comms spec v0.2: not routed.)
 DEFERRED = {"tunnel rotate-binding", "release verify"}
 # comms v0.3 D30: served by the Comms composition's dispatcher (D34), not this handler map.
-COMMS_COMPOSITION = {"tool call"}
+COMMS_COMPOSITION = {"tool call", "operator"}
 
 
 @pytest.fixture

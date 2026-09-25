@@ -17,7 +17,8 @@
 3. Disable every MCP client, then stop the daemon.
 
    ```bash
-   comms client disable
+   # <client-ref> is the cli_ ref `comms client add` printed
+   comms client disable <client-ref>
    ```
 
 4. Remove the service accounts and paths with the installers' `uninstall` action, after reading their dry-run plan.

@@ -98,6 +98,7 @@ ADMIN_COMMANDS: tuple[str, ...] = (
     "doctor",
     "serve",
     "tool call",  # comms v0.3 D30: the comms CLI's operations, through the one dispatcher
+    "operator",  # comms v0.3 D31: the comms CLI's operator-only commands
 )
 
 # Retired by comms v0.3 (A3, spec §33 less the disclosure-on-read authority): projects,

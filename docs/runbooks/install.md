@@ -34,7 +34,7 @@ Owner-run. Nothing here touches a provider until the credential steps.
 5. Add each MCP client. Its `cml1` seed goes to that client's helper only.
 
    ```bash
-   comms client add
+   comms client add --name claude-code --helper-path ~/.config/comms/claude-code.seed
    ```
 
 `comms doctor` must report no finding except `CREDENTIAL_NOT_CONFIGURED` for providers you do not use.
