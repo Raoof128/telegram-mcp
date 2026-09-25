@@ -114,3 +114,20 @@ re-check). 512 reachable states; three properties — exactly one stored key ope
 database and recovery finds it; a candidate that failed its proof or its re-check never
 stays active; the old database key is destroyed only after the new one reopened the file —
 each broken by a named mutation (`tests/formal/test_keys_model_mutations.py`).
+
+
+## The admin-operation model (comms v0.3, Task D35)
+
+`formal/operations_model.py` explores one `(client, request_id)` under duplicate requests,
+retries and reconnects, a crash at any point with recovery, a provider outcome that is lost
+before or after its effect, and an audit anchor that fails (the degraded latch, set by this
+request's finish or by another request). Both retry classes are explored: a CREATE
+(resolve-only) and a SET_STATE (one same-key retry). Separately, an MTProto send with its
+`random_id`: at most one identical reissue inside the window, and Telegram's dedupe. 4,728
+reachable states; five properties — at most one non-idempotent effect; a normal SUCCEEDED
+answer implies a durable, chained, anchored record; a success whose finish could not be
+anchored is answered as degraded; degraded blocks new effects while every started record can
+still be completed; one reissue and one visible message per `random_id` — each broken by a
+named mutation (`tests/formal/test_operations_model_mutations.py`). The differential walk
+(`tests/services/test_operations_differential_walk.py`, 300 seeds) drives the real executor
+with random outcomes, crashes and recovery and observes the same claims.
