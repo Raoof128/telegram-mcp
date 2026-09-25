@@ -1610,13 +1610,17 @@ async def _comms_drive(root: Path) -> dict[str, Any]:
     from comms.core.audit.verify_all import verify_all
     from comms.core.auth import clients, lease_format
     from comms.core.keys import rotate as rot
+    from comms.core.keys.secrets import FileSecretStore
     from comms.core.objects import message_identity, object_ref
     from comms.core.providers.capability import CapabilityState as S
     from comms.core.security import security_epoch
     from comms.mcp.catalog import TOOL_CATALOG
     from comms.mcp.oauth.server import OAuthSettings
     from comms.runtime.adapters import Adapters
-    from comms.runtime.comms_runtime import RemoteConfig, build_comms_runtime
+    from comms.runtime.assemble import assemble_runtime
+    from comms.runtime.paths import CommsPaths
+    from comms.runtime.settings import DaemonSettings, RemoteSettings
+    from comms.runtime.state import CommsState
     from comms.transports.telegram.bot.admin import BotAdmin
     from comms.transports.telegram.ipc.admin import AdminRouter, serve_admin
     from comms.transports.telegram.user.admin import UserAdmin
@@ -1663,27 +1667,34 @@ async def _comms_drive(root: Path) -> dict[str, Any]:
         conn, w["store"], "remote", now=now(), helper_path=root / "remote.seed"
     )  # its row is what the OAuth server checks is enabled
     issuer = f"http://127.0.0.1:{ports[1]}"
-    runtime = build_comms_runtime(
-        conn,
-        w["writer"],
-        w["store"],
-        adapters,
-        clock=now,
-        monotonic=time.monotonic,
-        host="127.0.0.1",
+    state = CommsState(
+        conn=conn,
+        secrets=FileSecretStore(root / "secrets"),
+        store=w["store"],
+        writer=w["writer"],
+        paths=CommsPaths(root),
+    )
+    settings = DaemonSettings(
         local_port=ports[0],
-        remote=RemoteConfig(
-            settings=OAuthSettings(
+        remote=RemoteSettings(
+            oauth=OAuthSettings(
                 issuer=issuer,
                 resource=f"{issuer}/mcp",
                 client_id="remote",
                 redirect_uris=("http://127.0.0.1/cb",),
                 owner="owner",
             ),
-            client_ref=remote_client,
+            client=remote_client,
             port=ports[1],
         ),
     )
+    runtime = assemble_runtime(  # the daemon's one composition root, fakes injected
+        state,
+        settings,
+        adapters_factory=lambda _state, _settings: adapters,
+        clock=now,
+        monotonic=time.monotonic,
+    ).runtime
     rundir = root / "run"
     rundir.mkdir(mode=0o700)
     router = AdminRouter(runtime.admin_handlers, control_handlers=runtime.control_handlers)
